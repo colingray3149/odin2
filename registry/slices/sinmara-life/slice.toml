@@ -1,0 +1,182 @@
+schema = "odin.registry.v1"
+kind = "slice"
+enabled = true
+description = "Sinmara life slice: exactly the currently enabled governed capabilities the coordinator seat admits (finance summary, gated purchase, cross-seat asks, Discord correlation, vault knowledge, email search/read/draft with ledger-gated send, calendar window read and gated booking, task/context/browser reads, conversational workload authoring via R2 draft and operator-approved R3 publish) over compiled host-tool handlers bound to the odin-hermes runtime."
+capabilities = [
+  "claude.open", "claude.prompt", "claude.read", "claude.stop",
+  "finance.read_summary",
+  "purchase.submit",
+  "seat.ask.sinmara",
+  "discord.intake",
+  "discord.notify",
+  "vault.search",
+  "vault.write_generated",
+  "brain",
+  "brain.search",
+  "brain.read",
+  "memory.remember",
+  "reminder.set",
+  "reminder.list",
+  "reminder.cancel",
+  "time.zone.set",
+  "spend.read",
+  "time.get_current_time",
+  "time.convert_time",
+  "web.search",
+  "web.read",
+  "intake.read",
+  "intake.file",
+  "discord.file.send",
+  "task.grant",
+  "email.search",
+  "email.read",
+  "email.draft",
+  "email.send",
+  "calendar.read",
+  "calendar.propose",
+  "task.create",
+  "task.read",
+  "browser.observe",
+  "seat.ask.kubert",
+  "seat.ask.gungnir",
+  "seat.ask.architect",
+  "terminal.read",
+  "huginn.read",
+  "kube.workload.summarize",
+  "seat.model.set",
+  "workspace.connect",
+  "desktop.input",
+  "fleet.drain",
+  "fleet.restore",
+  "workload.draft",
+  "workload.publish",
+  "project.create",
+  "seat.create",
+  "seat.propose",
+  "seat.ask.reginn",
+  "browser.interact",
+  "browser.consequential",
+  "registry.read",
+  "task.pause",
+  "task.steer",
+  "incident.raise",
+  "git.branch.merge",
+  "routine.set",
+  "routine.remove",
+  "registry.skeleton.read",
+  "registry.author",
+  "registry.author.grant",
+  "email.manage",
+  "artifact.write",
+  "artifact.read",
+  "memory.forget", "seat.ask.scribe",
+  "code.navigate",
+]
+variables = {}
+[redirects]
+out_of_scope = "NeedsPlan"
+
+[knowledge]
+required = false
+atlas_sources = [
+  "memory.colin", "atlas.personal", "state.registry", "state.live", "state.tasks",
+  "memory.sinmara", "ops.history",
+  "archive.claude-colin", "archive.claude-personal", "archive.gemini", "archive.grok",
+  "archive.gmail", "archive.chatgpt",
+]
+retrieval_mode = "hybrid"
+candidate_limit = 128
+top_k = 16
+min_score_micros = 1
+chunk_tokens = 512
+chunk_overlap_tokens = 64
+embedding_backend = "local"
+
+[context]
+# Budgets count UTF-8 bytes (the pinned default counter; ~4 bytes per token);
+# sized for bounded conversational sessions that roll over well below the window.
+max_bundle_tokens = 196608
+reserve_output_tokens = 16384
+control_tokens = 8192
+history_tokens = 139264
+core_tokens = 2_048
+prefetch_tokens = 512
+tool_result_tokens = 16384
+tool_schema_tokens = 16384
+max_item_tokens = 16384
+
+[tools]
+allow = [
+  "claude_open", "claude_prompt", "claude_read", "claude_stop",
+  "finance_read_summary",
+  "purchase_submit",
+  "seat_ask_sinmara",
+  "discord_intake",
+  "intake_read",
+  "discord_notify",
+  "vault_search",
+  "vault_write_generated",
+  "brain",
+  "brain_search",
+  "brain_read",
+  "memory_remember",
+  "email_search",
+  "email_read",
+  "email_draft",
+  "email_send",
+  "calendar_read",
+  "calendar_propose",
+  "task_create",
+  "task_read",
+  "browser_observe",
+  "seat_ask_kubert",
+  "seat_ask_gungnir",
+  "seat_ask_architect",
+  "terminal_read",
+  "huginn_read",
+  "kube_workload_summarize",
+  "seat_model_set",
+  "workspace_connect",
+  "desktop_input",
+  "fleet_drain",
+  "fleet_restore",
+  "workload_draft",
+  "workload_publish",
+  "project_create",
+  "seat_create",
+  "seat_propose",
+  "seat_ask_reginn",
+  "browser_interact",
+  "browser_consequential",
+  "registry_read",
+  "task_pause",
+  "task_steer",
+  "incident_raise",
+  "git_branch_merge",
+  "routine_set",
+  "routine_remove",
+  "registry_skeleton_read",
+  "registry_author",
+  "registry_author_grant",
+  "email_manage",
+  "artifact_write",
+  "artifact_read",
+  "memory_forget", "seat_ask_scribe",
+  "code_navigate",
+]
+deny = []
+alias_redirect = []
+
+[tools.redirects]
+max_http_hops = 2
+allow_cross_origin = false
+allow_https_downgrade = false
+
+[live]
+max_sessions_per_seat = 4
+max_prompt_bytes = 262144
+transfer_chunk_bytes = 1048576
+max_file_bytes = 268435456
+max_render_bytes = 67108864
+allowed_file_media_types = ["application/pdf", "text/plain", "image/png"]
+allowed_render_media_types = ["image/png", "image/jpeg", "image/svg+xml", "application/pdf"]

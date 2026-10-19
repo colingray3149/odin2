@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/terminal.read.input.json",
+  "title": "terminal.read input",
+  "description": "One bounded read of real terminal session content captured daemon-side from the declared session target. The selector names an operator-visible terminal session; it never grants input injection or command execution. The capture is the bounded viewport of the resolved live target — never an unchecked full-scroll dump; content beyond maxBytes is truncated, and the truncation is reported, never silent.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "session": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Zellij terminal session name of the daemon's bound live terminal target (an operator terminal). Not an Odin session id, run id, or delegated child session id; derive it from the bound target rather than guessing."
+    },
+    "maxBytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1048576,
+      "description": "Byte ceiling for the captured viewport content; captures beyond it are truncated and reported, never silently dropped."
+    }
+  },
+  "required": ["session", "maxBytes"]
+}

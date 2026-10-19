@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/routine.set.input.json",
+  "title": "routine.set input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,62}$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "schedule": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 64
+    },
+    "event": {
+      "enum": [
+        "workload_succeeded",
+        "workload_failed",
+        "watchdog",
+        "incident",
+        "mail_arrived",
+        "calendar_event",
+        "file_received",
+        "repo_push",
+        "ring_gesture"
+      ]
+    },
+    "profile": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "match": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "lead_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440
+    },
+    "account": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 254
+    },
+    "action": {
+      "enum": [
+        "brief",
+        "dm"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    }
+  },
+  "required": [
+    "id",
+    "description",
+    "action",
+    "text"
+  ]
+}

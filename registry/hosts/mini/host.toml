@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "host"
+enabled = true
+description = "Always-on authoritative control host with local inference and the k3s server."
+hardware = "AMD Strix Halo mini; Ryzen AI MAX+395; Radeon 8060S; 30 GiB RAM"
+role = "control"
+tailscale = "mini"
+enrolled = true

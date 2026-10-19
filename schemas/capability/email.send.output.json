@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/email.send.output.json",
+  "title": "email.send output",
+  "description": "Exactly one terminal outcome of the email.send operation, discriminated by shape. Phase one returns the gated receipt: the durable intent's command id plus the kernel-minted approval id awaiting the operator. Phase two (and any replay of a settled send) returns the settled receipt: command id, the adapter's settled result, and the durable replay flag. The success result carries the sent message identifier only ({\"sentId\": \"...\"}); draft content, recipient addresses, and credentials never appear in the result envelope. A recorded denial settles as {\"denied\": true, ...} with identifiers and evidence reference only; a provably undispatched failure is {\"executed\": false, \"reason\": ...} — honest unavailability, never a fabricated send. A denied, expired, or unavailable send never produces a sentId.",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "gated"
+        },
+        "command_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 264
+        },
+        "approval_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 264
+        }
+      },
+      "required": [
+        "status",
+        "command_id",
+        "approval_id"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 264
+        },
+        "result": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "sentId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "required": [
+                "sentId"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "denied": {
+                  "const": true
+                },
+                "approvalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 264
+                },
+                "evidenceRef": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "decidedBy": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "denied",
+                "approvalId",
+                "evidenceRef",
+                "decidedBy"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "executed": {
+                  "const": false
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "account-unavailable",
+                    "credential-unavailable",
+                    "service-unavailable",
+                    "protocol-failure",
+                    "timeout",
+                    "lease-refused"
+                  ]
+                }
+              },
+              "required": [
+                "executed",
+                "reason"
+              ]
+            }
+          ]
+        },
+        "replayed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "command_id",
+        "result",
+        "replayed"
+      ]
+    }
+  ]
+}

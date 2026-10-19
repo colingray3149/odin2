@@ -1,0 +1,13 @@
+schema = "odin.registry.v1"
+kind = "harness"
+enabled = true
+description = "Passive remote-session transcript observation only. Odin starts no agent, chooses no model or account, and refuses steering; ending observation stops only the watcher. Output comes from the environment observation declaration."
+protocol = "observe"
+governance = "observed"
+prompt = "none"
+output = "environment"
+
+# Required structural stop fields are unused: the observed agent is never signalled.
+[stop]
+signal = "SIGTERM"
+grace_seconds = 1

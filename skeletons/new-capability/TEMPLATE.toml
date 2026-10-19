@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = "__enabled__"
+description = "__description__"
+# Compiled handler binding ID; must resolve before enabling.
+binding_id = "__binding_id__"
+# Effect classification: R0, R1, R2, or R3.
+effect_class = "__effect_class__"
+# Eligible seat-tag IDs, or *; an array, not comma-separated text.
+seat_tags = "__seat_tags__"
+# Hard execution limit in seconds; integer 1..86400.
+timeout_seconds = "__timeout_seconds__"
+# Deduplication mode: pure or required.
+idempotency = "__idempotency__"
+# Retry max_attempts is an integer 0..10.
+retry = { max_attempts = "__max_attempts__" }
+# Required approval: none or operator.
+approval_policy = "__approval_policy__"

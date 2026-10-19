@@ -1,0 +1,61 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-environment"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "environments"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "enabled"
+type = "bool"
+required = true
+meaning = "Enable after validation."
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Where the work runs and what Odin can and cannot do there."
+
+[[variable]]
+name = "transport"
+type = "enum:k3s-pod|fleet-host|ssh-host|remote-session"
+required = true
+meaning = "How Odin reaches it: a k3s pod, a fleet host's user manager, any ssh machine, or a session Colin started (observe only)."
+
+[[variable]]
+name = "host"
+type = "optional<string>"
+required = false
+meaning = "fleet-host: the host id; ssh-host: user@host; remote-session: where the transcript is read. Omitted for k3s-pod."
+
+[[variable]]
+name = "credential"
+type = "optional<handle>"
+required = false
+meaning = "Opaque credential handle (a sops secret name) the transport uses; never a value."
+
+[[variable]]
+name = "seats"
+type = "array<id>"
+required = true
+meaning = "Existing seats that may run in, or watch, this environment."
+
+[[variable]]
+name = "observation"
+type = "table"
+required = true
+meaning = "The observed channel: { channel = \"events\" } or { channel = \"transcript\", path, format }."
+
+[[variable]]
+name = "sandbox"
+type = "optional<table>"
+required = false
+meaning = "Write confinement for fleet-host: { confine_writes = true, hidden = [paths] }."
+
+[[variable]]
+name = "watchdog"
+type = "optional<array<table>>"
+required = false
+meaning = "Code-evaluated watchdogs: each { name, match } or { name, silent_seconds }."

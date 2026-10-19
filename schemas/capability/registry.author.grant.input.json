@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/registry.author.grant.input.json",
+  "title": "registry.author.grant input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "skeleton": {
+      "enum": [
+        "new-capability",
+        "new-provider",
+        "new-host",
+        "new-node",
+        "new-slice",
+        "new-container",
+        "new-environment",
+        "new-harness",
+        "enable-capability",
+        "remove-environment"
+      ]
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "values": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "skeleton": {
+          "enum": [
+            "new-capability",
+            "new-provider",
+            "new-host",
+            "new-node",
+            "new-slice",
+            "new-container",
+            "new-environment",
+            "new-harness",
+            "enable-capability"
+          ]
+        },
+        "approvalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "skeleton",
+        "id",
+        "values"
+      ]
+    },
+    {
+      "properties": {
+        "skeleton": {
+          "enum": [
+            "remove-environment"
+          ]
+        },
+        "approvalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "skeleton",
+        "id"
+      ]
+    }
+  ]
+}

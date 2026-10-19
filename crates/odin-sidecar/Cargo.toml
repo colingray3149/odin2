@@ -1,0 +1,26 @@
+[package]
+name = "odin-sidecar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing.workspace = true
+tracing-subscriber.workspace = true
+blake3.workspace = true
+mimalloc.workspace = true
+odin-domain.workspace = true
+odin-kernel.workspace = true
+odin-ledger.workspace = true
+odin-sidecar-protocol = { version = "0.0.0", path = "../odin-sidecar-protocol" }
+odin-strict-json = { version = "0.0.0", path = "../odin-strict-json" }
+odin-types = { version = "0.0.0", path = "../odin-types" }
+rustix = { workspace = true, features = ["event", "net"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+time.workspace = true

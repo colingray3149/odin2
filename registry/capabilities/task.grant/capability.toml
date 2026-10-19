@@ -1,0 +1,19 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Approve one exact batch of email sends or consequential browser actions. Each listed effect may execute once, shared by this session and its delegated children, within the approved total use cap and lifetime measured from the owner decision. Changed effect arguments require a new decision. Ordinary declared work runs directly without a grant; purchases always need individual approval. Task prose is descriptive, not permission."
+handler = { id = "task_grant" }
+input_schema = "schemas/capability/task.grant.input.json"
+output_schema = "schemas/capability/task.grant.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "owner"
+preview = "batch"
+batch = { max_effects = 16, max_minutes = 1440, max_uses = 500 }
+evidence_extractor = { id = "odin_hermes_task_grant_evidence" }

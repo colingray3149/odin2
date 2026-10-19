@@ -1,0 +1,49 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-alert"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "container-patch"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "container"
+type = "id"
+required = true
+meaning = "Existing container."
+
+[[variable]]
+name = "alert_id"
+type = "id"
+required = true
+meaning = "Stable watchdog ID."
+
+[[variable]]
+name = "condition"
+type = "expression"
+required = true
+meaning = "Typed detector expression."
+
+[[variable]]
+name = "consecutive_hits"
+type = "int:1:1000"
+required = true
+meaning = "Debounce count."
+
+[[variable]]
+name = "cooldown_seconds"
+type = "int:0:86400"
+required = true
+meaning = "Suppression cooldown."
+
+[[variable]]
+name = "severity"
+type = "enum:info|warning|error|critical"
+required = true
+meaning = "Incident severity."
+
+[[variable]]
+name = "slice"
+type = "id"
+required = true
+meaning = "Allowed response slice."

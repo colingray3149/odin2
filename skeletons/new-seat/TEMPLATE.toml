@@ -1,0 +1,33 @@
+# Registry format version.
+schema = "odin.registry.v1"
+# Object type; keep seat.
+kind = "seat"
+# True enables the seat after validation.
+enabled = "__enabled__"
+# Short human-facing purpose.
+description = "__description__"
+# Authority categories matched by capability seat_tags.
+categories = "__categories__"
+# Existing capability IDs this seat may invoke.
+tool_refs = "__tool_refs__"
+# Existing project IDs available to the granted capabilities.
+project_scope = "__project_scope__"
+# R0–R3 defaults: auto or approval.
+approval_defaults = "__approval_defaults__"
+# Atlas namespaces the seat may read.
+brain_scope = "__brain_scope__"
+# Parallel run and session ceilings; optional spend budget.
+limits = "__limits__"
+# Session limits and file/render transport lanes, not model choices.
+live = "__live__"
+# Atlas sources, tag filters and retrieval count.
+knowledge = "__knowledge__"
+# Context profile, token ceiling and knowledge review lane.
+context = "__context__"
+# Tool exposure, denials and redirect behavior.
+tools = "__tools__"
+# Optional standing conversation project and ask capability.
+conversation = "__conversation__"
+# Shell, network and filesystem access; omit shell access for read-only seats.
+sandbox = "__sandbox__"
+

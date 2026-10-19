@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/odin.atlas_query.input.json",
+  "title": "odin.atlas_query input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sourceClasses": {
+      "type": "array",
+      "items": { "enum": ["rust", "typescript", "registry", "skeleton"] }
+    },
+    "pathPrefixes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "nodePrefixes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "seatCategories": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  }
+}

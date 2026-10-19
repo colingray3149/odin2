@@ -1,0 +1,59 @@
+schema = "odin.registry.v1"
+kind = "provider"
+enabled = true
+description = "The deployed LiteLLM loopback gateway; lanes resolve through it and upstream LiteLLM owns spend enforcement (max_budget) at this seam — the odin runtime never patches the pinned worker and the odin-ledger reservation/settlement tables are unwired (open operator-tracked blocker), so odin-side [budget] accounting proves no consumptive ceiling. Enforcement contract SYS-09 verifies: fail_closed_budget_enforcement must be under general_settings and a database must be configured (general_settings.database_url or a nonempty DATABASE_URL in the running service environment), because the upstream proxy-wide cap is DB-gated and blocks nothing without accounting."
+# Compiled adapter ID; litellm-gateway uses routes, other adapters require routes=[].
+adapter = "litellm-gateway"
+
+[policy]
+# Ordered gateway_lane_id/gateway_model_id pairs; non-empty only for litellm-gateway.
+# Lane IDs name gateway routes; model IDs use 1..256 ASCII letters/digits or . _ : - /.
+routes = [
+  { gateway_lane_id = "zai-glm", gateway_model_id = "openai/glm-5.3" },
+  { gateway_lane_id = "go-glm", gateway_model_id = "openai/glm-5.3" },
+  { gateway_lane_id = "glm-flash", gateway_model_id = "openai/glm-5.3-flash" },
+  { gateway_lane_id = "local-hub", gateway_model_id = "openai/Qwen3-8B" },
+  { gateway_lane_id = "kubert-mini", gateway_model_id = "openai/Qwen3.6-35B-A3B" },
+  { gateway_lane_id = "overflow", gateway_model_id = "openrouter/auto" },
+  # Qualify xai-oauth so an xai API key cannot capture the request.
+  { gateway_lane_id = "grok", gateway_model_id = "openai/xai-oauth/grok-4.7" },
+  { gateway_lane_id = "astra", gateway_model_id = "openai/gpt-6-astra" },
+]
+
+[budget]
+# Accounting amount, 1..1000000000000000 micros (1000000 = USD 1); gateway enforces spend.
+usd_micros = 30_000_000
+
+[budget.window]
+# Fixed accounting window in seconds; integer 1..315576000, not calendar months.
+duration_seconds = 2_592_000
+
+[recovery]
+# Rungs: retry, restart_worker, checkpoint, rehome, escalate (required); execution order is fixed.
+allowed_rungs = ["retry", "restart_worker", "checkpoint", "rehome", "escalate"]
+# Non-empty operator guidance when no recovery action remains.
+blocked_missing_decision = "operator must choose whether to abandon, repair, or resume the workload"
+
+[recovery.max_attempts]
+# retry attempt limit; integer 0..1000, used only when the rung is allowed.
+retry = 2
+# restart_worker attempt limit; integer 0..1000, used only when the rung is allowed.
+restart_worker = 1
+# checkpoint attempt limit; integer 0..1000, used only when the rung is allowed.
+checkpoint = 1
+# rehome attempt limit; integer 0..1000, used only when the rung is allowed.
+rehome = 1
+# escalate attempt limit; integer 1..1000.
+escalate = 1
+
+[recovery.cooldown_seconds]
+# retry cooldown in seconds; integer 0..31557600, zero means no delay.
+retry = 30
+# restart_worker cooldown in seconds; integer 0..31557600, zero means no delay.
+restart_worker = 30
+# checkpoint cooldown in seconds; integer 0..31557600, zero means no delay.
+checkpoint = 30
+# rehome cooldown in seconds; integer 0..31557600, zero means no delay.
+rehome = 60
+# escalate cooldown in seconds; integer 0..31557600, zero means no delay.
+escalate = 0

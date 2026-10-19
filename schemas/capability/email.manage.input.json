@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/email.manage.input.json",
+  "title": "email.manage input",
+  "description": "Reversible mailbox organization for the email.manage operation, without an owner question. The durable management intent (the account, the exact action list, and its digest) is recorded at execution from the prepared operation's exact arguments, keyed by that operation: retrying the same request returns the recorded outcome or stays in doubt, never applying twice. The `account` selector names one configured life account explicitly and travels with every request; an unknown account, missing credentials, or an unavailable service is a typed unavailable outcome, and credential material never travels in arguments. Actions are bounded at 25 and tagged exactly as the adapter's serde: `label` patches message keywords only (at most 10 added and 10 removed, 64 characters each), `archive` and `trash` move one message — no permanent deletion or unsubscribe is representable.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "account": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 25,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "label"
+              },
+              "emailId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "addLabels": {
+                "type": "array",
+                "maxItems": 10,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              },
+              "removeLabels": {
+                "type": "array",
+                "maxItems": 10,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              }
+            },
+            "required": [
+              "action",
+              "emailId",
+              "addLabels",
+              "removeLabels"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "archive"
+              },
+              "emailId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "action",
+              "emailId"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "trash"
+              },
+              "emailId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "action",
+              "emailId"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "account",
+    "actions"
+  ]
+}

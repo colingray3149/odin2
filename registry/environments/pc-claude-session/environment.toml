@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+kind = "environment"
+enabled = true
+description = "A Claude Code session Colin starts himself in a Zellij pane on pc (stand-in for a class AWS workspace): Kubert watches its transcript; Odin cannot confine or stop it."
+transport = "remote-session"
+host = "colin@pc"
+seats = ["kubert"]
+
+[observation]
+channel = "transcript"
+path = "~/.claude/projects/-home-colin-classwork"
+format = "claude-stream-json"
+
+[[watchdog]]
+name = "force-push"
+match = "push --force"
+
+[[watchdog]]
+name = "stalled"
+silent_seconds = 900

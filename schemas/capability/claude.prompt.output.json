@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "session": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "preset": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "dir": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "account": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "placement": {
+          "type": "string",
+          "enum": [
+            "pod",
+            "host-tab"
+          ],
+          "default": "pod"
+        },
+        "mcp": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "skip_permissions": { "type": "boolean" },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "if": { "required": ["preset"] },
+      "else": { "required": ["account", "project"] },
+      "additionalProperties": false
+    },
+    "owner_run": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "opening",
+        "running",
+        "prompting",
+        "stopping",
+        "stopped",
+        "in_doubt"
+      ]
+    },
+    "resource": {
+      "type": "object"
+    },
+    "claude_session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "remote_control": {},
+    "cursor": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "last_driver_cursor": { "type": "integer", "minimum": 0 },
+    "last_publication_cursor": { "type": "integer", "minimum": 0 },
+    "last_error": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "session",
+    "request",
+    "owner_run",
+    "state",
+    "cursor"
+  ],
+  "additionalProperties": false
+}

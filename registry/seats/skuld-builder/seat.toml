@@ -1,0 +1,75 @@
+schema = "odin.registry.v1"
+kind = "seat"
+enabled = true
+description = "Skuld CFD builder seat: builds and pilots simulation cases through the declared Atlas -> Builder -> Wall pipeline in isolated worktrees, GPU jobs go through Sinmara (only the conversation seat creates pods)."
+categories = ["builder"]
+tool_refs = [
+  "task.read",
+  "git.patch.propose",
+  "build.run",
+  "check.run",
+  "capsule.eval.run",
+  "capsule.file.edit",
+  "seat.ask.sinmara",
+  "memory.remember",
+  "brain.search",
+  "brain.read",
+  "registry.read",
+  "incident.raise",
+  "artifact.write",
+  "artifact.read",
+  "memory.forget",
+]
+project_scope = ["skuld"]
+brain_scope = ["memory.colin", "atlas.code", "memory.skuld-builder", "memory.project.skuld"]
+profile_namespace = "memory.colin"
+
+[approval_defaults]
+r0 = "auto"
+r1 = "auto"
+r2 = "auto"
+r3 = "approval"
+
+[limits]
+max_parallel_runs = 4
+max_sessions = 4
+
+[live]
+max_sessions = 4
+file_ingress_lane = "sinmara.file.in"
+file_egress_lane = "sinmara.file.out"
+render_ingress_lane = "sinmara.render.in"
+render_egress_lane = "sinmara.render.out"
+
+[live.rollover]
+# Durable bounded turn-boundary rollover: measured provider watermark
+# (never an estimate), bounded durable brief, same-session epoch+1 respawn,
+# one journaled reinjection. Background delegated children survive.
+threshold_tokens = 180_000
+max_brief_bytes = 8_000
+history_tail_events = 128
+
+[knowledge]
+atlas_sources = ["memory.colin", "atlas.code", "memory.skuld-builder", "memory.project.skuld"]
+required_tags = []
+denied_tags = []
+top_k = 16
+
+[context]
+max_bundle_tokens = 24_576
+profile = "codebase"
+review_lane = "grok"
+
+[tools]
+deny = []
+
+[tools.redirects]
+max_http_hops = 2
+allow_cross_origin = false
+disabled_aliases = []
+
+[sandbox]
+shell = true
+network = "none"
+writable = ["capsule", "scratch"]
+

@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Bounded R0 calendar window read through the odin-hermes calendar adapter under a scoped opaque credential lease (LIFE-003): event identifiers and untrusted titles, timestamps, and descriptions with adapter provenance, no side effects, half-open [start, end) RFC 3339 window capped at 366 days with end after start. The required account argument selects one configured life calendar account; credentials never travel in arguments. Unknown accounts, missing credentials, and unreachable services are typed unavailable, never empty successes. The window snapshot is produced into the calendar generated area, with events inside a 24-hour horizon of the window start also recorded as derived reminders."
+handler = { id = "calendar_read" }
+input_schema = "schemas/capability/calendar.read.input.json"
+output_schema = "schemas/capability/calendar.read.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_calendar_read_evidence" }

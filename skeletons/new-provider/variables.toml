@@ -1,0 +1,43 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-provider"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "providers"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "enabled"
+type = "bool"
+required = true
+meaning = "Enable after the gateway projection validates."
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Provider role."
+
+[[variable]]
+name = "adapter"
+type = "id"
+required = true
+meaning = "Stable compiled provider adapter ID, never an endpoint."
+
+[[variable]]
+name = "routes"
+type = "array<table>"
+required = true
+meaning = "Ordered stable gateway lane/model ID pairs resolved through the projection."
+
+[[variable]]
+name = "budget"
+type = "optional<table>"
+required = false
+meaning = "Optional integer USD-micros accounting-window declaration; gateway spend limits are configured separately."
+
+[[variable]]
+name = "recovery"
+type = "table"
+required = true
+meaning = "Recovery attempt limits, cooldowns, and allowed rungs; escalate is required."

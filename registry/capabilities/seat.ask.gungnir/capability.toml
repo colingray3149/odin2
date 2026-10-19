@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Ask Gungnir to help implement this task. Work stays within the selected project's declared permissions and appears in its own terminal tab; a retry continues the same task rather than starting another. Naming provider and model selects one of the target seat's declared launch options for this ask only."
+handler = { id = "seat_ask" }
+delegate_to = "gungnir"
+input_schema = "schemas/capability/seat.ask.input.json"
+output_schema = "schemas/capability/seat.ask.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_hermes_seat_ask_evidence" }

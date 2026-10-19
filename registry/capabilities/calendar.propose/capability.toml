@@ -1,0 +1,17 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Change the calendar. Adds, moves or cancels one event, or adds a batch of events; decided by the seat's declarations (Colin's own calendars never ask him), applies only to the proposed change and can be used once; unavailable calendars are reported without pretending the change succeeded."
+handler = { id = "calendar_propose" }
+input_schema = "schemas/capability/calendar.propose.input.json"
+effect_class = "R3"
+output_schema = "schemas/capability/calendar.propose.output.json"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_hermes_calendar_propose_evidence" }

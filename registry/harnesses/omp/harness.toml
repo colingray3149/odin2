@@ -1,0 +1,13 @@
+schema = "odin.registry.v1"
+kind = "harness"
+enabled = true
+description = "The manifest-pinned OMP over its RPC protocol: every tool call passes the kernel through the Odin extension."
+protocol = "omp"
+governance = "governed"
+prompt = "rpc"
+output = "omp-rpc"
+pod = true
+
+[stop]
+signal = "SIGTERM"
+grace_seconds = 10

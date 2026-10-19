@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "routine"
+enabled = true
+description = "Count data rows whenever Colin sends a CSV file."
+# Enabled conversation-seat ID to wake when the trigger fires.
+seat = "sinmara"
+
+[trigger]
+# Event: workload_succeeded, workload_failed, watchdog, incident, mail_arrived, calendar_event, file_received, repo_push, ring_gesture.
+event = "file_received"
+# Filename filter: each whitespace-separated word must match case-insensitively; not a glob or regex.
+match = ".csv"
+
+[action]
+# brief wakes the seat with instructions; dm sends text directly.
+kind = "brief"
+# Action content; non-empty text up to 2000 characters.
+text = "When Colin sends a CSV, read the attached file and count its data records using proper CSV parsing, accounting for quoted fields and embedded newlines. Exclude a header row when present; if header presence is ambiguous, state the assumption. Reply briefly with the filename and data-row count. Do not guess a count from a truncated excerpt; report inability to access the complete file if necessary."

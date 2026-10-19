@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = true
+description = "Implement and test the numerical method in arXiv:1609.07625 for Colin's setup; verify the paper before designing the implementation."
+source_root = "/home/colin/valhalla/weno5"
+default_seat = "gungnir"
+memory_namespaces = ["memory.project.weno5"]
+artifact_policy = "large-scientific"

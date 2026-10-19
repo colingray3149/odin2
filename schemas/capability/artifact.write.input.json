@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/artifact.write.input.json",
+  "title": "artifact.write input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1048576
+    },
+    "mediaType": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128
+    },
+    "shareWith": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 72
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "path"
+      ]
+    },
+    {
+      "required": [
+        "text"
+      ]
+    }
+  ]
+}

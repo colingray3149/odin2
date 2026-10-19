@@ -1,0 +1,86 @@
+schema = "odin.registry.v1"
+kind = "seat"
+enabled = true
+description = "Lead system architect seat over the canonical Odin and dotfiles repositories; master credentials remain denied."
+categories = ["builder", "coordinator"]
+tool_refs = [
+  "git.patch.propose",
+  "build.run",
+  "check.run",
+  "capsule.eval.run",
+  "capsule.file.edit",
+  "context.read",
+  "task.create",
+  "task.read",
+  "browser.observe",
+  "browser.interact",
+  "browser.consequential",
+  "memory.remember",
+  "brain.search",
+  "brain.read",
+  "registry.read",
+  "task.pause",
+  "task.steer",
+  "incident.raise",
+  "artifact.write",
+  "artifact.read",
+  "memory.forget",
+]
+# ColinRemote tenant admission: the architect seat opens governed sessions
+# on the ColinRemote repository; Sinmara's seat.ask.architect surface
+# delegates onto the same scope.
+project_scope = ["colinremote", "dotfiles", "odin"]
+# Launch choices seat.model.set may pick (provider/model); the first is the default.
+models = ["gateway/grok", "gateway/astra", "gateway/zai-glm", "gateway/glm-flash", "gateway/kimi-k28"]
+brain_scope = ["memory.colin", "atlas.code", "state.repos", "ops.history", "memory.architect", "memory.project.colinremote", "memory.project.dotfiles", "memory.project.odin"]
+profile_namespace = "memory.colin"
+
+[approval_defaults]
+r0 = "auto"
+r1 = "auto"
+r2 = "auto"
+r3 = "approval"
+
+[limits]
+max_parallel_runs = 6
+max_sessions = 4
+
+[live]
+max_sessions = 4
+file_ingress_lane = "sinmara.file.in"
+file_egress_lane = "sinmara.file.out"
+render_ingress_lane = "sinmara.render.in"
+render_egress_lane = "sinmara.render.out"
+
+[live.rollover]
+# Durable bounded turn-boundary rollover: measured provider watermark
+# (never an estimate), bounded durable brief, same-session epoch+1 respawn,
+# one journaled reinjection. Background delegated children survive.
+threshold_tokens = 180_000
+max_brief_bytes = 8_000
+history_tail_events = 128
+
+[knowledge]
+atlas_sources = ["memory.colin", "atlas.code", "state.repos", "ops.history", "memory.architect", "memory.project.colinremote", "memory.project.dotfiles", "memory.project.odin"]
+required_tags = []
+denied_tags = ["secret", "credentials", "private-key", "sops", "age", "auth"]
+top_k = 16
+
+[context]
+max_bundle_tokens = 32_768
+profile = "codebase"
+review_lane = "grok"
+
+[tools]
+deny = []
+
+[tools.redirects]
+max_http_hops = 2
+allow_cross_origin = false
+disabled_aliases = []
+
+[sandbox]
+shell = true
+network = "none"
+writable = ["capsule", "scratch"]
+

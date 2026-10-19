@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "node"
+enabled = "__enabled__"
+description = "__description__"
+# Existing host ID; enabled nodes require an enabled, enrolled host.
+host = "__host__"
+# Runtime role: control, worker, or gateway.
+role = "__role__"
+# Runtime capability IDs used for workload placement.
+capabilities = "__capabilities__"
+# true admits workloads to this node; false rejects them.
+allow_workloads = "__allow_workloads__"
+# true marks the sole enabled node holding authoritative state.
+authoritative_state = "__authoritative_state__"
+# Gateway URI reachable by pods; required when allow_workloads is true.
+gateway_endpoint = "__gateway_endpoint__"

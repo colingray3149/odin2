@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Restart one observed Kubernetes pod Job by run identity: the caller supplies the exact opaque resourceVersion observed at admission as the compare-and-swap, and the trusted runtime recreates the workload from its admitted published profile under recorded idempotency. With targetNode it rehomes the pod onto that node: admitted only inside the deployment placement authority and the pod declared placement, and node-bound per-pod state is carried there through a durable checkpoint artifact."
+handler = { id = "odin_kube.workload.restart" }
+input_schema = "schemas/capability/kube.workload.restart.input.json"
+output_schema = "schemas/capability/kube.workload.restart.output.json"
+effect_class = "R3"
+seat_tags = ["operator"]
+# Covers the runtime's actuation bound: the declared 120s teardown window
+# plus 2 bounded 30s request phases and 10s slack (190s), plus the 320s a
+# rehome may take to carry node-bound state to its target (520s).
+timeout_seconds = 520
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_kube.workload.restart_evidence" }

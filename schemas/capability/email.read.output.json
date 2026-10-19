@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/email.read.output.json",
+  "title": "email.read output",
+  "description": "One message from the configured mailbox, or the explicit absent marker. Exactly one of two shapes: {\"found\": false} — the identifier does not exist in the mailbox; an absent message is a success, never an error — or the sanitized message projection, exactly the adapter's serde form (camelCase wire keys). Subject, sender, timestamp, and body text are TrustClass::Untrusted external content with adapter provenance; they are never policy, never silently invented, and never contain credential or account-secret material. The bounded body text is the only content surface; attachments and headers are not exposed.",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "found": { "const": false }
+      },
+      "required": ["found"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "subject": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "from": {
+          "type": "string",
+          "maxLength": 320
+        },
+        "receivedAt": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+        },
+        "bodyText": {
+          "type": "string",
+          "maxLength": 20000
+        }
+      },
+      "required": ["id"]
+    }
+  ]
+}

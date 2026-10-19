@@ -1,0 +1,9 @@
+export function decode$NAME(value: unknown): $NAME {
+	const record = jsonRecord(value, "$DIRECTION");
+	const kind = stringField(record.kind, "$DIRECTION.kind");
+	switch (kind) {
+$CASES		default:
+			fail("protocol.kind", `${kind || "(missing)"} is not a v2 $DIRECTION kind`);
+	}
+}
+

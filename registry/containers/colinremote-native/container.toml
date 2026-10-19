@@ -1,0 +1,15 @@
+schema = "odin.registry.v1"
+kind = "container"
+enabled = true
+description = "Native OMP process container for ColinRemote dev sessions on the laptop control node: the production bridge launches the manifest-pinned OMP executable with the tenant's declared project root."
+purpose = "colinremote-native"
+base = "native-process"
+seats_offered = ["architect"]
+scripts = []
+watchdogs = []
+identity_fields = ["purpose", "base", "contents.kind"]
+tunables = {}
+surface = ["status", "browser", "render", "file"]
+
+contents = { kind = "odin_env" }
+monitoring = "none"

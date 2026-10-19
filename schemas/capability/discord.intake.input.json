@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/discord.intake.input.json",
+  "title": "discord.intake input",
+  "description": "One owner-paired Discord intent admitted for correlation (LIFE-001). R1: the adapter records a durable Sinmara task keyed on Correlation::idempotency_key — replayed intents deduplicate; the intent content itself is untrusted data and never leaves the store into envelopes. Pairing policy comes from configuration; an unpaired author is typed unauthorized, never executed and never recorded. guild_id is optional: a DM intent omits or nulls it. Missing or unrendered bot credentials are typed unavailable, never an empty success.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "channel_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[0-9]+$"
+    },
+    "message_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[0-9]+$"
+    },
+    "author_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[0-9]+$"
+    },
+    "guild_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[0-9]+$"
+    },
+    "content": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    }
+  },
+  "required": ["channel_id", "message_id", "author_id", "content"]
+}

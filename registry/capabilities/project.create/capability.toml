@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Create a new project Colin asks for: a registry project rooted in its own repository under the projects directory (Colin's existing GitHub repository of that name is cloned; a new empty one only when none exists), worked on by the chosen worker seats (only builder and judge seats; never a seat that can create declarations or act on accounts). It is committed to odin main and published; the project becomes usable after odind's next idle reload, about half a minute."
+handler = { id = "project_create" }
+input_schema = "schemas/capability/project.create.input.json"
+output_schema = "schemas/capability/project.create.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 600
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_project_create_evidence" }

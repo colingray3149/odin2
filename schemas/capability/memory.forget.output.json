@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/memory.forget.output.json",
+  "title": "memory.forget output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reverted": {
+      "type": "boolean"
+    },
+    "retired": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "page": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "reverts": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "page",
+          "excerpt",
+          "commit"
+        ]
+      }
+    },
+    "knowledgeRefreshUnavailable": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "retired"
+  ]
+}

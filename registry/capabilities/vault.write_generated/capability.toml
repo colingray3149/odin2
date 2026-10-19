@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Save this note in the generated section of your vault. Existing notes outside that section are never changed, and a missing vault is reported rather than replaced."
+handler = { id = "vault_write_generated" }
+input_schema = "schemas/capability/vault.write_generated.input.json"
+output_schema = "schemas/capability/vault.write_generated.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_vault_write_generated_evidence" }

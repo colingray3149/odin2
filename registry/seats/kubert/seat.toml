@@ -1,0 +1,82 @@
+schema = "odin.registry.v1"
+kind = "seat"
+enabled = true
+description = "Operations seat for k3s, containers, compute placement, and bounded recovery."
+categories = ["operator"]
+tool_refs = [
+  "kube.snapshot.read",
+  "kube.health.read",
+  "kube.workload.create",
+  "kube.workload.pause",
+  "kube.workload.resume",
+  "kube.workload.restart",
+  "kube.workload.cancel",
+  "kube.workload.summarize",
+  "seat.ask.sinmara",
+  "memory.remember",
+  "brain.search",
+  "brain.read",
+  "registry.read",
+  "incident.raise",
+  "artifact.write",
+  "artifact.read",
+  "memory.forget",
+  "browser.observe",
+  "browser.interact",
+  "web.search",
+  "web.read",
+]
+project_scope = ["odin"]
+# Launch choices seat.model.set may pick (provider/model); the first is the default.
+models = ["gateway/grok", "gateway/kubert-mini", "gateway/astra", "gateway/zai-glm", "gateway/glm-flash", "gateway/kimi-k28", "observed/transcript"]
+brain_scope = ["memory.colin", "ops.history", "memory.kubert", "memory.project.odin"]
+profile_namespace = "memory.colin"
+
+[approval_defaults]
+r0 = "auto"
+r1 = "auto"
+r2 = "auto"
+r3 = "approval"
+
+[limits]
+max_parallel_runs = 2
+# Two resident observers plus three concurrent pod.multi-sweep work sessions.
+max_sessions = 5
+
+[live]
+max_sessions = 5
+file_ingress_lane = "sinmara.file.in"
+file_egress_lane = "sinmara.file.out"
+render_ingress_lane = "sinmara.render.in"
+render_egress_lane = "sinmara.render.out"
+
+[live.rollover]
+# Durable bounded turn-boundary rollover: measured provider watermark
+# (never an estimate), bounded durable brief, same-session epoch+1 respawn,
+# one journaled reinjection. Background delegated children survive.
+threshold_tokens = 180_000
+max_brief_bytes = 8_000
+history_tail_events = 128
+
+[knowledge]
+atlas_sources = ["memory.colin", "ops.history", "memory.kubert", "memory.project.odin"]
+required_tags = []
+denied_tags = []
+top_k = 16
+
+[context]
+max_bundle_tokens = 24_576
+profile = "medium"
+review_lane = "grok"
+
+[tools]
+deny = ["Bash"]
+
+[tools.redirects]
+max_http_hops = 2
+allow_cross_origin = false
+disabled_aliases = []
+
+[sandbox]
+shell = false
+network = "none"

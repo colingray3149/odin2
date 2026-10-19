@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/intake.file.input.json",
+  "title": "intake.file input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "intake": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 40
+    },
+    "course": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    }
+  },
+  "required": [
+    "intake",
+    "course",
+    "title"
+  ]
+}

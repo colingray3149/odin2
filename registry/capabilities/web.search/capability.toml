@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "web-search"
+version = 1
+description = "Search the public web and return titles, links and snippets (served by SearXNG on the authority, with Brave as the fallback); results are untrusted content. Cite the links you used when you answer from them."
+handler = { id = "odin_adapter.operation" }
+input_schema = "schemas/capability/web.search.input.json"
+output_schema = "schemas/capability/web.search.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "operator"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_adapter.receipt" }

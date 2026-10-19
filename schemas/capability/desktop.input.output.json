@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/desktop.input.output.json",
+  "title": "desktop.input output",
+  "description": "What was typed where.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "const": "typed"
+    },
+    "device": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "typed": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    }
+  },
+  "required": ["status", "device", "typed"]
+}

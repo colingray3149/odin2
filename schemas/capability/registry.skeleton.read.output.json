@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/registry.skeleton.read.output.json",
+  "title": "registry.skeleton.read output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "skeleton": {
+      "type": "string"
+    },
+    "destination": {
+      "type": "string"
+    },
+    "variables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "meaning": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "required",
+          "meaning"
+        ]
+      }
+    }
+  },
+  "required": [
+    "skeleton",
+    "destination",
+    "variables"
+  ]
+}

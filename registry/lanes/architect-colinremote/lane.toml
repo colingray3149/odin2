@@ -1,0 +1,14 @@
+schema = "odin.registry.v1"
+kind = "lane"
+enabled = true
+description = "ColinRemote app engineering lane for architect live sessions: governed web dev, visual verification, and bridge work."
+# Existing project ID whose scope this lane belongs to.
+project = "colinremote"
+# Descriptive lane-family label; any non-empty string, not a dispatch enum.
+family = "engine"
+# Existing seat ID used when no seat is selected explicitly.
+default_seat = "architect"
+# Descriptive queue label; any non-empty string, not a scheduling guarantee.
+queue = "interactive"
+# true requires a separate reviewer before publishing code; false does not.
+requires_independent_review = false

@@ -1,0 +1,10 @@
+schema = "odin.registry.v1"
+kind = "environment"
+enabled = true
+description = "Colin-owned Claude Code interactive host tab on laptop; not an agent-driven sandbox. The permission-skipping choice is recorded per open."
+transport = "fleet-host"
+host = "laptop"
+seats = ["sinmara", "gungnir", "reginn"]
+
+[observation]
+channel = "events"

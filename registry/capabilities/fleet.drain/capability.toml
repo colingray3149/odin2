@@ -1,0 +1,17 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "R2 operator-approved drain of one declared fleet host's registry nodes through the daemon's kube surface: first moves each running Odin pod on the host per its declaration (rehomed with its state to an online node its placement fits, else paused until fleet.restore resumes it), then cordons each node, evicts the drainable pods through the policy/v1 eviction subresource inside one bounded deadline, and reports evicted and remained pods as data — a pod still present at the deadline is a report entry, never an error or a retry. When the named host holds the registry's authoritative state its Odin pods are moved the same way and its node is only cordoned (nothing else evicted), and it returns the ordered authority-move runbook (quiesced backup, restore drill, registry handoff, authority rehearsal, standby startup, standby root provisioning, re-drain) with the declared standby candidates, and the real transition stays operator-run. An unknown host, an offline host, or a daemon without a kube surface is a typed refusal, never a fabricated report."
+handler = { id = "odin_hermes.fleet_drain" }
+input_schema = "schemas/capability/fleet.drain.input.json"
+output_schema = "schemas/capability/fleet.drain.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 300
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_hermes.fleet_drain_evidence" }

@@ -1,0 +1,17 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Merge this independently reviewed exact work-branch head into the observed expected main base. Supply full expectedBase and expectedHead commit identities; stale identities refuse rather than silently rebasing. The merged tree must pass its declared checks, and a non-force push verifies the expected base again. Declaration decides without an owner question. A clean project checkout may fast-forward only to the exact published merge."
+handler = { id = "git_branch_merge" }
+input_schema = "schemas/capability/git.branch.merge.input.json"
+output_schema = "schemas/capability/git.branch.merge.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 1200
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_hermes_git_branch_merge_evidence" }

@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = true
+description = "Surtr — senior thesis: provenance-enforced liquid rocket engine preliminary-design suite with LLM orchestration layer over a deterministic solver stack (model never emits numeric values directly)."
+source_root = "/home/colin/valhalla/surtr"
+default_seat = "gungnir"
+memory_namespaces = ["memory.project.surtr"]
+artifact_policy = "large-scientific"
+review_verdict = "code.review.verdict"

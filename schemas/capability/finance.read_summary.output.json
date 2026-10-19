@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/finance.read_summary.output.json",
+  "title": "finance.read_summary output",
+  "description": "Whole-budget month aggregate in Actual integer minor units (outflow negative; spent_cents is the positive magnitude of expense-category flows; net_cents = income - spent). Aggregates only: account names, account numbers, masks, notes, and payees are structurally excluded by the adapter and can never appear in any field; category names are the only named surface and are bounded masked labels. A violating category row is a typed failure, never a silently dropped row.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "month": {
+      "type": "string",
+      "pattern": "^(19[7-9][0-9]|20[0-9][0-9])-(0[1-9]|1[0-2])$"
+    },
+    "source": {
+      "const": "actual-budget"
+    },
+    "income_cents": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "spent_cents": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "net_cents": {
+      "type": "integer"
+    },
+    "transaction_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "categories": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "budgeted_cents": {
+            "type": "integer"
+          },
+          "spent_cents": {
+            "type": "integer"
+          }
+        },
+        "required": ["name", "budgeted_cents", "spent_cents"]
+      }
+    }
+  },
+  "required": [
+    "month",
+    "source",
+    "income_cents",
+    "spent_cents",
+    "net_cents",
+    "transaction_count",
+    "categories"
+  ]
+}

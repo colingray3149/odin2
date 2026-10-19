@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "kube.workload.resume output",
+  "description": "Post-resumption settlement of the pod Job (a finite job or a long-lived service) addressed by run id. status accepted = suspend cleared; duplicate = recorded idempotent replay; unavailable = typed unavailability with reason. jobName and resourceVersion bind the exact cluster object on accepted and duplicate.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "duplicate",
+        "unavailable"
+      ]
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "operationId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+    },
+    "workerId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+    },
+    "jobName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253
+    },
+    "resourceVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    }
+  },
+  "required": [
+    "status",
+    "runId"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "unavailable"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "reason"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "accepted",
+              "duplicate"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "jobName",
+          "resourceVersion"
+        ]
+      }
+    }
+  ],
+  "$id": "https://odin.local/schemas/capability/kube.workload.resume.output.json"
+}

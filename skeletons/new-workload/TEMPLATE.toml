@@ -1,0 +1,87 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = "__enabled__"
+description = "__description__"
+# Pod runner: script executes argv without an agent; omp (default) runs an agent.
+harness = "__harness__"
+# NVIDIA GPUs to reserve; integer 0..8, omitted means none.
+gpu_count = "__gpu_count__"
+# Required node capability IDs; omitted means any eligible node.
+placement = "__placement__"
+# job (default) is finite; service runs until stopped and restarts on failure.
+mode = "__mode__"
+# Allowed host capability IDs, narrowed from the seat's tools; omitted means none.
+tools = "__tools__"
+
+[image]
+# platform uses the deployed image; otherwise require an OCI reference with @sha256:<digest>.
+reference = "__image_reference__"
+
+[script]
+# Non-empty argv array executed inside the image; required for script workloads.
+command = "__script_command__"
+
+[runtime]
+# Absolute in-image path to the OMP launcher.
+launcher = "__launcher__"
+# Absolute in-image path to the browser executable.
+browser = "__browser__"
+# Absolute in-image path to the browser supervisor executable.
+supervisor = "__supervisor__"
+# Absolute in-image path to the Playwright module root.
+playwright = "__playwright__"
+
+[seat]
+# Enabled seat ID whose permissions apply to this workload.
+seat = "__seat__"
+# Enabled project ID within the seat's project_scope.
+project = "__project__"
+# Gateway lane ID declared by an enabled provider; selects the model route.
+gateway_lane = "__gateway_lane__"
+
+[network]
+# Bare egress hostnames, not URLs; an empty array adds no external hosts.
+allow_hosts = "__allow_hosts__"
+
+[display]
+# Absolute in-image path to the Xvfb executable.
+xvfb = "__xvfb__"
+# Display width/height 1..8192 and depth 1..32, written as 1280x720x24.
+screen = "__screen__"
+# true streams the browser surface to the owner; false disables streaming.
+stream = "__stream__"
+
+[state]
+# Absolute in-pod path where the persistent state volume is mounted.
+path = "__state_path__"
+# State volume capacity: positive integer with Ki/Mi/Gi/Ti/Pi/Ei suffix, e.g. 1Gi.
+storage = "__storage__"
+
+[export]
+# Absolute in-pod directory whose files are exported.
+pod_path = "__export_pod_path__"
+# Absolute host directory receiving exported files.
+host_folder = "__export_host_folder__"
+
+[brief]
+text = "__brief_text__"
+
+[memory]
+# Project-declared atlas.* or memory.* namespace within the seat's brain_scope.
+namespace = "__memory_namespace__"
+
+[lifetime]
+# Job wall-clock limit in seconds, 60..86400; omit for services.
+deadline_seconds = "__deadline_seconds__"
+
+[monitoring]
+# Seconds between ODIN-STATUS samples; integer 5..3600.
+cadence_seconds = "__monitoring_cadence_seconds__"
+# Detector tables with id, condition, consecutive_hits, cooldown_seconds, severity, and slice.
+watchdogs = "__watchdogs__"
+# ODIN-STATUS counter name whose increase counts as useful progress.
+progress = "__monitoring_progress__"
+# Seconds without progress before recovery; 10..86400 and at least two sample intervals.
+stall_seconds = "__monitoring_stall_seconds__"
+# Stall response table: allowed_rungs, max_attempts, cooldown_seconds, and blocked_missing_decision.
+recovery = "__monitoring_recovery__"

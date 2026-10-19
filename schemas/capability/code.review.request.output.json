@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/code.review.request.output.json",
+  "title": "code.review.request output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "diffDigest": {
+      "type": "string"
+    },
+    "artifactId": {
+      "type": "string"
+    },
+    "reviewer": {
+      "type": "string"
+    },
+    "tests": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "diffDigest",
+    "artifactId",
+    "reviewer",
+    "tests"
+  ]
+}

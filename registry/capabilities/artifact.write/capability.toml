@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Stores one file of the calling session's workspace as a content-addressed (BLAKE3) artifact in the controller's artifact store, readable by the writer's seat and project and by the seats or projects it names; returns its digest. Bounded at 32 MiB; paths outside the workspace are refused."
+handler = { id = "artifact_write" }
+input_schema = "schemas/capability/artifact.write.input.json"
+output_schema = "schemas/capability/artifact.write.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_artifact_write_evidence" }

@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "R0 read-only Huginn query contract served through the existing loopback daemon client: status and snapshot reads only, no device pairing, revocation, or any mutating call reachable, and an unreachable daemon is a typed unavailability. Served by the compiled hermes handler under the exact admitted tuple, routed through the daemon's live huginn-read seam over the real plane."
+handler = { id = "huginn_read" }
+input_schema = "schemas/capability/huginn.read.input.json"
+output_schema = "schemas/capability/huginn.read.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_huginn_read_evidence" }

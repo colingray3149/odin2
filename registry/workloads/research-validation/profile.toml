@@ -1,0 +1,67 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "Acceptance research validation: materialize an immutable odin.research-source.v1 bundle into a private tempdir and execute its revision-pinned, dependency-free benchmark. No network."
+# Runner: script, an enabled pod-capable harness (default omp), or the separate claude-code driver.
+harness = "script"
+# Required node capability IDs; omitted means any eligible node.
+placement = ["scrape"]
+
+[image]
+# platform uses the deployed image; otherwise require an OCI reference with @sha256:<digest>.
+reference = "docker.io/library/python:3.12-slim@sha256:eeb8088e67610b37583880c7627e3931f087cba55a35810819e34a398f624a47"
+
+[script]
+# Non-empty argv array executed inside the image; required for script workloads.
+command = ["python3", "-u", "-c", '''import base64, hashlib, json, pathlib, re, subprocess, tempfile
+bundle = json.load(open("/var/run/odin/staging/input-0"))
+assert bundle["schema"] == "odin.research-source.v1"
+marker = bundle["marker"]
+revision = bundle["revision"]
+files = bundle["files"]
+benchmark = bundle["benchmark"]
+assert isinstance(marker, str) and re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]*", marker)
+assert isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision)
+assert isinstance(files, dict) and files
+assert all(isinstance(name, str) and isinstance(encoded, str) for name, encoded in files.items())
+assert isinstance(benchmark, str) and benchmark in files and benchmark.endswith(".py")
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    for name in sorted(files):
+        path = pathlib.PurePosixPath(name)
+        assert path.parts and not path.is_absolute() and ".." not in path.parts
+        destination = root.joinpath(*path.parts)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(base64.b64decode(files[name], validate=True))
+    print("RESEARCH-SOURCE " + json.dumps({"marker": marker, "revision": revision, "sha256": hashlib.sha256(json.dumps(files, sort_keys=True, separators=(",", ":")).encode()).hexdigest()}), flush=True)
+    subprocess.run(["python3", "-u", benchmark], cwd=root, check=True)
+''']
+
+[seat]
+# Enabled seat ID whose permissions apply to this workload.
+seat = "kubert"
+# Enabled project ID within the seat's project_scope.
+project = "odin"
+
+[network]
+# Bare egress hostnames, not URLs; an empty array adds no external hosts.
+allow_hosts = []
+
+[state]
+# Absolute in-pod path where the persistent state volume is mounted.
+path = "/state"
+# State volume capacity: positive integer with Ki/Mi/Gi/Ti/Pi/Ei suffix, e.g. 1Gi.
+storage = "1Gi"
+
+[export]
+# Absolute in-pod directory whose files are exported.
+pod_path = "/export"
+# Absolute host directory receiving exported files.
+host_folder = "/srv/odin/export"
+
+[brief]
+text = "Execute the immutable source bundle at input-0 (odin.research-source.v1: marker, git revision, base64 file map, benchmark path). Materialize the files into a fresh private tempdir — no path may escape it — print RESEARCH-SOURCE with the marker, the revision and the canonical files-map SHA256, then run the dependency-free Python benchmark, which prints named numeric metrics. No network, no model execution."
+
+[lifetime]
+# Job wall-clock limit in seconds, 60..86400; omit for services.
+deadline_seconds = 600

@@ -1,0 +1,13 @@
+//! Generated authority wire v2 conformance checks; do not edit.
+
+    use self::vectors::{ECHO_PAIRS, MALFORMED, V1_REJECTIONS, VECTORS};
+    use super::*;
+    use std::io::{self, Cursor, Write};
+    #[derive(Clone, Copy, Debug)]
+    enum Direction {
+        Request,
+        Response,
+    }
+
+    mod vectors;
+

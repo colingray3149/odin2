@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM brain_chunk WHERE generation_id = $1\n                 AND NOT EXISTS (SELECT 1 FROM brain_generation WHERE generation_id = $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cc65b12a707c1daa126c8d601d28bc29a7294eee810d42817d09880d33864bea"
+}

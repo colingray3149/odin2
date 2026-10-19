@@ -1,0 +1,14 @@
+schema = "odin.registry.v1"
+kind = "node"
+enabled = true
+description = "CUDA, render, simulation, and cluster-agent worker runtime (burst GPU) on the tailnet pc host, Colin's gaming desktop."
+host = "pc"
+role = "worker"
+capabilities = ["cuda", "gpu", "cfd", "render", "simulation", "k3s-agent"]
+allow_workloads = true
+authoritative_state = false
+
+# The node-local gateway the pods placed on this node reach: host authority
+# is the declared reachable (tailnet) address of this node, the port is the
+# declared node-facing LiteLLM service port, and the path is the API base.
+gateway_endpoint = "http://100.64.0.10:14000/v1"

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/code.diagnostics.output.json",
+  "title": "code.diagnostics output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "errors": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "warnings": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warning"
+            ]
+          },
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "column": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "file",
+          "line",
+          "message"
+        ]
+      }
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "seconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "logTail": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "ok",
+    "errors",
+    "warnings",
+    "diagnostics",
+    "truncated",
+    "seconds",
+    "logTail"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/fleet.restore.input.json",
+  "title": "fleet.restore input",
+  "description": "One governed fleet-host restore. `host` names one declared fleet host; the daemon uncordons every enabled registry node of the host through its kube surface and reports the real post-patch scheduler state. Omit approvalId on the first call to request operator approval; retry with the exact approved host.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "host": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "The declared fleet host to restore."
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "The consumed operator approval binding this retry to the approved restore."
+    }
+  },
+  "required": ["host"]
+}

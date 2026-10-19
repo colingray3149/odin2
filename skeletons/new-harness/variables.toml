@@ -1,0 +1,91 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-harness"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "harnesses"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "enabled"
+type = "bool"
+required = true
+meaning = "Enable after validation."
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Which agent program this is and what Odin can claim about its tools."
+
+[[variable]]
+name = "protocol"
+type = "enum:acp|process|terminal|observe"
+required = true
+meaning = "acp: stdio protocol; process: CLI per prompt; terminal: interactive agent; observe: passive remote-session transcripts only, with no command, model_arg, account, resume_args, state_paths or brief."
+
+[[variable]]
+name = "governance"
+type = "enum:governed|observed"
+required = true
+meaning = "observed for any agent with its own tools (Odin watches and stops it); governed only if every tool call passes the kernel."
+
+[[variable]]
+name = "command"
+type = "optional<array<string>>"
+required = false
+meaning = "The program and its fixed arguments; omitted for observe."
+
+[[variable]]
+name = "prompt"
+type = "enum:argv|stdin|rpc|keys|none"
+required = true
+meaning = "How a prompt reaches the agent (rpc for acp, keys for terminal, none for observe)."
+
+[[variable]]
+name = "output"
+type = "enum:acp|claude-stream-json|codex-json|text|environment"
+required = true
+meaning = "The output event family; observe uses environment, selected by the remote-session observation declaration."
+
+[[variable]]
+name = "model_arg"
+type = "optional<string>"
+required = false
+meaning = "The flag that carries the selected model, e.g. --model."
+
+[[variable]]
+name = "resume_args"
+type = "optional<array<string>>"
+required = false
+meaning = "Arguments that continue its own conversation; {agent_session} is the id it reported."
+
+[[variable]]
+name = "state_paths"
+type = "optional<array<string>>"
+required = false
+meaning = "Paths under $HOME the agent writes its own state to."
+
+[[variable]]
+name = "account"
+type = "optional<enum:claude-code|codex>"
+required = false
+meaning = "The kind of account the agent signs in with; each session runs on its launch option's or project's account of that kind."
+
+[[variable]]
+name = "brief"
+type = "optional<text>"
+required = false
+meaning = "What the agent must know about running under Odin."
+
+[[variable]]
+name = "stop_signal"
+type = "enum:SIGINT|SIGTERM"
+required = true
+meaning = "The signal a driving harness sends first; unused for observe, whose controls refuse steering and stopping the agent."
+
+[[variable]]
+name = "stop_grace_seconds"
+type = "int:1:300"
+required = true
+meaning = "Seconds before a driving harness escalates to SIGKILL; unused for observe."

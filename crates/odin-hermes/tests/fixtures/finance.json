@@ -1,0 +1,85 @@
+{
+  "month": "2026-08",
+  "categories": [
+    { "name": "Groceries", "is_income": false },
+    { "name": "Subscriptions", "is_income": false },
+    { "name": "Fixture Income", "is_income": true },
+    { "name": "Fixture Archive", "is_income": false }
+  ],
+  "budgets": [
+    { "category": "Groceries", "amount_cents": 40000 },
+    { "category": "Subscriptions", "amount_cents": 6500 },
+    { "category": "Fixture Archive", "amount_cents": 5000 }
+  ],
+  "accounts": [
+    { "name": "Fixture Checking 4242424242424242", "offbudget": false },
+    { "name": "Fixture Savings", "offbudget": false }
+  ],
+  "transactions": [
+    {
+      "account": "Fixture Checking 4242424242424242",
+      "category": "Subscriptions",
+      "date": "2026-08-03",
+      "amount_cents": -1999,
+      "notes": "fixture streaming renewal; saved card token zx-3f9a-fixture"
+    },
+    {
+      "account": "Fixture Checking 4242424242424242",
+      "category": "Groceries",
+      "date": "2026-08-05",
+      "amount_cents": -3250,
+      "notes": "fixture grocery run"
+    },
+    {
+      "account": "Fixture Checking 4242424242424242",
+      "category": "Subscriptions",
+      "date": "2026-08-12",
+      "amount_cents": -4999,
+      "notes": "fixture software subscription"
+    },
+    {
+      "account": "Fixture Checking 4242424242424242",
+      "category": "Subscriptions",
+      "date": "2026-08-15",
+      "amount_cents": -7777,
+      "notes": "deleted fixture duplicate",
+      "tombstone": true
+    },
+    {
+      "account": "Fixture Checking 4242424242424242",
+      "category": "Groceries",
+      "date": "2026-08-19",
+      "amount_cents": -1440,
+      "notes": "fixture market top-up"
+    },
+    {
+      "account": "Fixture Savings",
+      "category": "Fixture Income",
+      "date": "2026-08-28",
+      "amount_cents": 250000,
+      "notes": "fixture salary"
+    },
+    {
+      "account": "Fixture Checking 4242424242424242",
+      "category": "Subscriptions",
+      "date": "2026-07-10",
+      "amount_cents": -1999,
+      "notes": "previous month fixture streaming"
+    },
+    {
+      "account": "Fixture Checking 4242424242424242",
+      "category": "Groceries",
+      "date": "2026-07-21",
+      "amount_cents": -2900,
+      "notes": "previous month fixture groceries"
+    },
+    {
+      "account": "Fixture Savings",
+      "category": "Fixture Income",
+      "date": "2026-09-01",
+      "amount_cents": 250000,
+      "notes": "next month fixture salary"
+    }
+  ],
+  "planted_identifiers": ["4242424242424242", "zx-3f9a-fixture"]
+}

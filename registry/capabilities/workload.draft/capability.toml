@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "R2 draft compilation for the conversational workload authoring path: compiles the caller's answers against the strict new-workload skeleton contract and the published registry, returning either the declared clarification list (variable name plus contract meaning) or the complete canonical declaration with its exact blake3 digest. The draft is a revisable private artifact (also produced as a generated vault page); it publishes nothing, launches nothing, grants nothing, and never changes a provider or model. The digest the draft returns is the exact selector the operator's workload.publish approval binds."
+handler = { id = "workload_draft" }
+input_schema = "schemas/capability/workload.draft.input.json"
+output_schema = "schemas/capability/workload.draft.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_workload_draft_evidence" }

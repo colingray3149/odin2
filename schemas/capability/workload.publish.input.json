@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/workload.publish.input.json",
+  "title": "workload.publish input",
+  "description": "Publication input for the R3 workload.publish operation. The request references the immutable draft by profileId, declarationDigest, and the draft response's publishRevision as expectedRegistryRevision. Retained identity and content are verified before the kernel approval gate can mint or consume a decision. The handler publishes those exact retained bytes through the committed-worktree chain to registry/workloads/<profileId>/profile.toml; it never recompiles model answers. The image identity is the digest-pinned reference inside the declaration. This operation does not launch a workload.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "profileId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "The profile id the retained draft belongs to; the publication installs exactly this profile's retained declaration bytes at exactly this identity."
+    },
+    "declarationDigest": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "description": "The draft's blake3 declaration digest; the publication consumes the retained compiled declaration under exactly this digest."
+    },
+    "expectedRegistryRevision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The exact NEW registry revision this publication installs — the draft response's publishRevision, verbatim (base revision + 1), not the base; a mismatch is a typed stale-scope refusal."
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Model-supplied selector naming the exact kernel approval on the phase-two dispatch — never itself authority: the kernel consumes that exact approval server-side."
+    }
+  },
+  "required": [
+    "profileId",
+    "declarationDigest",
+    "expectedRegistryRevision"
+  ]
+}

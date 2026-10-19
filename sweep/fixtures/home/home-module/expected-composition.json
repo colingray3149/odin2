@@ -1,0 +1,22 @@
+{
+  "schema": "odin.expected-composition.v1",
+  "runtime_manifest_schema": "odin.runtime-manifest.v1",
+  "required_executables": [
+    "env", "timeout", "systemd-run", "systemctl", "loginctl", "unshare",
+    "xdpyinfo", "xprop", "odin", "odind", "ohshit", "omp", "sweep",
+    "worker_bootstrap", "git", "ssh-keygen", "scanner"
+  ],
+  "required_tools": {
+    "env": "coreutils",
+    "timeout": "coreutils",
+    "systemd-run": "systemd",
+    "systemctl": "systemd",
+    "loginctl": "systemd",
+    "unshare": "util-linux",
+    "xdpyinfo": "xorg.xdpyinfo",
+    "xprop": "xorg.xprop"
+  },
+  "config_file": "odind.toml",
+  "ohshit_backing": "odin emergency-stop",
+  "ohshit_config": "ohshit-config.json"
+}

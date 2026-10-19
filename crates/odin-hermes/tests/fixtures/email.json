@@ -1,0 +1,27 @@
+{
+  "messages": [
+    {
+      "id": "email-001",
+      "from": "billing@fixture-streaming.example",
+      "subject": "Your Fixture Streaming receipt",
+      "body": "Fixture receipt for the August billing period of the fixture streaming subscription.",
+      "received_at": "2026-08-14T09:30:00Z",
+      "subscription_hint": "monthly"
+    },
+    {
+      "id": "email-002",
+      "from": "no-reply@fixture-software.example",
+      "subject": "Fixture Software invoice",
+      "body": "Your monthly fixture software subscription invoice.",
+      "received_at": "2026-08-15T11:00:00Z",
+      "subscription_hint": "monthly"
+    },
+    {
+      "id": "email-003",
+      "from": "news@fixture-newsletter.example",
+      "subject": "Fixture newsletter: this week in fixtures",
+      "body": "A fixture newsletter no one needs to subscribe to.",
+      "received_at": "2026-08-16T08:00:00Z"
+    }
+  ]
+}

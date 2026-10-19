@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/task.create.input.json",
+  "title": "task.create input",
+  "description": "One bounded governed worker delegation. The provider, model, lifetime, and prompt ceiling are fixed by host configuration and are never caller-chosen; only the worker prompt and the in-scope child project are named here.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "prompt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 262144
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    }
+  },
+  "required": ["prompt", "project"]
+}

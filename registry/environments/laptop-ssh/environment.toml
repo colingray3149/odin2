@@ -1,0 +1,10 @@
+schema = "odin.registry.v1"
+kind = "environment"
+enabled = true
+description = "Colin's laptop over ssh (stand-in for any reachable machine): the agent runs as colin there, in a session workspace Odin clones. Closing the ssh client does not prove the remote process group ended."
+transport = "ssh-host"
+host = "colin@laptop"
+seats = ["gungnir", "reginn"]
+
+[observation]
+channel = "events"

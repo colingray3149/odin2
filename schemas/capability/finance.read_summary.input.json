@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/finance.read_summary.input.json",
+  "title": "finance.read_summary input",
+  "description": "Bounded month window for the local-first finance.read_summary operation (LIFE-007, Actual Budget). R0 pure: the summary path performs zero writes and never touches the approval gate. Only a month window is accepted — there is no account scoping in v1; the summary is a whole-budget narrowed aggregate. A malformed month is a typed invalid outcome; a missing or non-Actual budget file is typed unavailable, never an empty success. Credential material never travels in arguments.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "month": {
+      "type": "string",
+      "pattern": "^(19[7-9][0-9]|20[0-9][0-9])-(0[1-9]|1[0-2])$"
+    }
+  },
+  "required": ["month"]
+}

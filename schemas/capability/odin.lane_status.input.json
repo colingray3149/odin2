@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/odin.lane_status.input.json",
+  "title": "odin.lane_status input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "laneId": { "type": "string", "minLength": 1 }
+  },
+  "required": ["laneId"]
+}

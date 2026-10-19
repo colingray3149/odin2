@@ -1,0 +1,19 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Cancel one observed finite Kubernetes Job by run identity: the caller supplies the exact opaque resourceVersion observed at admission as the compare-and-swap, and the trusted runtime routes the destructive stop through the sole StopAuthority backend, which records stop intent before actuation and reports retained checkpoints and residue."
+handler = { id = "odin_kube.workload.cancel" }
+input_schema = "schemas/capability/kube.workload.cancel.input.json"
+output_schema = "schemas/capability/kube.workload.cancel.output.json"
+effect_class = "R3"
+seat_tags = ["operator"]
+# Covers the runtime's actuation bound: the declared 120s teardown window
+# plus 2 bounded 30s request phases and 10s slack (190s).
+timeout_seconds = 190
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_kube.workload.cancel_evidence" }

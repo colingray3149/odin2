@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/vault.write_generated.input.json",
+  "title": "vault.write_generated input",
+  "description": "Machine markdown write confined to the configured generated vault namespace (the life folders: calendar, appointments, reminders, drafts among its areas). R2: the write is durable and confined; generated pages are reversible artifacts and pre-existing non-generated content is never touched. page_name is the FULL vault-relative page name including the generated namespace prefix; the handler refuses anything not beneath the configured namespace (traversal, symlink, and namespace escapes are typed refusals) and enforces the .md suffix at its own stricter bound. Alternatively, receipt_correlation_id alone names the original operation of one committed email.draft or calendar.propose effect of the caller's own seat and session: its derived receipt pages are rebuilt from that effect's durable record, never from caller text, and published without replacing existing different bytes. Credential material never travels in arguments; a missing vault root is typed unavailable.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "page_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "content": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1048576
+    },
+    "receipt_correlation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "oneOf": [
+    {
+      "required": ["page_name", "content"],
+      "not": { "required": ["receipt_correlation_id"] }
+    },
+    {
+      "required": ["receipt_correlation_id"],
+      "not": {
+        "anyOf": [
+          { "required": ["page_name"] },
+          { "required": ["content"] }
+        ]
+      }
+    }
+  ]
+}

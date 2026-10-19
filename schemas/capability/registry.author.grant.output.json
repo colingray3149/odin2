@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/registry.author.grant.output.json",
+  "title": "registry.author.grant output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "skeleton": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "publishedRevision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "commit": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "skeleton",
+    "id",
+    "path",
+    "publishedRevision",
+    "commit"
+  ]
+}

@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+kind = "routine"
+enabled = true
+description = "Remind Colin of class name and location 30 minutes before classes on his personal Google calendar."
+# Enabled conversation-seat ID to wake when the trigger fires.
+seat = "sinmara"
+
+[trigger]
+# Event: workload_succeeded, workload_failed, watchdog, incident, mail_arrived, calendar_event, file_received, repo_push, ring_gesture.
+event = "calendar_event"
+# Minutes before a calendar event; integer 1..1440, calendar_event only.
+lead_minutes = 30
+# Mail/calendar account name; omitted means all accounts being read.
+account = "colin@example.com"
+
+[action]
+# brief wakes the seat with instructions; dm sends text directly.
+kind = "brief"
+# Action content; non-empty text up to 2000 characters.
+text = "For the triggering event on colin@example.com, determine whether it is a class using the event title and description; read the event details if needed. If it is a class, DM Colin its class name and location, noting it starts in 30 minutes. If the location is absent, say location isn't listed. Do not notify for non-class events. Use only this personal Google calendar, not colin@example.com."

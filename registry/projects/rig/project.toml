@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = true
+description = "rig — a dedicated Rust merge fixture: one src/lib.rs whose shared anchor line two seats append different functions below on parallel branches, so both reviewed merges land on main. Never a production project."
+source_root = "/home/colin/valhalla/rig"
+default_seat = "gungnir"
+memory_namespaces = ["memory.project.rig"]
+artifact_policy = "standard"
+review_verdict = "code.review.verdict"

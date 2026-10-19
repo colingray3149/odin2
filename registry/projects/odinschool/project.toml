@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = true
+description = "ME295 class repo: a training environment that runs a real Odin against a simulated world to generate logs for fine-tuning small models."
+source_root = "/home/colin/valhalla/odinschool"
+default_seat = "gungnir"
+memory_namespaces = ["atlas.code"]
+artifact_policy = "standard"

@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = true
+description = "Colin's NixOS and Home Manager declarative configuration repository."
+source_root = ""
+default_seat = "architect"
+memory_namespaces = ["atlas.code", "memory.project.dotfiles"]
+artifact_policy = "standard"

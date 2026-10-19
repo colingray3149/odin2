@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/vault.search.input.json",
+  "title": "vault.search input",
+  "description": "Bounded snapshot request over the retrieval-eligible vault pool served by the SilverBullet adapter. R0: the request reads the loopback vault through the governed adapter and produces no side effects. Namespace scoping is configuration-only and never caller-visible: a caller can only narrow what the adapter already admits, never widen it. A missing or unhealthy vault service is a typed unavailable outcome, never an empty success. There is no query field: ranking belongs to the M11 brain retrieval over the indexed pool.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "max_pages": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+    }
+  }
+}

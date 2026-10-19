@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "lane"
+enabled = true
+description = "Preflight verification, validation, mutation, restart, resource, and admission checks."
+# Existing project ID whose scope this lane belongs to.
+project = "skuld"
+# Descriptive lane-family label; any non-empty string, not a dispatch enum.
+family = "wall"
+# Existing seat ID used when no seat is selected explicitly.
+default_seat = "gungnir"
+# Descriptive queue label; any non-empty string, not a scheduling guarantee.
+queue = "scientific"
+# true requires a separate reviewer before publishing code; false does not.
+requires_independent_review = true
+# Reviewer capability ID; overrides the project review_verdict.
+review_verdict = "code.review.verdict"

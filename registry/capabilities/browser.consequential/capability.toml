@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Carry out this browser action that needs your approval. The action must match the approved page and request; changing either requires a new approval."
+handler = { id = "odin_browser.consequential" }
+input_schema = "schemas/capability/browser.consequential.input.json"
+output_schema = "schemas/capability/browser.consequential.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+batchable = true
+preview = "browser"
+evidence_extractor = { id = "odin_browser.consequential_evidence" }

@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Ask Architect to help design or implement this task: one concrete job on one project, both taken from the request, the conversation or a declared default. Each ask is a delegated job, not an interactive session or a helper left waiting for orders: a recorded receipt proves acceptance for delegation, never that Architect is open or ready. Report completion only from a completed task result or governed state evidence. Work stays within the selected project's declared permissions and appears in its own terminal tab; a retry continues the same task rather than starting another."
+handler = { id = "seat_ask" }
+delegate_to = "architect"
+input_schema = "schemas/capability/seat.ask.input.json"
+output_schema = "schemas/capability/seat.ask.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_hermes_seat_ask_evidence" }

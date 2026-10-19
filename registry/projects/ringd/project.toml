@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = true
+description = "Smart ring daemon — Colin's Colmi R02 smart ring tooling, reading ring data over BLE"
+source_root = "/home/colin/valhalla/ringd"
+default_seat = "gungnir"
+memory_namespaces = ["atlas.code", "memory.project.ringd"]
+artifact_policy = "standard"
+review_verdict = "code.review.verdict"

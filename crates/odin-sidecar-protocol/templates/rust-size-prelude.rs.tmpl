@@ -1,0 +1,76 @@
+fn add_size_part(total: usize, part: usize) -> Result<usize, ProtocolError> {
+    total.checked_add(part)
+        .ok_or_else(|| ProtocolError::Encode("canonical payload size overflow".to_string()))
+}
+pub(super) fn canonical_size_quoted(text: &str) -> usize {
+    2 + text.chars().map(|character| match character {
+        '"' | '\\' | '\u{8}' | '\u{c}' | '\n' | '\r' | '\t' => 2,
+        character if (character as u32) < 0x20 => 6,
+        character if character.is_ascii() => 1,
+        character if (character as u32) <= 0xFFFF => 6,
+        _ => 12,
+    }).sum::<usize>()
+}
+fn canonical_size_digits(magnitude: u64) -> usize {
+    let mut magnitude = magnitude;
+    let mut digits = 1;
+    while magnitude >= 10 {
+        magnitude /= 10;
+        digits += 1;
+    }
+    digits
+}
+fn canonical_size_u64(value: u64) -> usize {
+    canonical_size_digits(value)
+}
+fn canonical_size_i32(value: i64) -> usize {
+    canonical_size_digits(value.unsigned_abs()) + usize::from(value < 0)
+}
+fn canonical_size_u64_wire(value: u64) -> usize {
+    2 + canonical_size_digits(value)
+}
+fn canonical_size_object_parts(parts: &[usize]) -> Result<usize, ProtocolError> {
+    let separators = (parts.len() / 3).saturating_sub(1);
+    parts.iter().copied().try_fold(2usize + separators, add_size_part)
+}
+fn canonical_size_value(value: &Value, depth: usize) -> Result<usize, ProtocolError> {
+    if depth > ARGUMENT_MAX_DEPTH {
+        return Err(ProtocolError::Encode(
+            "argument nesting exceeds the generated wire depth bound".to_string(),
+        ));
+    }
+    match value {
+        Value::Null => Ok(4),
+        Value::Bool(true) => Ok(4),
+        Value::Bool(false) => Ok(5),
+        Value::Int(number) => Ok(canonical_size_i32(*number)),
+        Value::UInt(number) => Ok(canonical_size_u64(*number)),
+        Value::Float(_) => Err(ProtocolError::Encode("argument numbers must be integers".to_string())),
+        Value::String(text) => Ok(canonical_size_quoted(text)),
+        Value::Array(items) => {
+            let mut total = 2usize;
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 { total = add_size_part(total, 1)?; }
+                total = add_size_part(total, canonical_size_value(item, depth + 1)?)?;
+            }
+            Ok(total)
+        }
+        Value::Object(entries) => {
+            let mut total = 2usize;
+            for (index, entry) in entries.iter().enumerate() {
+                if index > 0 { total = add_size_part(total, 1)?; }
+                total = add_size_part(total, canonical_size_quoted(&entry.key))?;
+                total = add_size_part(total, 1)?;
+                total = add_size_part(total, canonical_size_value(&entry.value, depth + 1)?)?;
+            }
+            Ok(total)
+        }
+    }
+}
+fn canonical_size_budget(value: &Budget) -> Result<usize, ProtocolError> {
+    canonical_size_object_parts(&[
+        canonical_size_quoted("requests"), 1, canonical_size_u64_wire(value.requests.get()),
+        canonical_size_quoted("stops"), 1, canonical_size_u64_wire(value.stops.get()),
+        canonical_size_quoted("spend"), 1, canonical_size_u64_wire(value.spend.get()),
+    ])
+}

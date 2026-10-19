@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "host"
+enabled = true
+description = "Enrolled operator laptop; paired client and worker following the mini control host."
+hardware = "Lenovo ideapad FLEX 6-14IKB; x86_64; Intel integrated graphics"
+role = "worker"
+tailscale = "laptop"
+enrolled = true

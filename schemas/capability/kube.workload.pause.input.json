@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.workload.pause.input.json",
+  "title": "kube.workload.pause input",
+  "description": "Suspends one observed pod Job (a finite job or a long-lived service) addressed by run id. The caller supplies the exact opaque resourceVersion observed at admission (via kube.workload.summarize or kube.snapshot.read); it is the compare-and-swap and is never re-fetched or interpreted by the runtime. Operation id, idempotency digest, worker identity, and exact patch are resolved by the trusted runtime. approvalId is a model-supplied selector naming the exact approval on the phase-two dispatch \u2014 never itself authority: the kernel consumes that exact approval server-side.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Model-supplied selector naming the exact kernel approval on the phase-two dispatch \u2014 never itself authority: the kernel consumes that exact approval server-side."
+    },
+    "expectedResourceVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Opaque Kubernetes resourceVersion of the addressed Job as observed at admission."
+    },
+    "checkpoint": {
+      "type": "boolean",
+      "description": "Also capture the paused pod's per-pod state as a checkpoint artifact (its id comes back as checkpoint). Resume continues from the same state either way."
+    }
+  },
+  "required": [
+    "runId",
+    "expectedResourceVersion"
+  ]
+}

@@ -1,0 +1,56 @@
+brain_scope = ["memory.colin", "atlas.code", "state.repos", "memory.scribe", "memory.project.surtr", "memory.project.rig"]
+profile_namespace = "memory.colin"
+categories = ["builder"]
+description = "Documentation helper that writes and tidies READMEs and docs on surtr; also the second seat of the rig Rust acceptance fixture (runs its tests and requests review of its branch)."
+enabled = true
+kind = "seat"
+project_scope = ["surtr", "rig"]
+schema = "odin.registry.v1"
+tool_refs = ["task.read", "git.patch.propose", "build.run", "check.run", "test.run", "code.review.request", "capsule.eval.run", "capsule.file.edit", "seat.ask.sinmara", "memory.remember", "brain.search", "brain.read", "registry.read", "incident.raise", "artifact.write", "artifact.read", "memory.forget", "kube.workload.summarize"]
+
+[approval_defaults]
+r0 = "auto"
+r1 = "auto"
+r2 = "auto"
+r3 = "approval"
+
+[context]
+max_bundle_tokens = 24576
+profile = "medium"
+review_lane = "grok"
+
+[knowledge]
+atlas_sources = ["memory.colin", "atlas.code", "state.repos", "memory.scribe", "memory.project.surtr", "memory.project.rig"]
+denied_tags = []
+required_tags = []
+top_k = 16
+
+[limits]
+max_parallel_runs = 4
+max_sessions = 4
+
+[live]
+file_egress_lane = "sinmara.file.out"
+file_ingress_lane = "sinmara.file.in"
+max_sessions = 4
+render_egress_lane = "sinmara.render.out"
+render_ingress_lane = "sinmara.render.in"
+
+[live.rollover]
+history_tail_events = 128
+max_brief_bytes = 8000
+threshold_tokens = 180000
+
+[tools]
+deny = []
+
+[tools.redirects]
+allow_cross_origin = false
+disabled_aliases = []
+max_http_hops = 2
+
+[sandbox]
+shell = true
+network = "none"
+writable = ["capsule", "scratch"]
+

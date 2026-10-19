@@ -1,0 +1,40 @@
+schema = "odin.registry.v1"
+kind = "provider"
+enabled = true
+description = "Native web-search adapter provider: R0 pure web.search operations execute through the odin-adapter-web backend configured by odin.adapter-backend-config.v1 files. Credentials, endpoints, and bounds resolve from config only; no gateway route, endpoint, or account check is declared or implied here."
+# Compiled adapter ID; litellm-gateway uses routes, other adapters require routes=[].
+adapter = "web-search"
+
+[policy]
+# Ordered gateway_lane_id/gateway_model_id pairs; non-empty only for litellm-gateway.
+routes = []
+
+[recovery]
+# Rungs: retry, restart_worker, checkpoint, rehome, escalate (required); execution order is fixed.
+allowed_rungs = ["retry", "checkpoint", "escalate"]
+# Non-empty operator guidance when no recovery action remains.
+blocked_missing_decision = "operator must choose whether to abandon, repair, or resume the workload"
+
+[recovery.max_attempts]
+# retry attempt limit; integer 0..1000, used only when the rung is allowed.
+retry = 2
+# restart_worker attempt limit; integer 0..1000, used only when the rung is allowed.
+restart_worker = 1
+# checkpoint attempt limit; integer 0..1000, used only when the rung is allowed.
+checkpoint = 1
+# rehome attempt limit; integer 0..1000, used only when the rung is allowed.
+rehome = 1
+# escalate attempt limit; integer 1..1000.
+escalate = 1
+
+[recovery.cooldown_seconds]
+# retry cooldown in seconds; integer 0..31557600, zero means no delay.
+retry = 30
+# restart_worker cooldown in seconds; integer 0..31557600, zero means no delay.
+restart_worker = 30
+# checkpoint cooldown in seconds; integer 0..31557600, zero means no delay.
+checkpoint = 30
+# rehome cooldown in seconds; integer 0..31557600, zero means no delay.
+rehome = 60
+# escalate cooldown in seconds; integer 0..31557600, zero means no delay.
+escalate = 0

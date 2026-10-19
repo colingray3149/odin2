@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Read-only bounded live cluster health observation through the daemon's real kube client: node readiness and pressure conditions, pods with observed problems (non-running phases, not-ready or waiting containers, crash-loop restarts), and recent warning events, exactly as the API server returned them. Empty arrays are real observations from a reachable cluster, never an inferred-healthy placeholder; an unreachable cluster or an incomplete bounded scan is a typed unavailability. No cluster mutation."
+handler = { id = "odin_kube.health.read" }
+input_schema = "schemas/capability/kube.health.read.input.json"
+output_schema = "schemas/capability/kube.health.read.output.json"
+effect_class = "R0"
+seat_tags = ["operator"]
+timeout_seconds = 90
+idempotency = "pure"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_kube.health.read_evidence" }

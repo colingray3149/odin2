@@ -1,0 +1,10 @@
+schema = "odin.registry.v1"
+kind = "context-profile"
+enabled = true
+description = "Research-heavy sessions: a full core and a large brain context per epoch (a slice may still cap it lower)."
+# Core memory token budget in the system prompt; integer 1..4294967295.
+core_tokens = 2_048
+# Retrieval token budget at session start and after compaction; integer 1..4294967295.
+inject_tokens = 2_048
+# Maximum retrieved items per context injection; integer 1..65535.
+inject_k = 16

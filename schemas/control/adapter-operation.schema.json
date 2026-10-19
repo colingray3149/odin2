@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/control/adapter-operation.schema.json",
+  "title": "Odin typed adapter operation record",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "odin.adapter.operation.v1" },
+    "operation_id": { "$ref": "#/$defs/id" },
+    "adapter": { "$ref": "#/$defs/adapter_identity" },
+    "kind": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z0-9_-]+)+$" },
+    "effect_class": { "type": "string", "enum": ["R0", "R1", "R2", "R3"] },
+    "input_schema": { "$ref": "#/$defs/schema_ref" },
+    "input_digest": { "$ref": "#/$defs/digest" },
+    "credential_handles": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/credential_handle" }
+    },
+    "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "taint": { "type": "string", "enum": ["clean", "credential_tainted"] },
+    "state": {
+      "type": "string",
+      "enum": ["prepared", "dispatched", "effect_started", "succeeded", "failed", "cancelled", "in_doubt"]
+    },
+    "output_schema": { "$ref": "#/$defs/schema_ref" },
+    "output_digest": {
+      "oneOf": [
+        { "$ref": "#/$defs/digest" },
+        { "type": "null" }
+      ]
+    },
+    "evidence_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    }
+  },
+  "required": [
+    "schema",
+    "operation_id",
+    "adapter",
+    "kind",
+    "effect_class",
+    "input_schema",
+    "input_digest",
+    "credential_handles",
+    "idempotency_key",
+    "taint",
+    "state",
+    "output_schema",
+    "output_digest",
+    "evidence_refs"
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,191}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "schema_ref": {
+      "type": "string",
+      "pattern": "^schemas/[a-zA-Z0-9._/-]+\\.json$"
+    },
+    "credential_handle": {
+      "type": "string",
+      "pattern": "^cred:[a-zA-Z0-9][a-zA-Z0-9._:-]{0,190}$"
+    },
+    "adapter_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "adapter_id": { "$ref": "#/$defs/id" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "binding_digest": { "$ref": "#/$defs/digest" }
+      },
+      "required": ["adapter_id", "version", "binding_digest"]
+    }
+  }
+}

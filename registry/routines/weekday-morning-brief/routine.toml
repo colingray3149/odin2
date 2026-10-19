@@ -1,0 +1,17 @@
+schema = "odin.registry.v1"
+kind = "routine"
+enabled = true
+description = "Weekday 7:30 AM brief: classes today, assignments due soon, urgent mail"
+# Enabled conversation-seat ID to wake when the trigger fires.
+seat = "sinmara"
+
+[trigger]
+# Local time: daily/weekdays/weekends or mon,...,sun HH:MM; monthly DAY HH:MM; every N minutes/hours.
+# Use schedule or event, never both; monthly day 1..28, interval 5..1440 minutes from local midnight.
+schedule = "weekdays 07:30"
+
+[action]
+# brief wakes the seat with instructions; dm sends text directly.
+kind = "brief"
+# Action content; non-empty text up to 2000 characters.
+text = "Morning brief for Colin. Gather, then send him ONE DM: (1) his classes today — read today's calendar window; (2) assignments due soon — check his class notes/knowledge for due dates in the next several days; (3) anything urgent in his mail — search his Gmail accounts for time-sensitive items (deadlines, interview requests, professor/admin emails needing a reply). Keep it short: a few lines, plain words, only what he needs to know."

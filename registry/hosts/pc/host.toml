@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "host"
+enabled = true
+description = "Enrolled CUDA, rendering, and simulation worker host on the tailnet."
+hardware = "AMD desktop; Ryzen 7 3700X; NVIDIA RTX 3070; 31 GiB RAM; legacy BIOS"
+role = "worker"
+tailscale = "pc"
+enrolled = true

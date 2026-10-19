@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.workload.summarize.input.json",
+  "title": "kube.workload.summarize input",
+  "description": "Pure read of pod Job (a finite job or a long-lived service) lifecycle truth. Name one run to summarize it; omit runId to summarize every Odin-owned pod Job (finite jobs and long-lived services alike) in the configured namespace.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    }
+  },
+  "required": []
+}

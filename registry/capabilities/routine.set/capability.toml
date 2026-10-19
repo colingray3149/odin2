@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Declares or replaces a routine for the calling seat, triggered by a schedule or observed event. Action brief starts a conversation turn; dm sends text to the owner. Calendar events accept lead_minutes; other triggers do not. Routines use the seat's existing capabilities and approvals."
+handler = { id = "routine_set" }
+input_schema = "schemas/capability/routine.set.input.json"
+output_schema = "schemas/capability/routine.set.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_routine_set_evidence" }

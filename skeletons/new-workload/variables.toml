@@ -1,0 +1,199 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-workload"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "workloads"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "enabled"
+type = "bool"
+required = true
+meaning = "Enable after the draft's one approval."
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Pod role in one sentence."
+
+[[variable]]
+name = "image_reference"
+type = "string"
+required = true
+meaning = "\"platform\" (the deployed Odin workload image), or a digest-pinned OCI reference host/repo[:tag]@sha256:<manifest_digest>."
+
+[[variable]]
+name = "launcher"
+type = "optional<string>"
+required = false
+meaning = "Absolute in-image path of the pinned OMP launcher."
+
+[[variable]]
+name = "browser"
+type = "optional<string>"
+required = false
+meaning = "Absolute in-image path of the browser executable."
+
+[[variable]]
+name = "supervisor"
+type = "optional<string>"
+required = false
+meaning = "Absolute in-image path of the pinned browser supervisor binary."
+
+[[variable]]
+name = "playwright"
+type = "optional<string>"
+required = false
+meaning = "Absolute in-image path of the playwright module root."
+
+[[variable]]
+name = "seat"
+type = "id"
+required = true
+meaning = "Existing enabled seat the pod agent runs as."
+
+[[variable]]
+name = "project"
+type = "id"
+required = true
+meaning = "Existing enabled project inside the seat's project_scope."
+
+[[variable]]
+name = "gateway_lane"
+type = "optional<id>"
+required = false
+meaning = "Gateway route lane declared by an enabled provider; the declared model choice."
+
+[[variable]]
+name = "allow_hosts"
+type = "array<string>"
+required = true
+meaning = "Allowed bare egress hostnames; [] permits no external hosts."
+
+[[variable]]
+name = "xvfb"
+type = "optional<string>"
+required = false
+meaning = "Absolute in-image path of the Xvfb executable."
+
+[[variable]]
+name = "screen"
+type = "optional<string>"
+required = false
+meaning = "Virtual display geometry <width>x<height>x<depth>."
+
+[[variable]]
+name = "stream"
+type = "optional<bool>"
+required = false
+meaning = "Whether the pod browser surface streams to the owner."
+
+[[variable]]
+name = "state_path"
+type = "string"
+required = true
+meaning = "Absolute in-pod mount path of the per-pod state volume."
+
+[[variable]]
+name = "storage"
+type = "string"
+required = true
+meaning = "Persistent storage quantity requested for the per-pod state volume, for example 2Gi."
+
+[[variable]]
+name = "export_pod_path"
+type = "string"
+required = true
+meaning = "Absolute in-pod path of the exported folder."
+
+[[variable]]
+name = "export_host_folder"
+type = "string"
+required = true
+meaning = "Absolute host folder of the explicit export; the clarifying folder answer."
+
+[[variable]]
+name = "brief_text"
+type = "text"
+required = true
+meaning = "Pod task brief injected into every agent turn."
+
+[[variable]]
+name = "memory_namespace"
+type = "optional<id>"
+required = false
+meaning = "atlas.<subtree> or memory.<name> namespace declared by the project and inside the seat's brain_scope."
+
+[[variable]]
+name = "deadline_seconds"
+type = "optional<int:60:86400>"
+required = false
+meaning = "Hard lifetime of one run in seconds; the pod is ended after it, whatever it is doing."
+
+[[variable]]
+name = "harness"
+type = "optional<enum:omp|script>"
+required = false
+meaning = "script: the pod runs the declared command (scriptCommand) and no agent; omp or omitted: an agent pod."
+
+[[variable]]
+name = "script_command"
+type = "optional<array<string>>"
+required = false
+meaning = "A script pod's command, argv form, run inside the image."
+
+[[variable]]
+name = "gpu_count"
+type = "optional<int:0:8>"
+required = false
+meaning = "NVIDIA GPUs the pod reserves; omitted: none."
+
+[[variable]]
+name = "placement"
+type = "optional<array<id>>"
+required = false
+meaning = "Node capabilities the pod needs (from registry node declarations, e.g. cfd, gpu, scrape); omitted: any node."
+
+[[variable]]
+name = "mode"
+type = "optional<enum:job|service>"
+required = false
+meaning = "job (finite, with a deadline) or service (long-lived, restarted on failure, ended by a stop)."
+
+[[variable]]
+name = "monitoring_cadence_seconds"
+type = "optional<int:5:3600>"
+required = false
+meaning = "Seconds between reads of the pod's newest ODIN-STATUS line; used with watchdogs or progress monitoring."
+
+[[variable]]
+name = "watchdogs"
+type = "optional<array<table>>"
+required = false
+meaning = "Code-evaluated alerts over ODIN-STATUS counters: {id, condition (e.g. 'residual > 1e-3'), consecutive_hits, cooldown_seconds, severity (info|warning|error|critical), slice, action (notify|stop)}."
+
+[[variable]]
+name = "monitoring_progress"
+type = "optional<string>"
+required = false
+meaning = "Anti-stuck: the ODIN-STATUS counter whose growth is the pod's useful progress; declared with monitoring_stall_seconds and monitoring_recovery."
+
+[[variable]]
+name = "monitoring_stall_seconds"
+type = "optional<int:10:86400>"
+required = false
+meaning = "Anti-stuck: how long the pod may run without useful progress (at least two monitoring reads)."
+
+[[variable]]
+name = "monitoring_recovery"
+type = "optional<table>"
+required = false
+meaning = "Anti-stuck ladder: {max_attempts {retry, restart_worker, checkpoint, rehome, escalate}, cooldown_seconds {same keys}, allowed_rungs (restart_worker, escalate), blocked_missing_decision}."
+
+[[variable]]
+name = "tools"
+type = "optional<array<string>>"
+required = false
+meaning = "Host capabilities the pod's agent may call (a subset of its seat's tools, e.g. memory.remember); never launch, delegate or create. Omitted: none."

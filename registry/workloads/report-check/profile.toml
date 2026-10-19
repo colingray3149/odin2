@@ -1,0 +1,45 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "Script pod that reads a staged test-report file and prints PASS/FAIL based on whether it shows tests passed without failures."
+# Runner: script, an enabled pod-capable harness (default omp), or the separate claude-code driver.
+harness = "script"
+# Required node capability IDs; omitted means any eligible node.
+placement = ["scrape"]
+
+[image]
+# platform uses the deployed image; otherwise require an OCI reference with @sha256:<digest>.
+reference = "docker.io/library/python:3.12-slim@sha256:eeb8088e67610b37583880c7627e3931f087cba55a35810819e34a398f624a47"
+
+[script]
+# Non-empty argv array executed inside the image; required for script workloads.
+command = ["python3", "-c", "t=open('/var/run/odin/staging/input-0').read();print(t[-400:]);print('REPORT-CHECK', 'PASS' if ' passed' in t and 'failed' not in t else 'FAIL')"]
+
+[seat]
+# Enabled seat ID whose permissions apply to this workload.
+seat = "kubert"
+# Enabled project ID within the seat's project_scope.
+project = "odin"
+
+[network]
+# Bare egress hostnames, not URLs; an empty array adds no external hosts.
+allow_hosts = []
+
+[state]
+# Absolute in-pod path where the persistent state volume is mounted.
+path = "/state"
+# State volume capacity: positive integer with Ki/Mi/Gi/Ti/Pi/Ei suffix, e.g. 1Gi.
+storage = "1Gi"
+
+[export]
+# Absolute in-pod directory whose files are exported.
+pod_path = "/export"
+# Absolute host directory receiving exported files.
+host_folder = "/srv/odin/export"
+
+[brief]
+text = "Script pod (no agent): reads the staged test report at /var/run/odin/staging/input-0, prints its last 400 characters, and prints REPORT-CHECK PASS if the report shows tests passed with no failures, else FAIL."
+
+[lifetime]
+# Job wall-clock limit in seconds, 60..86400; omit for services.
+deadline_seconds = 600

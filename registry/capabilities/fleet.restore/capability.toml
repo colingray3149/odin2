@@ -1,0 +1,17 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "R2 operator-approved restore of one declared fleet host to schedulable: uncordons every enabled registry node of the host through the daemon's kube surface, resumes the Odin pods its drain paused, and reports the real post-patch scheduler state read back from the API server, so the caller learns the truth instead of assuming the patch landed. Bounded per request, typed on every refusal: an unknown host, an offline host, or a daemon without a kube surface refuses, never fabricates."
+handler = { id = "odin_hermes.fleet_restore" }
+input_schema = "schemas/capability/fleet.restore.input.json"
+output_schema = "schemas/capability/fleet.restore.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_hermes.fleet_restore_evidence" }

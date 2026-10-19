@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/memory.remember.input.json",
+  "title": "memory.remember input",
+  "properties": {
+    "content": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 600
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "about": {
+      "type": "string",
+      "enum": [
+        "colin",
+        "seat",
+        "project"
+      ]
+    }
+  },
+  "required": [
+    "content"
+  ]
+}

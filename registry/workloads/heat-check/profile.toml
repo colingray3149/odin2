@@ -1,0 +1,45 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "Stage 2 of heat chain: verifies stage 1 max temperature is monotonically non-increasing, prints CHECK PASS or FAIL"
+# Runner: script, an enabled pod-capable harness (default omp), or the separate claude-code driver.
+harness = "script"
+# Required node capability IDs; omitted means any eligible node.
+placement = ["scrape"]
+
+[image]
+# platform uses the deployed image; otherwise require an OCI reference with @sha256:<digest>.
+reference = "docker.io/library/python:3.12-slim@sha256:eeb8088e67610b37583880c7627e3931f087cba55a35810819e34a398f624a47"
+
+[script]
+# Non-empty argv array executed inside the image; required for script workloads.
+command = ["python3", "-u", "-c", '''exec("t=open('/var/run/odin/staging/input-0').read()\nvals=[]\nfor line in t.splitlines():\n    p=line.split()\n    if len(p)==2:\n        try:\n            vals.append((float(p[0]),float(p[1])))\n        except ValueError:\n            pass\nok=len(vals)>=2 and all(vals[i][1]<=vals[i-1][1]+1e-9 for i in range(1,len(vals)))\nprint('CHECK PASS' if ok else 'CHECK FAIL')\nprint('points=%d start=%.6f end=%.6f'%(len(vals),vals[0][1],vals[-1][1]))")''']
+
+[seat]
+# Enabled seat ID whose permissions apply to this workload.
+seat = "kubert"
+# Enabled project ID within the seat's project_scope.
+project = "odin"
+
+[network]
+# Bare egress hostnames, not URLs; an empty array adds no external hosts.
+allow_hosts = []
+
+[state]
+# Absolute in-pod path where the persistent state volume is mounted.
+path = "/state"
+# State volume capacity: positive integer with Ki/Mi/Gi/Ti/Pi/Ei suffix, e.g. 1Gi.
+storage = "1Gi"
+
+[export]
+# Absolute in-pod directory whose files are exported.
+pod_path = "/export"
+# Absolute host directory receiving exported files.
+host_folder = "/srv/odin/export"
+
+[brief]
+text = "Read stage 1 heat-sim output from /var/run/odin/staging/input-0 and verify the max temperature never increases; print CHECK PASS or FAIL."
+
+[lifetime]
+# Job wall-clock limit in seconds, 60..86400; omit for services.
+deadline_seconds = 300

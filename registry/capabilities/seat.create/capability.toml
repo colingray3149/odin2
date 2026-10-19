@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Create a new worker seat Colin asks for: a named helper for a kind of work that runs and may do exactly what an existing builder or judge seat does (never a seat that can create declarations or act on accounts), on existing projects. Read published seats and projects with registry_read first; choose the matching template and resolve known project scope yourself. Ask only for genuinely missing intent, never for schema fields or information already declared. Reuse a matching existing helper when requested. It is committed to odin main and published; the coordinator can delegate to it after odind's next idle reload."
+handler = { id = "seat_create" }
+input_schema = "schemas/capability/seat.create.input.json"
+output_schema = "schemas/capability/seat.create.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_seat_create_evidence" }

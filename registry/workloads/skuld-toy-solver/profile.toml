@@ -1,0 +1,53 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "Acceptance fixture: solve a scalar residual and emit simulation telemetry and a checkpoint."
+# Runner: script, an enabled pod-capable harness (default omp), or the separate claude-code driver.
+harness = "script"
+
+[image]
+# platform uses the deployed image; otherwise require an OCI reference with @sha256:<digest>.
+reference = "docker.io/library/python:3.12-slim@sha256:eeb8088e67610b37583880c7627e3931f087cba55a35810819e34a398f624a47"
+
+[script]
+# Non-empty argv array executed inside the image; required for script workloads.
+command = ["python3", "-u", "-c", '''import json
+value = 1.0
+for iteration in range(1, 5):
+    value /= 2
+    print('ODIN-STATUS ' + json.dumps({'iteration': iteration, 'residual': value}), flush=True)
+print('ODIN-CHECKPOINT ' + json.dumps({'label': 'final', 'iteration': iteration, 'value': value}), flush=True)
+''']
+
+[seat]
+# Enabled seat ID whose permissions apply to this workload.
+seat = "kubert"
+# Enabled project ID within the seat's project_scope.
+project = "odin"
+
+[network]
+# Bare egress hostnames, not URLs; an empty array adds no external hosts.
+allow_hosts = []
+
+[state]
+# Absolute in-pod path where the persistent state volume is mounted.
+path = "/state"
+# State volume capacity: positive integer with Ki/Mi/Gi/Ti/Pi/Ei suffix, e.g. 1Gi.
+storage = "16Mi"
+
+[export]
+# Absolute in-pod directory whose files are exported.
+pod_path = "/export"
+# Absolute host directory receiving exported files.
+host_folder = "/srv/odin/export"
+
+[brief]
+text = "Script acceptance fixture: halve a scalar four times, emit residual telemetry and the final checkpoint, then exit."
+
+[simulation]
+# Registered simulation renderer IDs allowed for this workload.
+renderers = ["field_svg-v1"]
+
+[lifetime]
+# Job wall-clock limit in seconds, 60..86400; omit for services.
+deadline_seconds = 60

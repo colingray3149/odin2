@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Truthful R0 read served by the odin-browser session actor: bounded typed projection of the live page delivered as untrusted content with exact provenance. Structural semantics only; page content never becomes policy."
+handler = { id = "odin_browser.observe" }
+input_schema = "schemas/capability/browser.observe.input.json"
+output_schema = "schemas/capability/browser.observe.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "operator"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_browser.observe_evidence" }

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/odin.artifact_read.input.json",
+  "title": "odin.artifact_read input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "artifactId": { "type": "string", "minLength": 1 },
+    "maxBytes": { "type": "integer", "minimum": 1 }
+  },
+  "required": ["artifactId", "maxBytes"]
+}

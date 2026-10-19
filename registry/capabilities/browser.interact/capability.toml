@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Revision- and digest-bound ordinary structural action for one odin-browser session. The session's supplied action policy remains authoritative; no page content or field values are returned."
+handler = { id = "odin_browser.interact" }
+input_schema = "schemas/capability/browser.interact.input.json"
+output_schema = "schemas/capability/browser.interact.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator", "operator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_browser.interact_evidence" }

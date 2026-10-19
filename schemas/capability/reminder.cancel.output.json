@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/reminder.cancel.output.json",
+  "title": "reminder.cancel output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "notify",
+        "wake"
+      ]
+    },
+    "fireAt": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "firing",
+        "fired",
+        "cancelled"
+      ]
+    },
+    "anchor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "repeat": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "text",
+    "kind",
+    "fireAt",
+    "status",
+    "anchor",
+    "repeat"
+  ]
+}

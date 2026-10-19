@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/email.draft.input.json",
+  "title": "email.draft input",
+  "description": "Draft creation for the email.draft operation. R2: the draft is a durable, reversible mailbox-side artifact; it sends nothing. The draft lands in the drafts mailbox of the account the request names (`account` is a required selector naming one configured life account), is keyed by the operation's durable idempotency key (CORE-004), and is additionally produced as a generated vault drafts page. Recipients are bounded at 10 addresses of at most 320 Unicode scalar values, subject at 200, and body text at 20000, exactly the adapter's enforced bounds. Draft content is caller-provided untrusted data; credential material never travels in arguments.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "account": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "to": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 320
+      }
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "body_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    }
+  },
+  "required": ["account", "to", "subject", "body_text"]
+}

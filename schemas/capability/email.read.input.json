@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/email.read.input.json",
+  "title": "email.read input",
+  "description": "Bounded single-message read for the email.read operation. R0: the request reads one message from the mailbox of the explicitly named account through the governed life adapter under a scoped opaque credential lease and produces no side effects. The `account` selector names one configured life account and travels with every request; credential material never travels in arguments. The message identifier is bounded at 128 characters, exactly the adapter's enforced bound. An unknown account, missing credentials, or an unreachable service is a typed unavailable outcome, never an empty success.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "account": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "email_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "required": ["account", "email_id"]
+}

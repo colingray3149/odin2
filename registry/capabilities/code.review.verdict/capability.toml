@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Records an independent reviewer's verdict (approve, or changes required with notes) on one change another seat asked it to review, bound to the change's exact diff digest. A seat never records a verdict on its own change."
+handler = { id = "code_review_verdict" }
+input_schema = "schemas/capability/code.review.verdict.input.json"
+output_schema = "schemas/capability/code.review.verdict.output.json"
+effect_class = "R1"
+seat_tags = ["judge"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_code_review_verdict_evidence" }

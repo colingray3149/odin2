@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/capsule.eval.run.output.json",
+  "title": "capsule.eval.run output",
+  "description": "Insert-only OdinEffectReceipt/v1 bytes whose BLAKE3 digest equals the durable operation journal evidence digest.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "OdinEffectReceipt/v1" },
+    "correlation_id": { "$ref": "#/$defs/correlationId" },
+    "operation_id": { "$ref": "#/$defs/domainId" },
+    "capability": { "const": "capsule.eval.run" },
+    "capsule_id": { "$ref": "#/$defs/domainId" },
+    "evidence_digest": { "$ref": "#/$defs/blake3Digest" },
+    "outcome": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "exit_code": { "type": ["integer", "null"], "minimum": -2147483648, "maximum": 2147483647 },
+    "signal": { "type": ["integer", "null"], "minimum": 1, "maximum": 2147483647 },
+    "stdout_hex": { "$ref": "#/$defs/boundedHex" },
+    "stdout_bytes": { "type": "integer", "minimum": 0 },
+    "stdout_truncated": { "type": "boolean" },
+    "stderr_hex": { "$ref": "#/$defs/boundedHex" },
+    "stderr_bytes": { "type": "integer", "minimum": 0 },
+    "stderr_truncated": { "type": "boolean" },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/event" },
+      "minItems": 3,
+      "maxItems": 16
+    },
+    "filesystem_changes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/filesystemChange" },
+      "maxItems": 256
+    },
+    "network_connections": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 4096 },
+      "maxItems": 256
+    },
+    "post_world": { "type": ["string", "null"], "pattern": "^blake3:[0-9a-f]{64}$" },
+    "worker_stopped": { "type": "boolean" },
+    "residual_workers": { "type": "integer", "minimum": 0 },
+    "post_world_unchanged": { "type": ["boolean", "null"] }
+  },
+  "required": [
+    "schema", "correlation_id", "operation_id", "capability", "capsule_id",
+    "evidence_digest", "outcome", "exit_code", "signal", "stdout_hex",
+    "stdout_bytes", "stdout_truncated", "stderr_hex", "stderr_bytes",
+    "stderr_truncated", "events", "filesystem_changes", "network_connections",
+    "post_world", "worker_stopped", "residual_workers", "post_world_unchanged"
+  ],
+  "$defs": {
+    "domainId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "correlationId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "blake3Digest": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "boundedHex": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{2})*$",
+      "maxLength": 131072
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "at_ms": { "type": "integer", "minimum": 1 },
+        "detail": { "type": ["string", "null"], "maxLength": 4096 }
+      },
+      "required": ["name", "at_ms", "detail"]
+    },
+    "filesystemChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": { "type": "string", "enum": ["create", "write", "unlink"] },
+        "path": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      },
+      "required": ["op", "path"]
+    }
+  }
+}

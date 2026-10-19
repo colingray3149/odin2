@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Sends the owner, in his own paired DM, one file he sent earlier and Odin staged at intake, a shared artifact, or a photo, video or document by its brain result id (asset), as a real attachment; the seat's reply says what it is. It never leaves the owner's own channel, so it needs no approval; unknown intake ids or names are typed refusals."
+handler = { id = "discord_file_send" }
+input_schema = "schemas/capability/discord.file.send.input.json"
+output_schema = "schemas/capability/discord.file.send.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_discord_file_send_evidence" }

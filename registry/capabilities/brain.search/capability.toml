@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Search the bound session knowledge with canonical citations and declared budgets."
+handler = { id = "odin_brain.search" }
+input_schema = "schemas/capability/brain.search.input.json"
+output_schema = "schemas/capability/brain.search.output.json"
+effect_class = "R0"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_brain.search_evidence" }

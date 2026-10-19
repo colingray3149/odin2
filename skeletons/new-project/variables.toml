@@ -1,0 +1,49 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-project"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "projects"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "enabled"
+type = "bool"
+required = true
+meaning = "Enable after validation."
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Project purpose."
+
+[[variable]]
+name = "source_root"
+type = "path-or-empty"
+required = true
+meaning = "Tenant repository root handle."
+
+[[variable]]
+name = "default_seat"
+type = "id"
+required = true
+meaning = "Existing seat."
+
+[[variable]]
+name = "memory_namespace"
+type = "enum:code|personal"
+required = true
+meaning = "The served Atlas corpus the project retrieves from (only atlas.code and atlas.personal exist)."
+
+[[variable]]
+name = "artifact_policy"
+type = "enum:standard|private|large-scientific"
+required = true
+meaning = "Retention/privacy class."
+
+[[variable]]
+name = "accounts"
+type = "optional<table>"
+required = false
+meaning = "The account each kind of agent signs in with on this project, e.g. { claude-code = \"school\" }; a signed-in account under ~/.claude-accounts/<name> or ~/.codex-accounts/<name>, else default."

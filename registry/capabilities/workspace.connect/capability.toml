@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Open one governed workspace for Colin: a live zellij session observed in the fleet placements or a declared project source tree on a declared fleet host. With openOn (the declared fleet device he is at) it opens the window on that device's desktop session — a terminal attached to the session, or Zed on the project over ssh — and says what opened where; without it, it only resolves the command. An unknown target, an offline host or device, no desktop session or a locked screen is a typed refusal and nothing opens."
+handler = { id = "odin_hermes.workspace_connect" }
+input_schema = "schemas/capability/workspace.connect.input.json"
+output_schema = "schemas/capability/workspace.connect.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 15
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes.workspace_connect_evidence" }

@@ -1,0 +1,8 @@
+/** True only when kind and every caller-supplied ID echo exactly. */
+export function echoes(response: Response, request: Request): boolean {
+	switch (response.kind) {
+$CASES		case "rejected":
+			return false;
+	}
+}
+

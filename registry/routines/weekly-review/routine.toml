@@ -1,0 +1,17 @@
+schema = "odin.registry.v1"
+kind = "routine"
+enabled = true
+description = "Every Sunday 6pm: DM Colin the weekly review — what got done, what's stuck, what it cost"
+# Enabled conversation-seat ID to wake when the trigger fires.
+seat = "sinmara"
+
+[trigger]
+# Local time: daily/weekdays/weekends or mon,...,sun HH:MM; monthly DAY HH:MM; every N minutes/hours.
+# Use schedule or event, never both; monthly day 1..28, interval 5..1440 minutes from local midnight.
+schedule = "sun 18:00"
+
+[action]
+# brief wakes the seat with instructions; dm sends text directly.
+kind = "brief"
+# Action content; non-empty text up to 2000 characters.
+text = "Run Colin's weekly review and DM it to him. Gather the past week across his projects: delegated work and its pushed branches, pod runs and outcomes, incidents, routines/reminders set, and the month-to-date budget summary if the budget adapter is up. Then DM him three tight sections — DONE / STUCK / COST (pod-hours, any purchases; month spend if notable). Under ~15 lines, no filler."

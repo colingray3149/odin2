@@ -1,0 +1,15 @@
+schema = "odin.registry.v1"
+kind = "environment"
+enabled = true
+description = "A sandboxed transient user unit on the authority host (mini) for an agent that runs its own tools (FINAL-PASS W4.7): its home is empty but for the session's repository clone and the harness's own account state, the rest of the system is read-only, no privileges can be gained. Inside the clone it may do anything; nothing of Colin's exists for it."
+transport = "fleet-host"
+host = "mini"
+seats = ["gungnir", "reginn"]
+git_mirror = "10.77.0.11"
+
+[observation]
+channel = "events"
+
+[sandbox]
+confine_writes = true
+private_home = true

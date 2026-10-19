@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "lane"
+enabled = true
+description = "gungnir work on odinschool"
+project = "odinschool"
+family = "engine"
+default_seat = "gungnir"
+queue = "interactive"
+requires_independent_review = false

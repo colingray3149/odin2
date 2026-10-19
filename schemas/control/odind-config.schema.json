@@ -1,0 +1,1330 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/control/odind-config.schema.json",
+  "title": "Odin strict generated controller configuration",
+  "description": "One deny-unknown versioned Nix-generated odind.toml owning paths, listeners, executables, catalog references, global capacity, and snapshot bootstrap. Production constructors require it; applying a change means restart, never hot reload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "revision",
+    "identity",
+    "paths",
+    "listener",
+    "executables",
+    "catalogs",
+    "publish",
+    "worker_bus",
+    "capacity"
+  ],
+  "properties": {
+    "hermes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state_dir"],
+      "properties": {
+        "state_dir": { "$ref": "#/$defs/absolute_path" },
+        "discord": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "seat", "project", "owner_user_id", "notify_channel_id", "capability",
+            "egress_capacity", "gateway_intents", "bot_token_handle", "ttl_seconds"
+          ],
+          "properties": {
+            "seat": { "type": "string", "minLength": 1 },
+            "project": { "type": "string", "minLength": 1 },
+            "owner_user_id": { "type": "string", "minLength": 1 },
+            "notify_channel_id": { "type": "string", "minLength": 1 },
+            "capability": { "type": "string", "minLength": 1 },
+            "egress_capacity": { "type": "integer", "minimum": 1, "maximum": 4096 },
+            "gateway_intents": { "type": "integer", "minimum": 1 },
+            "bot_token_handle": { "type": "string", "minLength": 1 },
+            "scrub_tokens": {
+              "type": "array", "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "ttl_seconds": { "type": "integer", "minimum": 60, "maximum": 2592000 }
+          }
+        },
+        "vault": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "vault_root", "source_id", "general_namespaces", "generated_namespace",
+            "max_pages", "max_page_bytes", "timeout_ms"
+          ],
+          "properties": {
+            "vault_root": { "$ref": "#/$defs/absolute_path" },
+            "source_id": { "type": "string", "minLength": 1 },
+            "silverbullet_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "silverbullet_space_root": { "type": "string", "minLength": 1 },
+            "general_namespaces": {
+              "type": "array", "minItems": 1, "maxItems": 32,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "generated_namespace": { "type": "string", "minLength": 1 },
+            "excluded_namespaces": {
+              "type": "array", "maxItems": 32,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "max_pages": { "type": "integer", "minimum": 1, "maximum": 100000 },
+            "max_page_bytes": { "type": "integer", "minimum": 1, "maximum": 4194304 },
+            "timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 60000 }
+          }
+        },
+        "finance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["budget_db"],
+          "properties": { "budget_db": { "$ref": "#/$defs/absolute_path" } }
+        },
+        "accounts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/hermes_account" }
+        }
+      }
+    },
+    "schema": {
+      "const": "odin.odind-config.v1"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Controller configuration revision bound into the extension policy."
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node"],
+      "properties": {
+        "node": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registry_root",
+        "state_root",
+        "registry_snapshot",
+        "authority_token_root",
+        "authority_verification_key_file"
+      ],
+      "properties": {
+        "registry_root": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "state_root": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "registry_snapshot": {
+          "$ref": "#/$defs/absolute_path",
+          "description": "Active published registry snapshot; odind reads only this snapshot."
+        },
+        "authority_token_root": {
+          "$ref": "#/$defs/absolute_path",
+          "description": "Directory of externally provisioned signed seat-token JSON files named <live-session-id>.json. The host reloads; it never writes them."
+        },
+        "authority_verification_key_file": {
+          "$ref": "#/$defs/absolute_path",
+          "description": "Operator-provisioned token verification key file (raw bytes, at least 32 at use). The value never crosses into the child environment, logs, or the extension."
+        },
+        "operator_context_root": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "cargo_registry_cache": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "cargo_git_cache": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "nix_daemon_socket": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "nix_config_root": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "authoring_repository": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "authoring_worktree": {
+          "$ref": "#/$defs/absolute_path"
+        }
+      }
+    },
+    "listener": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address"],
+      "properties": {
+        "address": {
+          "type": "string",
+          "description": "One explicit loopback or Tailscale address with an explicit port."
+        },
+        "tls_cert": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "tls_key": {
+          "$ref": "#/$defs/absolute_path"
+        }
+      }
+    },
+    "executables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["omp_bin", "omp_revision", "extension", "zellij_bin"],
+      "properties": {
+        "omp_bin": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "omp_revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "extension": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "zellij_bin": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "zellij_session": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional declared Zellij session selector for the supervisor's terminal target. Absent (or empty after the parser's trimming) means no declared selector: the target resolves typed-unbound instead of guessing a session name. When present it must name a REAL live Zellij session at every use; there is no phantom fallback."
+        },
+        "attach_command": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^(?:[^{}]|\\{session_id\\})*$"
+          },
+          "description": "Optional governed attach CLIENT argv the supervisor's spawned terminal tab runs to attach the SAME dispatched session (never a second process, never a log tail). At most one argument may carry the {session_id} placeholder, which the daemon substitutes with the real session id; any other {..} token is rejected when the executables config is built. Absent means attach is unconfigured and terminal tab opening fails typed terminal_attach_command_unconfigured."
+        },
+        "browser": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "chromium",
+            "profile_root",
+            "policy",
+            "protected_values",
+            "scanner",
+            "stream",
+            "display"
+          ],
+          "properties": {
+            "chromium": {
+              "$ref": "#/$defs/absolute_path"
+            },
+            "profile_root": {
+              "$ref": "#/$defs/absolute_path"
+            },
+            "policy": {
+              "$ref": "#/$defs/absolute_path"
+            },
+            "protected_values": {
+              "$ref": "#/$defs/absolute_path"
+            },
+            "scanner": {
+              "$ref": "#/$defs/absolute_path"
+            },
+            "scanner_args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "stream": {
+              "type": "string",
+              "minLength": 1
+            },
+            "display": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["source"],
+              "properties": {
+                "source": {
+                  "enum": ["xvfb", "existing"]
+                },
+                "xvfb_binary": {
+                  "$ref": "#/$defs/absolute_path"
+                },
+                "display": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "catalogs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gateway_projection"],
+      "properties": {
+        "gateway_projection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "digest"],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/absolute_path"
+            },
+            "digest": {
+              "$ref": "#/$defs/blake3"
+            }
+          }
+        }
+      }
+    },
+    "projects": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9._-]*$": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["root"],
+          "properties": {
+            "root": {
+              "$ref": "#/$defs/absolute_path"
+            }
+          }
+        }
+      }
+    },
+    "lane_bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["seat", "project", "lane"],
+        "properties": {
+          "seat": {
+            "type": "string",
+            "minLength": 1
+          },
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
+          "lane": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "seats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seat",
+          "slice",
+          "display_name",
+          "max_sessions",
+          "launch_options",
+          "allowed_nodes"
+        ],
+        "properties": {
+          "seat": {
+            "type": "string",
+            "minLength": 1
+          },
+          "slice": {
+            "type": "string",
+            "minLength": 1
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "max_sessions": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "launch_options": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["provider", "model", "skeletonRef", "containerId"],
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "skeletonRef": {
+                  "type": "string"
+                },
+                "containerId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "harness": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["harness", "environment"],
+                  "properties": {
+                    "harness": { "type": "string", "minLength": 1 },
+                    "environment": { "type": "string", "minLength": 1 }
+                  }
+                }
+              }
+            }
+          },
+          "allowed_nodes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "file_roots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rootId",
+          "displayName",
+          "canonicalPath",
+          "access",
+          "mediaPolicy",
+          "maxObjectBytes",
+          "watchPolicy",
+          "allowedSeats"
+        ],
+        "properties": {
+          "rootId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "canonicalPath": {
+            "$ref": "#/$defs/absolute_path"
+          },
+          "access": {
+            "$ref": "#/$defs/file_access"
+          },
+          "mediaPolicy": {
+            "$ref": "#/$defs/file_media_policy"
+          },
+          "maxObjectBytes": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "watchPolicy": {
+            "$ref": "#/$defs/file_watch_policy"
+          },
+          "allowedSeats": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "tailnet_peers": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[0-9a-fA-F:.]+$": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "publish": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["render_session", "file_lane", "render_lane"],
+      "properties": {
+        "render_session": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file_lane": {
+          "type": "string",
+          "minLength": 1
+        },
+        "render_lane": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "worker_bus": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Explicit non-secret registered worker bus endpoint; the only transport binding between the controller and its worker authority."
+    },
+    "capacity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connections",
+        "sessions",
+        "streams",
+        "transfers",
+        "renders",
+        "files",
+        "terminal"
+      ],
+      "properties": {
+        "connections": {
+          "$ref": "#/$defs/capacity_connections"
+        },
+        "sessions": {
+          "$ref": "#/$defs/capacity_sessions"
+        },
+        "streams": {
+          "$ref": "#/$defs/capacity_streams"
+        },
+        "transfers": {
+          "$ref": "#/$defs/capacity_transfers"
+        },
+        "renders": {
+          "$ref": "#/$defs/capacity_renders"
+        },
+        "files": {
+          "$ref": "#/$defs/capacity_files"
+        },
+        "terminal": {
+          "$ref": "#/$defs/capacity_terminal"
+        }
+      }
+    },
+    "kube": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kubeconfig", "cluster", "namespace", "request_timeout_seconds", "teardown_timeout_seconds", "image_identity"],
+      "properties": {
+        "kubeconfig": { "$ref": "#/$defs/absolute_path" },
+        "cluster": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "namespace": { "type": "string", "maxLength": 63, "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" },
+        "request_timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+        "teardown_timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+        "image_identity": {
+          "$ref": "#/$defs/absolute_path",
+          "description": "Declared host path of the workload image identity.json (odin.workload-image-identity.v1) emitted beside the OCI archive; the kube composition registers its exact bytes as the content-addressed trust pin."
+        },
+        "gateway_credentials": {
+          "type": "object",
+          "description": "Operator-declared gateway credential custody: projection credential_handle to the Secret name and key the launch binds via SecretKeyRef. Secret values never appear in configuration.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["secret", "key"],
+            "properties": {
+              "secret": { "type": "string", "minLength": 1, "pattern": "\\S" },
+              "key": { "type": "string", "minLength": 1, "pattern": "\\S" }
+            }
+          }
+        },
+        "export_root": {
+          "$ref": "#/$defs/absolute_path",
+          "description": "Declared host folder the node provisions for the workload uid; every drafted workload exports exactly here."
+        }
+      }
+    },
+    "delegation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model",
+        "max_children_per_session",
+        "max_prompt_bytes",
+        "child_timeout_seconds",
+        "child_token_ttl_seconds"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "child_idle_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Seconds a child that finished its turn may sit idle before it is ended."
+        },
+        "max_children_per_session": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "max_prompt_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 262144
+        },
+        "child_timeout_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 14400
+        },
+        "child_token_ttl_seconds": {
+          "type": "integer",
+          "minimum": 300,
+          "maximum": 86400
+        }
+      }
+    },
+    "adapter_backends": {
+      "type": "object",
+      "description": "Declared out-of-process adapter backends (FINAL-PASS W4.4) keyed by canonical adapter ID. Each backend's executable is the runtime-manifest identity adapter.<id>; argv is static declaration data. Registry capabilities with implementation = <id> route to it. Absent or empty: every adapter capability is a typed unavailable.",
+      "propertyNames": {
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,191}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/adapter_backend"
+      }
+    },
+    "gateway_host_credentials": {
+      "type": "object",
+      "description": "Host-daemon custody map from a projection route's credential_handle to the declared NAME of a host environment variable the trusted daemon resolves at composition. Distinct from kube.gateway_credentials, which is pod SecretKeyRef custody. The environment NAME is declaration; the value stays secret and never enters configuration, logs, argv, or receipts. A route whose credential handle has no entry refuses typed before any gateway use; there is no implicit fallback custody. Keys follow the projection's existing credential_handle law: opaque and nonblank, no identifier grammar.",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/gateway_host_credential"
+      }
+    },
+    "brain": {
+      "type": "object",
+      "description": "Strict brain composition: the exact served model identity, the operator-declared knowledge sources keyed by AtlasId, and the optional embedding route. Semantic source validation (kind applicability, archive policy) runs in the controller; this schema is the structural strictness.",
+      "additionalProperties": false,
+      "required": ["serving_model"],
+      "properties": {
+        "lane_windows": {
+          "type": "object",
+          "description": "Declared context window in tokens of every other served lane a seat may launch on or switch to, keyed by lane identity.",
+          "additionalProperties": { "type": "integer", "minimum": 1, "maximum": 4294967295 }
+        },
+        "serving_model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "context_window_tokens"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "context_window_tokens": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+            "tokenizer": {
+              "type": "string",
+              "enum": ["odin.tokenizer.utf8-bytes.v1", "odin.tokenizer.qwen3.v1"],
+              "description": "Optional declared brain context tokenizer; absent keeps the conservative exact-byte default. Semantic support is enforced again by the brain ContextTokenizer at projection."
+            }
+          }
+        },
+        "sources": {
+          "type": "object",
+          "description": "Explicit knowledge sources keyed by exact AtlasId (for example `atlas:odin`, `vault:silverbullet`, `archive:gmail`).",
+          "propertyNames": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/brain_source"
+          }
+        },
+        "embedding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "endpoint"],
+          "properties": {
+            "provider": { "type": "string", "minLength": 1 },
+            "endpoint": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Private gateway endpoint (loopback or declared tailnet peer); the network-scope law is enforced semantically, not structurally."
+            }
+          }
+        },
+        "postgres": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The brain's PostgreSQL store as libpq keywords (host, port, dbname, user), e.g. `host=/run/postgresql dbname=odin_brain`. Absent, turns serve from the SQLite index."
+        }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "description": "The authority's backup storage, stored-size cap, transaction budget, freshness law, and optional PC publication wiring. Absent: backup operations are disabled (SYS-11 holds no set fresh; odind backup, restore-drill, backup-verify and pc-publish refuse; no compiled fallback policy). Offline `odind backup` additionally requires an explicit --output; only PC publication manages retention.",
+      "additionalProperties": false,
+      "required": ["root", "set_max_mib", "timeout_seconds", "max_age_hours"],
+      "properties": {
+        "root": {
+          "$ref": "#/$defs/absolute_path",
+          "description": "Absolute directory, outside every captured root, holding the one complete set the scheduled run switches `current` to."
+        },
+        "set_max_mib": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Cap on the stored size of one complete set (compressed members included, plain members verbatim), in MiB. A capture that would store more is refused and the previous set stays recoverable. Only positivity and byte representability bind it; there is no performance ceiling."
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 6,
+          "maximum": 2147483,
+          "description": "The one bounded backup/publication transaction budget in seconds: the wall allowance for the whole quiesced capture, shipment, restore-prove and publish chain of a single set. Standalone runs use it directly; coordinated publications only consume what remains of it, never a fresh per-phase allowance. Bounded to 6..=2147483: above the root coordinator's 5-second reserve, and within the widest whole-second budget whose milliseconds fit the i32 SQLite's busy handler accepts. When pc_sink is declared the conditional floor 105 applies (5s root reserve + 60s capture cleanup reserve + 10s ssh connect bound + 30s receive cleanup reserve): a pc_sink budget below it refuses at config load, before any writer is stopped."
+        },
+        "max_age_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295,
+          "description": "SYS-11 fails when the newest complete set is older than this."
+        },
+        "quiescence_probe": {
+          "$ref": "#/$defs/absolute_path",
+          "description": "Absolute no-argument executable proving external writers stopped. Required when pc_sink is declared; a nonzero status refuses capture."
+        },
+        "pc_sink": { "$ref": "#/$defs/backup_pc_sink" },
+        "rustical": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["root", "restore_root", "owner", "group"],
+          "description": "Complete explicitly quiesced service export including canonical database, principals, and private credentials. Export root must not overlap backup output, controller state, or registry. Portable restore writes external/rustical; privileged installation uses the declared restore_root and owner/group.",
+          "properties": {
+            "root": { "$ref": "#/$defs/service_state_path" },
+            "restore_root": { "$ref": "#/$defs/service_state_path" },
+            "owner": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+            "group": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["pc_sink"] },
+          "then": { "required": ["quiescence_probe"] }
+        },
+        {
+          "if": { "required": ["pc_sink"] },
+          "then": {
+            "properties": {
+              "timeout_seconds": { "minimum": 105 }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "service_state_path": {
+      "type": "string",
+      "pattern": "^/(?!/*$)(?!\\.{1,2}(?:/|$))(?!.*?/\\.{1,2}(?:/|$)).*$",
+      "description": "Absolute nonroot path without dot or parent traversal components."
+    },
+    "gateway_host_credential": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment"],
+      "properties": {
+        "environment": {
+          "type": "string",
+          "description": "Declared NAME of a host environment variable holding the credential value for one gateway credential handle; the value itself never appears in configuration, logs, argv, or receipts.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        }
+      }
+    },
+    "backup_pc_sink": {
+      "type": "object",
+      "description": "The remote pc sink of the one retained backup set: an explicitly declared ssh host and absolute remote directory, shipped by rsync over ssh with bounded noninteractive options — no invented protocol, no embedded credential. When absent, shutdown PC publication is disabled; offline capture still requires an explicit output directory and does not manage local retention.",
+      "additionalProperties": false,
+      "required": ["host", "root", "config", "executable"],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Declared ssh host name (for example the tailscale name `pc`)."
+        },
+        "root": { "$ref": "#/$defs/absolute_path" },
+        "config": { "$ref": "#/$defs/absolute_path" },
+        "executable": { "$ref": "#/$defs/absolute_path" }
+      }
+    },
+    "absolute_path": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "brain_source": {
+      "type": "object",
+      "description": "One operator-declared knowledge source discriminated by `kind`: `atlas` (repository root), `silverbullet` (loopback vault), or `archive` (read-only external export). Fields are required exactly for their kind; semantic bounds are validated in the controller.",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["atlas", "silverbullet", "archive"] },
+        "root": { "$ref": "#/$defs/absolute_path" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "expected_space_root": { "type": "string", "minLength": 1 },
+        "general_namespaces": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "generated_namespace": { "type": "string", "minLength": 1 },
+        "excluded_namespaces": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "max_pages": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "format": {
+          "enum": [
+            "claude-export",
+            "grok-export",
+            "mbox",
+            "chatgpt-export",
+            "gemini-workspace",
+            "notebooklm"
+          ]
+        },
+        "export_path": { "$ref": "#/$defs/absolute_path" },
+        "memory_namespace": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "privacy_class": { "enum": ["private", "shared"] },
+        "dedupe_key": { "enum": ["content_digest"] },
+        "selection": { "$ref": "#/$defs/archive_selection_policy" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "atlas" } } },
+          "then": {
+            "required": ["root"],
+            "not": {
+              "anyOf": [
+                { "required": ["port"] },
+                { "required": ["expected_space_root"] },
+                { "required": ["general_namespaces"] },
+                { "required": ["generated_namespace"] },
+                { "required": ["excluded_namespaces"] },
+                { "required": ["max_pages"] },
+                { "required": ["format"] },
+                { "required": ["export_path"] },
+                { "required": ["memory_namespace"] },
+                { "required": ["privacy_class"] },
+                { "required": ["dedupe_key"] },
+                { "required": ["selection"] }
+              ]
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "silverbullet" } } },
+          "then": {
+            "required": ["port", "generated_namespace", "general_namespaces", "max_pages"],
+            "not": {
+              "anyOf": [
+                { "required": ["root"] },
+                { "required": ["format"] },
+                { "required": ["export_path"] },
+                { "required": ["memory_namespace"] },
+                { "required": ["privacy_class"] },
+                { "required": ["dedupe_key"] },
+                { "required": ["selection"] }
+              ]
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "archive" } } },
+          "then": {
+            "required": [
+              "format", "export_path", "memory_namespace", "privacy_class", "dedupe_key",
+              "selection"
+            ],
+            "not": {
+              "anyOf": [
+                { "required": ["root"] },
+                { "required": ["port"] },
+                { "required": ["expected_space_root"] },
+                { "required": ["general_namespaces"] },
+                { "required": ["generated_namespace"] },
+                { "required": ["excluded_namespaces"] },
+                { "required": ["max_pages"] }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "archive_selection_policy": {
+      "type": "object",
+      "description": "Declared archive selection policy; field applicability (labels, headers, participant rules) is validated semantically against the declared format.",
+      "additionalProperties": false,
+      "properties": {
+        "since": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "exclude_labels": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "exclude_if_header": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "keep_if_participant": { "type": "boolean" },
+        "exclude_do_not_remember": { "type": "boolean" },
+        "participant_emails": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "type": "string", "minLength": 3 }
+        },
+        "suspicious_rules": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/archive_suspicious_rule" }
+        }
+      }
+    },
+    "archive_suspicious_rule": {
+      "type": "object",
+      "description": "One declared suspicious/phishing heuristic with its explicit outcome; matchers and format applicability are validated semantically.",
+      "additionalProperties": false,
+      "required": ["name", "action"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "action": { "enum": ["exclude", "flag"] },
+        "match_label": { "type": "string", "minLength": 1 },
+        "match_header": { "type": "string", "minLength": 1 },
+        "sender_domain": { "type": "string", "minLength": 1 }
+      }
+    },
+    "https_url": {
+      "type": "string",
+      "description": "Production https endpoint: dotted DNS name or IPv4 host with optional explicit port and path/query; userinfo and fragments are rejected.",
+      "maxLength": 2048,
+      "pattern": "^https://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]{1,5})?(?:/[^\\x00-\\x20#]*)?$"
+    },
+    "credential_handle": {
+      "type": "string",
+      "description": "Opaque `cred:<id>` reference resolved by the backend host against a sops-rendered private file; the referenced value never appears in configuration, ABI, logs, or receipts.",
+      "pattern": "^cred:[a-zA-Z0-9][a-zA-Z0-9._:-]{0,190}$"
+    },
+    "adapter_credential": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["handle", "path"],
+      "properties": {
+        "handle": {
+          "$ref": "#/$defs/credential_handle"
+        },
+        "path": {
+          "$ref": "#/$defs/absolute_path",
+          "description": "Absolute sops-rendered secret file outside the Nix store, read by the trusted backend host at call time; never a store path."
+        }
+      }
+    },
+    "adapter_backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One declared adapter backend: the static argv its manifest-bound executable adapter.<id> is launched with for every framed call.",
+      "properties": {
+        "argv": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "blake3": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "duration_secs_nanos": {
+      "type": "array",
+      "description": "time::Duration serde tuple [seconds, nanoseconds]; not a human-readable string.",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 999999999
+        }
+      ],
+      "items": false
+    },
+    "capacity_connections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_connections",
+        "max_subscriptions_per_connection",
+        "max_inflight_requests",
+        "request_queue_depth",
+        "max_frame_bytes"
+      ],
+      "properties": {
+        "max_connections": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "max_subscriptions_per_connection": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "max_inflight_requests": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "request_queue_depth": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 16384
+        },
+        "max_frame_bytes": {
+          "type": "integer",
+          "minimum": 4096,
+          "maximum": 16777216
+        }
+      }
+    },
+    "capacity_sessions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_sessions",
+        "max_history_page",
+        "max_list_page",
+        "command_journal_depth"
+      ],
+      "properties": {
+        "max_sessions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "max_history_page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "max_list_page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "command_journal_depth": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 65536
+        }
+      }
+    },
+    "capacity_streams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replay_buffer_events",
+        "frame_queue_depth",
+        "max_frames_per_second",
+        "max_stream_frame_bytes"
+      ],
+      "properties": {
+        "replay_buffer_events": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 65536
+        },
+        "frame_queue_depth": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 16384
+        },
+        "max_frames_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 240
+        },
+        "max_stream_frame_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 8388608
+        }
+      }
+    },
+    "capacity_transfers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_transfer_bytes",
+        "chunk_bytes",
+        "max_concurrent_transfers",
+        "download_credit_chunks",
+        "ticket_ttl",
+        "queue_depth"
+      ],
+      "properties": {
+        "max_transfer_bytes": {
+          "type": "integer",
+          "minimum": 1048576,
+          "maximum": 8589934592
+        },
+        "chunk_bytes": {
+          "type": "integer",
+          "minimum": 16384,
+          "maximum": 4194304
+        },
+        "max_concurrent_transfers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "download_credit_chunks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "ticket_ttl": {
+          "$ref": "#/$defs/duration_secs_nanos"
+        },
+        "queue_depth": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 16384
+        }
+      }
+    },
+    "capacity_renders": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_render_bytes",
+        "max_concurrent_renders",
+        "queue_depth",
+        "timeout"
+      ],
+      "properties": {
+        "max_render_bytes": {
+          "type": "integer",
+          "minimum": 1048576,
+          "maximum": 2147483648
+        },
+        "max_concurrent_renders": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "queue_depth": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 16384
+        },
+        "timeout": {
+          "$ref": "#/$defs/duration_secs_nanos"
+        }
+      }
+    },
+    "capacity_files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_read_chunk_bytes",
+        "max_browse_page",
+        "max_watch_streams",
+        "watch_queue_depth",
+        "max_path_bytes"
+      ],
+      "properties": {
+        "max_read_chunk_bytes": {
+          "type": "integer",
+          "minimum": 16384,
+          "maximum": 4194304
+        },
+        "max_browse_page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "max_watch_streams": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "watch_queue_depth": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 16384
+        },
+        "max_path_bytes": {
+          "type": "integer",
+          "minimum": 128,
+          "maximum": 4096
+        }
+      }
+    },
+    "capacity_terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_snapshot_bytes",
+        "max_delta_bytes",
+        "max_frames_per_second",
+        "control_lease_ttl"
+      ],
+      "properties": {
+        "max_snapshot_bytes": {
+          "type": "integer",
+          "minimum": 16384,
+          "maximum": 8388608
+        },
+        "max_delta_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1048576
+        },
+        "max_frames_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 240
+        },
+        "control_lease_ttl": {
+          "$ref": "#/$defs/duration_secs_nanos"
+        }
+      }
+    },
+    "file_access": {
+      "type": "string",
+      "enum": ["readOnly", "readWrite"]
+    },
+    "file_media_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowedMediaTypes"],
+      "properties": {
+        "allowedMediaTypes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "file_watch_policy": {
+      "type": "string",
+      "enum": ["disabled", "nonRecursive", "recursive"]
+    },
+    "hermes_mail_tls": {
+      "type": "string",
+      "enum": ["implicit_tls", "start_tls"]
+    },
+    "hermes_account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account", "secret_handle", "secret_path", "provider"],
+      "properties": {
+        "account": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "secret_handle": { "type": "string", "minLength": 1 },
+        "secret_path": { "$ref": "#/$defs/absolute_path" },
+        "provider": { "$ref": "#/$defs/hermes_provider" }
+      }
+    },
+    "hermes_provider": {
+      "type": "object",
+      "required": ["kind"],
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": [
+            "kind", "session_url", "identity_id", "from_address", "drafts_mailbox_id",
+            "archive_mailbox_id", "trash_mailbox_id", "request_timeout_ms", "max_response_bytes"
+          ],
+          "properties": {
+            "kind": { "const": "jmap" },
+            "session_url": { "type": "string", "pattern": "^https://" },
+            "identity_id": { "type": "string", "minLength": 1 },
+            "from_address": { "type": "string", "minLength": 1 },
+            "drafts_mailbox_id": { "type": "string", "minLength": 1 },
+            "archive_mailbox_id": { "type": "string", "minLength": 1 },
+            "trash_mailbox_id": { "type": "string", "minLength": 1 },
+            "calendar_id": { "type": "string", "minLength": 1 },
+            "request_timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 300000 },
+            "max_response_bytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": [
+            "kind", "token_url", "gmail_api_url", "calendar_api_url", "calendar_id",
+            "request_timeout_ms", "max_response_bytes"
+          ],
+          "properties": {
+            "kind": { "const": "google" },
+            "token_url": { "type": "string", "pattern": "^https://" },
+            "gmail_api_url": { "type": "string", "pattern": "^https://" },
+            "calendar_api_url": { "type": "string", "pattern": "^https://" },
+            "calendar_id": { "type": "string", "minLength": 1 },
+            "request_timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 300000 },
+            "max_response_bytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": [
+            "kind", "from_address", "imap_host", "imap_port", "imap_tls", "smtp_host",
+            "smtp_port", "smtp_tls", "helo_name", "inbox_mailbox_id", "drafts_mailbox_id",
+            "archive_mailbox_id", "trash_mailbox_id", "request_timeout_ms", "max_response_bytes"
+          ],
+          "properties": {
+            "kind": { "const": "generic" },
+            "from_address": { "type": "string", "minLength": 1 },
+            "imap_host": { "type": "string", "minLength": 1 },
+            "imap_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "imap_tls": { "$ref": "#/$defs/hermes_mail_tls" },
+            "smtp_host": { "type": "string", "minLength": 1 },
+            "smtp_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "smtp_tls": { "$ref": "#/$defs/hermes_mail_tls" },
+            "helo_name": { "type": "string", "minLength": 1 },
+            "inbox_mailbox_id": { "type": "string", "minLength": 1 },
+            "drafts_mailbox_id": { "type": "string", "minLength": 1 },
+            "archive_mailbox_id": { "type": "string", "minLength": 1 },
+            "trash_mailbox_id": { "type": "string", "minLength": 1 },
+            "caldav_base_url": { "type": "string", "minLength": 1 },
+            "caldav_calendar_url": { "type": "string", "minLength": 1 },
+            "request_timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 300000 },
+            "max_response_bytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 }
+          }
+        }
+      ]
+    }
+  }
+}

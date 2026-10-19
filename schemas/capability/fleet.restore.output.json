@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/fleet.restore.output.json",
+  "title": "fleet.restore output",
+  "description": "The typed restore outcome: every node of the host was uncordoned and `schedulable` is the real post-patch scheduler state read back from the API server, never an assumption.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "resumed": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "host": {
+      "type": "string",
+      "minLength": 1
+    },
+    "node": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The restored node (the host's registry nodes)."
+    },
+    "uncordoned": {
+      "type": "boolean"
+    },
+    "schedulable": {
+      "type": "boolean"
+    }
+  },
+  "required": ["host", "node", "uncordoned", "schedulable"]
+}

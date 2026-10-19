@@ -1,0 +1,55 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-node"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "nodes"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "enabled"
+type = "bool"
+required = true
+meaning = "Enable only when the referenced host is enabled and enrolled."
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Runtime role purpose without duplicated physical facts."
+
+[[variable]]
+name = "host"
+type = "id"
+required = true
+meaning = "Existing host registry ID owning physical and enrollment authority."
+
+[[variable]]
+name = "role"
+type = "enum:control|worker|gateway"
+required = true
+meaning = "Runtime node role."
+
+[[variable]]
+name = "capabilities"
+type = "array<id>"
+required = true
+meaning = "Zero or more operator-admitted runtime capabilities."
+
+[[variable]]
+name = "allow_workloads"
+type = "bool"
+required = true
+meaning = "Scheduler admission."
+
+[[variable]]
+name = "authoritative_state"
+type = "bool"
+required = true
+meaning = "Whether this enabled node owns the sole authoritative state role."
+
+[[variable]]
+name = "gateway_endpoint"
+type = "optional<string>"
+required = false
+meaning = "The node-local gateway URI pods on this node reach (scheme, reachable host, effective TCP port, API base path, e.g. http://mini:14000/v1); required when the node admits workloads."

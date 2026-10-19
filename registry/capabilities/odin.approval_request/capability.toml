@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Request an exact-scope approval for one capability invocation against a target bound to this session."
+handler = { id = "odin_approval_request" }
+input_schema = "schemas/capability/odin.approval_request.input.json"
+output_schema = "schemas/capability/odin.approval_request.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_approval_request_evidence" }

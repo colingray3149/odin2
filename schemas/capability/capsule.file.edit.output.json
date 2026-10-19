@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/capsule.file.edit.output.json",
+  "title": "capsule.file.edit effect receipt",
+  "description": "Bounded observations retained from the real compiled effector and sealed capsule after one edit attempt. This receipt never claims admission or commitment; those verdicts remain solely in the host operation authority and durable journal.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": ["completed", "rejected", "uncertain", "cancelled", "timed_out"]
+    },
+    "exit_code": {
+      "oneOf": [
+        { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        { "type": "null" }
+      ]
+    },
+    "signal": {
+      "oneOf": [
+        { "type": "integer", "minimum": 1, "maximum": 127 },
+        { "type": "null" }
+      ]
+    },
+    "stdout_hex": {
+      "type": "string",
+      "maxLength": 131072,
+      "pattern": "^(?:[0-9a-f]{2})*$"
+    },
+    "stderr_hex": {
+      "type": "string",
+      "maxLength": 131072,
+      "pattern": "^(?:[0-9a-f]{2})*$"
+    },
+    "stdout_bytes": { "type": "integer", "minimum": 0, "maximum": 65536 },
+    "stderr_bytes": { "type": "integer", "minimum": 0, "maximum": 65536 },
+    "stdout_truncated": { "type": "boolean" },
+    "stderr_truncated": { "type": "boolean" },
+    "filesystem_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "op": { "type": "string", "minLength": 1, "maxLength": 32 },
+          "path": { "type": "string", "minLength": 1, "maxLength": 1024 }
+        },
+        "required": ["op", "path"]
+      }
+    },
+    "post_world": {
+      "oneOf": [
+        { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+        { "type": "null" }
+      ]
+    },
+    "post_world_unchanged": {
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "null" }
+      ]
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "handler_entry",
+              "handler_exit",
+              "effect_dispatched",
+              "response_received",
+              "receipt_recorded"
+            ]
+          },
+          "at_ms": { "type": "integer", "minimum": 0 },
+          "detail": { "type": "string", "minLength": 1 }
+        },
+        "required": ["name", "at_ms", "detail"]
+      }
+    },
+    "worker_stopped": { "type": "boolean" },
+    "residual_workers": { "type": "integer", "minimum": 0 },
+    "network_connections": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "evidence_digest": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "outcome",
+    "exit_code",
+    "signal",
+    "stdout_hex",
+    "stderr_hex",
+    "stdout_bytes",
+    "stderr_bytes",
+    "stdout_truncated",
+    "stderr_truncated",
+    "filesystem_changes",
+    "post_world",
+    "post_world_unchanged",
+    "events",
+    "worker_stopped",
+    "residual_workers",
+    "network_connections",
+    "evidence_digest"
+  ]
+}

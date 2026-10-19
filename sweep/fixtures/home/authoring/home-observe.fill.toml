@@ -1,0 +1,16 @@
+schema = "odin.authoring.fill.v1"
+
+[[fill]]
+skeleton = "new-capability"
+destination_id = "home-observe"
+
+[fill.values]
+enabled = true
+description = "Read-only browser observation through the pre-admitted compiled binding."
+binding_id = "odin_browser.observe"
+effect_class = "R0"
+seat_tags = ["home-observe"]
+timeout_seconds = 30
+idempotency = "pure"
+max_attempts = 1
+approval_policy = "none"

@@ -1,0 +1,14 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = "__enabled__"
+description = "__description__"
+# Repository root path; empty for a project without a repository.
+source_root = "__source_root__"
+# Existing seat ID used by default.
+default_seat = "__default_seat__"
+# Atlas corpus: atlas.code or atlas.personal.
+memory_namespaces = ["atlas.__memory_namespace__"]
+# Retention/privacy class: standard, private, or large-scientific.
+artifact_policy = "__artifact_policy__"
+# Optional account-kind to signed-in account-name table.
+accounts = "__accounts__"

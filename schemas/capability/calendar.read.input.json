@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/calendar.read.input.json",
+  "title": "calendar.read input",
+  "description": "Bounded window read for the calendar.read operation. R0: the request reads events in one half-open [start, end) RFC 3339 window from the calendar of the explicitly named account through the governed life adapter under a scoped opaque credential lease and produces no side effects. The `account` selector names one configured life calendar account and travels with every request; credential material never travels in arguments. The window is capped at 366 days and end must be after start, enforced at the adapter boundary. Unknown accounts, missing credentials, and unreachable services are typed unavailable outcomes, never empty successes. The window snapshot is produced into the calendar generated area, with events inside a 24-hour horizon of the window start also recorded as derived reminders.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "account": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "start": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "end": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    }
+  },
+  "required": ["account", "start", "end"]
+}

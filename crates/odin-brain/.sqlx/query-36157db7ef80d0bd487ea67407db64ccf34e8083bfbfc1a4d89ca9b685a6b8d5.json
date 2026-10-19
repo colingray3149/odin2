@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO brain_chunk (generation_id, ordinal, item, digest, text, model, embedding)\n                 SELECT $1, row.ordinal, row.item, row.digest, row.text,\n                        CASE WHEN row.vector > 0 THEN $7 ELSE peer.model END,\n                        CASE WHEN row.vector > 0\n                             THEN ($6::real[])[(row.vector - 1) * 2048 + 1 : row.vector * 2048]::halfvec\n                             ELSE peer.embedding END\n                 FROM UNNEST($2::bigint[], $3::text[], $4::text[], $5::text[], $8::int[])\n                      AS row(ordinal, item, digest, text, vector)\n                 LEFT JOIN LATERAL (\n                     SELECT model, embedding FROM brain_chunk\n                     WHERE model = $7 AND digest = row.digest AND embedding IS NOT NULL LIMIT 1\n                 ) AS peer ON row.vector = 0\n                 ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8Array",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "Float4Array",
+        "Text",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "36157db7ef80d0bd487ea67407db64ccf34e8083bfbfc1a4d89ca9b685a6b8d5"
+}

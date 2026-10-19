@@ -1,0 +1,93 @@
+schema = "odin.registry.v1"
+kind = "slice"
+enabled = true
+description = "Kubert operations slice: live k3s operations sessions over the production bridge, admitting exactly the eight governed Kubernetes capabilities with real host-tool handlers (snapshot reads, bounded cluster health reads, and bounded workload create, pause, resume, restart, cancel, and summarize)."
+capabilities = [
+  "kube.snapshot.read",
+  "kube.health.read",
+  "kube.workload.create",
+  "kube.workload.pause",
+  "kube.workload.resume",
+  "kube.workload.restart",
+  "kube.workload.cancel",
+  "kube.workload.summarize",
+  "memory.remember",
+  "brain.search",
+  "brain.read",
+  "seat.ask.sinmara",
+  "registry.read",
+  "incident.raise",
+  "artifact.write",
+  "artifact.read",
+  "memory.forget",
+  "browser.observe",
+  "browser.interact",
+  "web.search",
+  "web.read",
+]
+variables = {}
+[redirects]
+out_of_scope = "NeedsPlan"
+
+[knowledge]
+required = false
+atlas_sources = ["memory.colin", "ops.history", "memory.kubert", "memory.project.odin"]
+retrieval_mode = "hybrid"
+candidate_limit = 128
+top_k = 16
+min_score_micros = 1
+chunk_tokens = 512
+chunk_overlap_tokens = 64
+embedding_backend = "local"
+
+[context]
+# Budgets count UTF-8 bytes (the pinned default counter; ~4 bytes per token);
+# sized for bounded conversational sessions that roll over well below the window.
+max_bundle_tokens = 196608
+reserve_output_tokens = 16384
+control_tokens = 8192
+history_tokens = 139264
+core_tokens = 2_048
+prefetch_tokens = 512
+tool_result_tokens = 16384
+tool_schema_tokens = 16384
+max_item_tokens = 8192
+
+[tools]
+allow = [
+  "kube_snapshot_read",
+  "kube_health_read",
+  "kube_workload_create",
+  "kube_workload_pause",
+  "kube_workload_resume",
+  "kube_workload_restart",
+  "kube_workload_cancel",
+  "kube_workload_summarize",
+  "memory_remember",
+  "brain_search",
+  "brain_read",
+  "seat_ask_sinmara",
+  "registry_read",
+  "incident_raise",
+  "artifact_write",
+  "artifact_read",
+  "memory_forget",
+  "browser_observe",
+  "browser_interact",
+]
+deny = []
+alias_redirect = []
+
+[tools.redirects]
+max_http_hops = 2
+allow_cross_origin = false
+allow_https_downgrade = false
+
+[live]
+max_sessions_per_seat = 4
+max_prompt_bytes = 262144
+transfer_chunk_bytes = 1048576
+max_file_bytes = 268435456
+max_render_bytes = 67108864
+allowed_file_media_types = ["application/pdf", "text/plain", "image/png"]
+allowed_render_media_types = ["image/png", "image/jpeg", "image/svg+xml", "application/pdf"]

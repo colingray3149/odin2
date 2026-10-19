@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = true
+description = "Senior thesis CFD one-shot harness and scientific evidence system."
+source_root = ""
+default_seat = "gungnir"
+memory_namespaces = ["atlas.code", "memory.project.skuld"]
+artifact_policy = "large-scientific"
+review_verdict = "code.review.verdict"

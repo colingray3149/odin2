@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH lexical AS (\n                       SELECT generation_id, ordinal,\n                              row_number() OVER (ORDER BY score DESC, generation_id, ordinal) AS rank\n                       FROM (SELECT generation_id, ordinal, ts_rank(tsv, query) AS score\n                            FROM brain_lex, to_tsquery('simple', $2) AS query\n                            WHERE $2::text IS NOT NULL AND generation_id = ANY($1)\n                              AND tsv @@ query AND NOT (item = ANY($3))\n                            ORDER BY score DESC, generation_id, ordinal LIMIT $4) AS matched\n                  ),\n                  nearest AS (\n                      SELECT generation_id, ordinal FROM brain_lex\n                      WHERE $5::real[] IS NOT NULL AND generation_id = ANY($1) AND model = $7\n                        AND prefix IS NOT NULL AND NOT (item = ANY($3))\n                      ORDER BY prefix <=> $5::real[]::halfvec(256), generation_id, ordinal\n                      LIMIT $4 * $8\n                  ),\n                  vector AS (\n                      SELECT generation_id, ordinal,\n                             row_number() OVER (ORDER BY distance, generation_id, ordinal) AS rank\n                      FROM (SELECT nearest.generation_id, nearest.ordinal,\n                                   brain_chunk.embedding <=> $6::real[]::halfvec(2048) AS distance\n                            FROM nearest\n                            JOIN brain_chunk\n                              ON brain_chunk.generation_id = nearest.generation_id\n                             AND brain_chunk.ordinal = nearest.ordinal\n                            ORDER BY distance, nearest.generation_id, nearest.ordinal LIMIT $4) AS reranked\n                   )\n                   SELECT generation_id AS \"generation_id!\", ordinal AS \"ordinal!\",\n                          (COALESCE(1.0 / ($9::float8 + lexical.rank), 0)\n                           + COALESCE(1.0 / ($9::float8 + vector.rank), 0))::float8 AS \"rrf!\"\n                   FROM lexical FULL OUTER JOIN vector USING (generation_id, ordinal)\n                   ORDER BY 3 DESC, 1, 2 LIMIT $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "generation_id!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "ordinal!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "rrf!",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Text",
+        "TextArray",
+        "Int8",
+        "Float4Array",
+        "Float4Array",
+        "Text",
+        "Int8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "28db565e16beda5cca4381e616ada9bb353f9c6ddba7ff5326d6500356d0557c"
+}

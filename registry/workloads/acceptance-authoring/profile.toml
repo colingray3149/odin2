@@ -1,0 +1,91 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "Isolated acceptance target for registry.author's new-alert skeleton. Its reusable informational watchdog is authored through the owner conversation; each proof owns and retires its own Job."
+# Runner: script, an enabled pod-capable harness (default omp), or the separate claude-code driver.
+harness = "script"
+# Required node capability IDs; omitted means any eligible node.
+placement = ["scrape"]
+
+[image]
+# platform uses the deployed image; otherwise require an OCI reference with @sha256:<digest>.
+reference = "docker.io/library/python:3.12-slim@sha256:eeb8088e67610b37583880c7627e3931f087cba55a35810819e34a398f624a47"
+
+[script]
+# Non-empty argv array executed inside the image; required for script workloads.
+command = ["python3", "-u", "-c", "import json,time;[(print('ODIN-STATUS '+json.dumps({'residual':round(0.01-i*1e-4,6)}),flush=True),time.sleep(5)) for i in range(40)]"]
+
+[seat]
+# Enabled seat ID whose permissions apply to this workload.
+seat = "kubert"
+# Enabled project ID within the seat's project_scope.
+project = "odin"
+
+[network]
+# Bare egress hostnames, not URLs; an empty array adds no external hosts.
+allow_hosts = []
+
+[state]
+# Absolute in-pod path where the persistent state volume is mounted.
+path = "/state"
+# State volume capacity: positive integer with Ki/Mi/Gi/Ti/Pi/Ei suffix, e.g. 1Gi.
+storage = "1Gi"
+
+[export]
+# Absolute in-pod directory whose files are exported.
+pod_path = "/export"
+# Absolute host directory receiving exported files.
+host_folder = "/srv/odin/export"
+
+[brief]
+text = "Acceptance-only script: emits forty decreasing residual samples. No agent, file mutation, network or autonomous recovery."
+
+[lifetime]
+# Job wall-clock limit in seconds, 60..86400; omit for services.
+deadline_seconds = 300
+
+[monitoring]
+# Seconds between ODIN-STATUS samples; integer 5..3600.
+cadence_seconds = 15
+
+[[monitoring.watchdogs]]
+# Unique watchdog ID within this workload.
+id = "acceptance-authoring-residual"
+# Numeric ODIN-STATUS field comparison, e.g. residual > 1e-3.
+condition = "residual > 0.001"
+# Consecutive matching samples before firing; integer 1..1000.
+consecutive_hits = 1
+# Minimum seconds between alerts; integer 0..86400.
+cooldown_seconds = 300
+# Alert level: info, warning, error, or critical.
+severity = "info"
+# Enabled slice ID used for the alert response.
+slice = "kubert-ops"
+
+[[monitoring.watchdogs]]
+# Unique watchdog ID within this workload.
+id = "acc-registry.author-instance-1792218430"
+# Numeric ODIN-STATUS field comparison, e.g. residual > 1e-3.
+condition = "residual > 0.001"
+# Consecutive matching samples before firing; integer 1..1000.
+consecutive_hits = 1
+# Minimum seconds between alerts; integer 0..86400.
+cooldown_seconds = 300
+# Alert level: info, warning, error, or critical.
+severity = "info"
+# Enabled slice ID used for the alert response.
+slice = "kubert-ops"
+
+[[monitoring.watchdogs]]
+# Unique watchdog ID within this workload.
+id = "acc-registry.author-instance-1792226186"
+# Numeric ODIN-STATUS field comparison, e.g. residual > 1e-3.
+condition = "residual < 0.007"
+# Consecutive matching samples before firing; integer 1..1000.
+consecutive_hits = 1
+# Minimum seconds between alerts; integer 0..86400.
+cooldown_seconds = 300
+# Alert level: info, warning, error, or critical.
+severity = "info"
+# Enabled slice ID used for the alert response.
+slice = "kubert-ops"

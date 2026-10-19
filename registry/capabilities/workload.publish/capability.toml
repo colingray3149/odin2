@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "R3 publication of one operator-approved immutable workload profile through the existing committed-worktree registry chain: recompiles the exact approved declaration (digest re-proof), validates every reference against the committed registry at the bound revision, stages and commits the profile under registry/workloads/<id>/profile.toml, and publishes the next versioned snapshot with a stale-revision check. A digest mismatch or an advanced registry invalidates the old scope instead of retrying; the receipt carries published and daemon-pinned revisions so the caller reports honestly that a fresh profile is not dispatchable until the daemon re-pins. Launching the profile stays behind the governed kube.workload.create approval; this operation never starts a pod."
+handler = { id = "workload_publish" }
+input_schema = "schemas/capability/workload.publish.input.json"
+output_schema = "schemas/capability/workload.publish.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+# Declaration approval relies on kernel validation and excludes seats that can create pods.
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_hermes_workload_publish_evidence" }

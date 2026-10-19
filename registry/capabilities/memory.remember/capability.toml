@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Stores a fact or lesson in the calling seat's declared memory for later sessions."
+handler = { id = "memory_remember" }
+input_schema = "schemas/capability/memory.remember.input.json"
+output_schema = "schemas/capability/memory.remember.output.json"
+effect_class = "R2"
+seat_tags = ["builder", "coordinator", "operator", "judge"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_memory_remember_evidence" }

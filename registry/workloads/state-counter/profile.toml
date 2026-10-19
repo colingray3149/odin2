@@ -1,0 +1,81 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "Stateful counter job: persists an incrementing count in /state/count (resuming from it if present) and prints an ODIN-STATUS count line every 15s for up to 1 hour."
+# Runner: script, an enabled pod-capable harness (default omp), or the separate claude-code driver.
+harness = "script"
+
+[image]
+# platform uses the deployed image; otherwise require an OCI reference with @sha256:<digest>.
+reference = "docker.io/library/python:3.12-slim@sha256:eeb8088e67610b37583880c7627e3931f087cba55a35810819e34a398f624a47"
+
+[script]
+# Non-empty argv array executed inside the image; required for script workloads.
+command = ["python3", "-u", "-c", """import os,time;p='/state/count';n=int(open(p).read().strip()) if (os.path.exists(p) and open(p).read().strip().isdigit()) else 0;[(time.sleep(15),open(p,'w').write(str(n:=n+1)),print('ODIN-STATUS {"count": %d}'%n,flush=True)) for _ in range(240)]"""]
+
+[seat]
+# Enabled seat ID whose permissions apply to this workload.
+seat = "kubert"
+# Enabled project ID within the seat's project_scope.
+project = "odin"
+
+[network]
+# Bare egress hostnames, not URLs; an empty array adds no external hosts.
+allow_hosts = []
+
+[state]
+# Absolute in-pod path where the persistent state volume is mounted.
+path = "/state"
+# State volume capacity: positive integer with Ki/Mi/Gi/Ti/Pi/Ei suffix, e.g. 1Gi.
+storage = "1Gi"
+
+[export]
+# Absolute in-pod directory whose files are exported.
+pod_path = "/export"
+# Absolute host directory receiving exported files.
+host_folder = "/srv/odin/export"
+
+[brief]
+text = 'Script pod: stateful counter job. Resumes the integer from /state/count if it exists (else starts at 0), then every 15 s increments it, writes it back, and prints ODIN-STATUS {"count": n}. Runs up to 1 hour. No agent.'
+
+[lifetime]
+# Job wall-clock limit in seconds, 60..86400; omit for services.
+deadline_seconds = 3600
+
+[monitoring]
+# Seconds between ODIN-STATUS samples; integer 5..3600.
+cadence_seconds = 30
+# ODIN-STATUS counter name whose increase counts as useful progress.
+progress = "count"
+# Seconds without progress before recovery; 10..86400 and at least two sample intervals.
+stall_seconds = 180
+
+[monitoring.recovery]
+# Enabled stall responses: restart_worker and escalate; escalate is required.
+allowed_rungs = ["restart_worker", "escalate"]
+# Non-empty operator guidance when no recovery action remains.
+blocked_missing_decision = "If the counter cannot make progress (e.g. state volume unwritable), ask Colin whether to keep or retire the state-counter profile."
+
+[monitoring.recovery.max_attempts]
+# retry attempt limit; integer 0..1000, used only when the rung is allowed.
+retry = 1
+# restart_worker attempt limit; integer 0..1000, used only when the rung is allowed.
+restart_worker = 1
+# checkpoint attempt limit; integer 0..1000, used only when the rung is allowed.
+checkpoint = 0
+# rehome attempt limit; integer 0..1000, used only when the rung is allowed.
+rehome = 0
+# escalate attempt limit; integer 1..1000.
+escalate = 1
+
+[monitoring.recovery.cooldown_seconds]
+# retry cooldown in seconds; integer 0..31557600, zero means no delay.
+retry = 30
+# restart_worker cooldown in seconds; integer 0..31557600, zero means no delay.
+restart_worker = 60
+# checkpoint cooldown in seconds; integer 0..31557600, zero means no delay.
+checkpoint = 0
+# rehome cooldown in seconds; integer 0..31557600, zero means no delay.
+rehome = 0
+# escalate cooldown in seconds; integer 0..31557600, zero means no delay.
+escalate = 0

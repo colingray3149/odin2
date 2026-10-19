@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/git.patch.propose.output.json",
+  "title": "git.patch.propose output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "branch": {
+      "type": "string"
+    },
+    "commit": {
+      "type": "string"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "local": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pushed": { "type": "boolean" },
+        "uncertain": { "type": "boolean" },
+        "reconciled": { "type": "boolean" },
+        "url": { "type": "string" },
+        "reason": { "type": ["string", "null"] }
+      },
+      "required": ["pushed", "uncertain"]
+    },
+    "remote": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pushed": { "type": "boolean" },
+        "uncertain": { "type": "boolean" },
+        "reconciled": { "type": "boolean" },
+        "url": { "type": "string" },
+        "reason": { "type": ["string", "null"] }
+      },
+      "required": ["pushed", "uncertain"]
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diffDigest": { "type": "string" },
+        "reviewer": { "type": "string" },
+        "notes": { "type": ["string", "null"] }
+      },
+      "required": ["diffDigest", "reviewer", "notes"]
+    }
+  },
+  "required": [
+    "branch",
+    "commit",
+    "files",
+    "changed",
+    "local",
+    "remote"
+  ]
+}

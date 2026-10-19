@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/discord.notify.output.json",
+  "title": "discord.notify output",
+  "description": "Terminal receipt of one delivered egress notification: status sent after the scrubbed bounded text reached the owner-paired channel through the notify bridge. Message content, channel identifiers of third parties, credentials, and tokens never appear in the envelope. A notification that was not delivered (bridge unavailable, routing unavailable) never produces this receipt — the typed unavailability is the recorded outcome.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "const": "sent"
+    }
+  },
+  "required": ["status"]
+}

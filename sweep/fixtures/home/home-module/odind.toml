@@ -1,0 +1,91 @@
+# Nix substitutes every @name@ with a pinned store artifact before use.
+schema = "odin.odind-config.v1"
+revision = 1
+worker_bus = "unix:path=/tmp/odin-fixture/worker-bus.sock"
+
+[identity]
+node = "laptop"
+
+[paths]
+registry_root = "@registry@"
+state_root = "/tmp/odin-fixture/state"
+registry_snapshot = "/tmp/odin-fixture/registry/snapshot.json"
+authority_token_root = "/tmp/odin-fixture/authority/tokens"
+authority_verification_key_file = "/tmp/odin-fixture/authority/verification-key"
+
+[listener]
+address = "127.0.0.1:18420"
+
+[executables]
+omp_bin = "@omp@"
+omp_revision = "@omp-revision@"
+extension = "@extension@"
+zellij_bin = "@zellij@"
+zellij_session = "odin"
+
+[executables.browser]
+chromium = "@chromium@"
+profile_root = "/tmp/odin-fixture/browser"
+policy = "@browser-policy@"
+protected_values = "@browser-protected-values@"
+scanner = "@scanner@"
+stream = "0f0e0d0c-0b0a-4948-8765-432109876543"
+
+[executables.browser.display]
+source = "xvfb"
+xvfb_binary = "@xvfb@"
+
+[catalogs.gateway_projection]
+path = "@gateway-projection@"
+digest = "@gateway-projection-digest@"
+
+[publish]
+render_session = "live-0f0e0d0c-0b0a-4948-8765-432109876543"
+file_lane = "lane-file"
+render_lane = "lane-render"
+
+[capacity.connections]
+max_connections = 8
+max_inflight_requests = 16
+max_subscriptions_per_connection = 4
+request_queue_depth = 1024
+max_frame_bytes = 1048576
+
+[capacity.sessions]
+max_sessions = 32
+max_history_page = 100
+max_list_page = 100
+command_journal_depth = 4096
+
+[capacity.streams]
+frame_queue_depth = 64
+replay_buffer_events = 512
+max_stream_frame_bytes = 65536
+max_frames_per_second = 30
+
+[capacity.transfers]
+max_transfer_bytes = 1048576
+chunk_bytes = 16384
+max_concurrent_transfers = 2
+download_credit_chunks = 8
+ticket_ttl = [60, 0]
+queue_depth = 256
+
+[capacity.renders]
+max_render_bytes = 1048576
+max_concurrent_renders = 1
+queue_depth = 64
+timeout = [120, 0]
+
+[capacity.files]
+max_read_chunk_bytes = 262144
+max_browse_page = 500
+max_watch_streams = 32
+watch_queue_depth = 256
+max_path_bytes = 1024
+
+[capacity.terminal]
+max_snapshot_bytes = 65536
+max_delta_bytes = 8192
+max_frames_per_second = 30
+control_lease_ttl = [60, 0]

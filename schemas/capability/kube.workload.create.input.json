@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.workload.create.input.json",
+  "title": "kube.workload.create input",
+  "description": "Names exactly one admitted published profile of the container or workload namespace. The model never supplies an image, command, args, node selector, worker identity, namespace, run id, operation id, or idempotency digest; the trusted runtime resolves every execution field from the shared pinned snapshot with typed reference authority — unknown and disabled profiles refuse before any effect. approvalId is a model-supplied selector naming the exact approval on the phase-two dispatch — never itself authority: the kernel consumes that exact approval server-side.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "profile": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Published registry profile id; the id namespace is registry data and is deliberately not enumerated on the wire. Admission is the daemon's typed shared lookup against the pinned snapshot."
+    },
+    "targetNode": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$",
+      "description": "Initial placement only: exact admitted cluster node, intersected with the profile's declared placement and observed availability. Does not pin later restart or rehome. Agent profiles require the already-bound serving/session node; this cannot rebind their gateway or session authority."
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Model-supplied selector naming the exact kernel approval on the phase-two dispatch — never itself authority: the kernel consumes that exact approval server-side."
+    },
+    "inputs": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "pattern": "^blake3:[0-9a-f]{64}$"
+      },
+      "description": "Artifacts the pod receives read-only, in order: a script pod as /var/run/odin/staging/input-0, input-1, …; an agent pod from input-2 on (its brief names each path). Each must be shared with the launching seat or project."
+    }
+  },
+  "required": [
+    "profile"
+  ]
+}

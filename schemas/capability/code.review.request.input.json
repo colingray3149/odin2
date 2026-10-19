@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/code.review.request.input.json",
+  "title": "code.review.request input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reviewer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "reviewer"
+  ]
+}

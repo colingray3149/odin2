@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/seat.ask.input.json",
+  "title": "seat.ask input",
+  "description": "Structured cross-seat delegation through the one generic seat_ask primitive. The model never names a seat: the dispatch target is the capability's published delegate_to, and _delegate_to repeats it as host-only canonical metadata — the host normalizes it from the same published contract before journaling and approval, the model can neither select nor omit it, and any routing change therefore changes the approved arguments digest, so an old approval for one target can never authorize another. R3: the ask dispatches a governed worker with enough mandate to act, so the kernel approval gate (ApprovalRequirement::Operator) must approve the exact dispatch scope first, and a denial is recorded durably with no dispatch. approvalId is a model-supplied selector naming the exact approval on the phase-two dispatch — never itself authority: the kernel consumes that exact approval server-side, and the host executor passes the unforgeable authorized-operation proof onward. The caller's identity is scope-derived: there is no caller_seat field, and the caller seat, lane, session, and run stay the actual invocation scope. Options carry opaque action references only — never credentials, account data, or secret material. The durable ask command is keyed by the kernel's idempotency authority, so exactly one recorded ask exists per idempotency key (CORE-004).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "_delegate_to": {
+      "description": "Host-only canonical metadata: the dispatch target seat, normalized by the host from the capability's published delegate_to before journaling and approval. Never model-selected and never defaulted; it must appear verbatim so a routing change invalidates prior approvals.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "project": {
+      "description": "The actual registry ProjectId of the child worker's project — required to ask a worker seat. The admitted set is the daemon's configured lane bindings for the declared target seat, enforced typed at the dispatch boundary before any governed owner is consulted; semantic labels are not project ids. It comes from the request, the established conversation, or a declared default — the admitted set is what is allowed, never a default to pick from. An escalation to a conversation seat concerns the asker's own project and carries none.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "question": {
+      "description": "The concrete work or question being delegated, as the requester actually asked it — never placeholder work written only to make the call possible.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "options": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "action_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "label",
+          "action_ref"
+        ]
+      }
+    },
+    "urgency": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "wait_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 600
+    },
+    "provider": {
+      "description": "With model: one of the target seat's declared launch options for this ask only; the seat's chosen launch is untouched.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    }
+  },
+  "required": [
+    "_delegate_to",
+    "subject",
+    "question",
+    "urgency"
+  ],
+  "dependentRequired": {
+    "provider": [
+      "model"
+    ],
+    "model": [
+      "provider"
+    ]
+  }
+}

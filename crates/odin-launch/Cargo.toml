@@ -1,0 +1,32 @@
+[package]
+name = "odin-launch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "odin-acp"
+path = "src/main.rs"
+
+[dependencies]
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap = { workspace = true, features = ["env"] }
+futures-util.workspace = true
+odin-cli.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["io-std"] }
+url.workspace = true
+odin-domain.workspace = true
+odin-huginn.workspace = true
+odin-ledger.workspace = true
+
+[dev-dependencies]
+parking_lot.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

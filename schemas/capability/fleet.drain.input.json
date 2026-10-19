@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/fleet.drain.input.json",
+  "title": "fleet.drain input",
+  "description": "One governed fleet-host drain. `host` names one declared fleet host; the daemon resolves the host's enabled registry nodes from its pinned snapshot, drains their drainable pods through its kube surface, or — when one of them holds the registry's authoritative state — returns the ordered authority-move plan without touching the cluster. Omit approvalId on the first call to request operator approval; retry with the exact approved host.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "host": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "The declared fleet host to drain."
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "The consumed operator approval binding this retry to the approved drain."
+    }
+  },
+  "required": ["host"]
+}

@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/calendar.propose.output.json",
+  "title": "calendar.propose output",
+  "description": "Exactly one terminal outcome of the calendar.propose operation, discriminated by shape. A pending mutation returns the gated receipt: the durable intent's command id, the derived proposal identity (proposal:<idempotency key>), and the kernel-minted approval id awaiting the operator. A replay of a settled mutation (or an already-approved proposal dispatching) returns the settled receipt: command id, the adapter's settled result, and the durable replay flag. The success result carries the calendar event identifiers only ({\"eventIds\": [...]}, in upstream application order); event content, attendee identities, and credentials never appear in the result envelope. A recorded denial settles as {\"denied\": true, ...} with identifiers and evidence reference only; a provably undispatched failure is {\"executed\": false, \"reason\": ...} — honest unavailability, never a fabricated mutation. A denied, expired, or unavailable mutation never produces an eventId. An applied mutation also reports its derived calendar receipt page (and, for a single create, its appointment page) separately as receiptPublication: published only when every page holds its receipt, failed when either page failed or conflicted (each page's outcome and bounded detail), or unavailable with no vault composed; its correlationId is the original operation a vault.write_generated receipt repair names. A failed page never changes the applied eventIds.",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "gated"
+        },
+        "command_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 264
+        },
+        "proposal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 264
+        },
+        "approval_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 264
+        }
+      },
+      "required": [
+        "status",
+        "command_id",
+        "proposal_id",
+        "approval_id"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 264
+        },
+        "result": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "eventIds": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 128,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                }
+              },
+              "required": [
+                "eventIds"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "denied": {
+                  "const": true
+                },
+                "approvalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 264
+                },
+                "evidenceRef": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "decidedBy": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "denied",
+                "approvalId",
+                "evidenceRef",
+                "decidedBy"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "executed": {
+                  "const": false
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "account-unavailable",
+                    "credential-unavailable",
+                    "service-unavailable",
+                    "protocol-failure",
+                    "timeout",
+                    "lease-refused"
+                  ]
+                }
+              },
+              "required": [
+                "executed",
+                "reason"
+              ]
+            }
+          ]
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "receiptPublication": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": { "enum": ["published", "failed", "unavailable"] },
+            "correlationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "detail": { "type": "string", "minLength": 1, "maxLength": 1024 },
+            "pages": {
+              "type": "array",
+              "maxItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "pageName": { "type": "string", "minLength": 1, "maxLength": 512 },
+                  "outcome": { "enum": ["written", "identical", "conflict", "failed"] },
+                  "contentDigest": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+                  "detail": { "type": "string", "minLength": 1, "maxLength": 1024 }
+                },
+                "required": ["pageName", "outcome"]
+              }
+            }
+          },
+          "required": ["status", "correlationId", "pages"]
+        }
+      },
+      "required": [
+        "command_id",
+        "result",
+        "replayed"
+      ]
+    }
+  ]
+}

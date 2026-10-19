@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Commits every change in the session's capsule and pushes it as the branch seat/<seat>/<session> into the project's own repository, for Colin or Sinmara to review and merge; never touches main. Returns the branch, commit and changed files."
+handler = { id = "git_patch_propose" }
+input_schema = "schemas/capability/git.patch.propose.input.json"
+output_schema = "schemas/capability/git.patch.propose.output.json"
+effect_class = "R2"
+seat_tags = ["builder"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_git_patch_propose_evidence" }

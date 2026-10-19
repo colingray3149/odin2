@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.workload.restart.input.json",
+  "title": "kube.workload.restart input",
+  "description": "Restarts one pod Job (a finite job or a long-lived service) addressed by run id by recreating it from its admitted published container profile. The caller supplies the exact opaque resourceVersion observed at admission (via kube.workload.summarize or kube.snapshot.read); it is the compare-and-swap and is never re-fetched or interpreted by the runtime. Operation id, idempotency digest, and worker identity are resolved by the trusted runtime; the target node is decided by trusted placement unless targetNode rehomes the pod: then that node must be inside the deployment placement authority and satisfy the pod's declared placement, and node-bound state is carried there. approvalId is a model-supplied selector naming the exact approval on the phase-two dispatch \u2014 never itself authority: the kernel consumes that exact approval server-side.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Model-supplied selector naming the exact kernel approval on the phase-two dispatch \u2014 never itself authority: the kernel consumes that exact approval server-side."
+    },
+    "expectedResourceVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Opaque Kubernetes resourceVersion of the addressed Job as observed at admission."
+    },
+    "targetNode": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$",
+      "description": "Rehome: the cluster node (e.g. pc, mini) to restart the pod on. The pod's declared placement must hold there; its per-pod state is checkpointed and carried. Omit for a plain restart."
+    }
+  },
+  "required": [
+    "runId",
+    "expectedResourceVersion"
+  ]
+}

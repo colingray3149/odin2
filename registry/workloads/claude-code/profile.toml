@@ -1,0 +1,48 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "Claude Code driver: selected discovered Q33 account, fresh declared project clone on claude/<name>, no seat or memory, daemon-owned publication and StopAuthority pod custody."
+# claude-code selects the separate Claude driver workload schema.
+harness = "claude-code"
+# Launch target: pod (default) or host-tab.
+placement = "pod"
+# Account discovery kind; must be claude-code.
+account_kind = "claude-code"
+# Account source; discovered is the supported value.
+accounts = "discovered"
+# Enabled project IDs to allow; [] adds no project restriction.
+projects = []
+# Enabled environment ID matching placement: k3s-pod or fleet-host.
+environment = "pod-authority"
+# true enables Claude remote control; false disables it.
+remote_control = true
+# true skips Claude permission prompts; defaults true for pod, false for host-tab.
+skip_permissions = true
+# Distinct MCP server IDs declared in mcp_servers; [] selects none.
+mcp = ["filesystem"]
+
+[image]
+# platform or digest-pinned OCI image; required by schema even for host-tab.
+reference = "platform"
+
+[resources]
+# Pod CPU request: positive integer cores or millicores (m); no host-tab resource enforcement.
+cpu_request = "250m"
+# Pod CPU limit: positive integer cores or millicores (m), at least cpu_request.
+cpu_limit = "2"
+# Pod memory request: positive integer with Ki/Mi/Gi/Ti/Pi/Ei suffix.
+memory_request = "512Mi"
+# Pod memory limit: positive binary-unit quantity, at least memory_request.
+memory_limit = "4Gi"
+# Pod storage limit: positive integer with Ki/Mi/Gi/Ti/Pi/Ei suffix.
+storage_limit = "8Gi"
+
+[mcp_servers.filesystem]
+# Absolute filesystem-server path for this placement; worktree scope requires the admitted binary.
+command = "/odin/bin/mcp-server-filesystem"
+# Server argv; worktree scope requires only {worktree}, expanded to the selected checkout.
+args = ["{worktree}"]
+# MCP scope: worktree or browser; worktree confines the filesystem server to the checkout.
+scope = "worktree"
+# MCP egress hostnames; worktree scope requires [].
+allow_hosts = []

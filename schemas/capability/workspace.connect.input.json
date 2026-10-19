@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/workspace.connect.input.json",
+  "title": "workspace.connect input",
+  "description": "One governed workspace connection. `target` names either a live zellij session observed in the fleet placements or a declared project id; `host` optionally narrows the resolution to one declared fleet host by its tailscale name; `openOn` names the declared fleet device Colin is at, and the connection is then opened on that device's screen (a terminal attached to the session, or Zed on the project over ssh). Without `openOn` the capability only resolves the command.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "host": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Optional declared fleet host (tailscale name) to resolve the connection on."
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Zellij session name or declared project id to connect to."
+    },
+    "openOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Declared fleet device (laptop, pc) to open the workspace on."
+    },
+    "launchOwner": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "Unique run token for an isolated owned launch. Requires openOn; never reuse a token. Default shared desktop behavior is unchanged when omitted."
+    }
+  },
+  "dependentRequired": {"launchOwner": ["openOn"]},
+  "required": [
+    "target"
+  ]
+}

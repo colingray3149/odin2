@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+kind = "routine"
+enabled = true
+description = "Summarize incoming ChE 126 emails in gmail and file PDF attachments into ChE 126 class notes"
+# Enabled conversation-seat ID to wake when the trigger fires.
+seat = "sinmara"
+
+[trigger]
+# Event: workload_succeeded, workload_failed, watchdog, incident, mail_arrived, calendar_event, file_received, repo_push, ring_gesture.
+event = "mail_arrived"
+# Mail search text; required for mail_arrived, 1..200 characters.
+match = "ChE 126"
+# Mail/calendar account name; omitted means all accounts being read.
+account = "colin@example.com"
+
+[action]
+# brief wakes the seat with instructions; dm sends text directly.
+kind = "brief"
+# Action content; non-empty text up to 2000 characters.
+text = "A new email matching 'ChE 126' arrived in colin@example.com. Search that account for the newest matching message, read it, and send Colin a short plain-words summary. If it has PDF attachments and the read exposes an intake id for them, file each into his class notes with intake_file (course 'ChE 126', short descriptive title from the attachment/filename) and tell him where it went; if attachments exist but can't be retrieved, say so plainly in one sentence. No PDFs: summary only."

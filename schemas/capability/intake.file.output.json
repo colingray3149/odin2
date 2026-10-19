@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/intake.file.output.json",
+  "title": "intake.file output",
+  "description": "The generated-page receipt of one filed attachment plus the page it was filed as.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "knowledgeRefreshUnavailable": {
+      "type": "string"
+    },
+    "page_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "content_digest": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "byte_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "filedAs": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    }
+  },
+  "required": [
+    "page_name",
+    "content_digest",
+    "byte_count"
+  ]
+}

@@ -1,0 +1,14 @@
+schema = "odin.registry.v1"
+kind = "lane"
+enabled = true
+description = "Odin Kubernetes operations lane for Kubert live sessions."
+# Existing project ID whose scope this lane belongs to.
+project = "odin"
+# Descriptive lane-family label; any non-empty string, not a dispatch enum.
+family = "operations"
+# Existing seat ID used when no seat is selected explicitly.
+default_seat = "kubert"
+# Descriptive queue label; any non-empty string, not a scheduling guarantee.
+queue = "interactive"
+# true requires a separate reviewer before publishing code; false does not.
+requires_independent_review = false

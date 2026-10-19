@@ -1,0 +1,17 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+# mcp-server-time runs through odin-adapter-mcp via adapterBackends.mcp-time.
+implementation = "mcp-time"
+version = 1
+description = "Convert a wall-clock time (HH:MM) between two IANA time zones, from the MCP time server through the declared mcp-time adapter."
+handler = { id = "odin_adapter.operation" }
+input_schema = "schemas/capability/time.convert_time.input.json"
+output_schema = "schemas/capability/time.convert_time.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_adapter.receipt" }

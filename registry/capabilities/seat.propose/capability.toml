@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Spin up a temporary helper seat for one piece of work Colin asks for: like seat.create (a copy of an existing builder or judge seat, on existing projects) but limited to the template's tools you name and retired by itself — its declarations removed again — when its delegated work is done or at its expiry (1 to 24 hours), whichever comes first."
+handler = { id = "seat_propose" }
+input_schema = "schemas/capability/seat.propose.input.json"
+output_schema = "schemas/capability/seat.propose.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_seat_propose_evidence" }

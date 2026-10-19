@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "R0 read-only contract for the operator's real terminal session surface: bounded screen content captured daemon-side from the declared session target (the Supervisor terminal-target modules' resolved snapshot class), no input injection, no command execution, and an unresolvable session target is a typed unavailability, never a fabricated transcript. Served by the compiled hermes handler under the exact admitted tuple, routed through the daemon's live terminal-read seam over the governed supervisor."
+handler = { id = "terminal_read" }
+input_schema = "schemas/capability/terminal.read.input.json"
+output_schema = "schemas/capability/terminal.read.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_terminal_read_evidence" }

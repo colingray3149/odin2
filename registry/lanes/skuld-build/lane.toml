@@ -1,0 +1,14 @@
+schema = "odin.registry.v1"
+kind = "lane"
+enabled = true
+description = "Skuld CFD build lane for the skuld-builder seat: builds and pilots simulation cases through the declared Atlas -> Builder -> Wall pipeline in isolated worktrees."
+# Existing project ID whose scope this lane belongs to.
+project = "skuld"
+# Descriptive lane-family label; any non-empty string, not a dispatch enum.
+family = "engine"
+# Existing seat ID used when no seat is selected explicitly.
+default_seat = "skuld-builder"
+# Descriptive queue label; any non-empty string, not a scheduling guarantee.
+queue = "scientific"
+# true requires a separate reviewer before publishing code; false does not.
+requires_independent_review = false

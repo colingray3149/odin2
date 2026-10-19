@@ -1,0 +1,67 @@
+[package]
+name = "odin-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "odin"
+path = "src/main.rs"
+
+[[bin]]
+name = "odind"
+path = "src/odind.rs"
+
+[dependencies]
+axum.workspace = true
+signal-hook = "0.3.18"
+base64.workspace = true
+blake3.workspace = true
+sha2.workspace = true
+async-trait.workspace = true
+mimalloc.workspace = true
+clap.workspace = true
+futures-util.workspace = true
+notify = "8"
+odin-atlas.workspace = true
+odin-browser.workspace = true
+odin-confined-fs.workspace = true
+odin-domain.workspace = true
+odin-brain.workspace = true
+odin-huginn.workspace = true
+odin-kernel.workspace = true
+odin-ledger.workspace = true
+odin-node.workspace = true
+odin-kube.workspace = true
+kube.workspace = true
+odin-hermes.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+parking_lot.workspace = true
+odin-omp.workspace = true
+odin-registry.workspace = true
+odin-process = { version = "0.0.0", path = "../odin-process" }
+odin-sidecar = { version = "0.0.0", path = "../odin-sidecar" }
+odin-sidecar-protocol = { version = "0.0.0", path = "../odin-sidecar-protocol" }
+odin-strict-json = { version = "0.0.0", path = "../odin-strict-json" }
+odin-types = { version = "0.0.0", path = "../odin-types" }
+rusqlite.workspace = true
+rustix = { workspace = true, features = ["event", "net"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+url.workspace = true
+toml.workspace = true
+uuid.workspace = true
+tokio = { workspace = true, features = ["io-std", "io-util", "net", "rt-multi-thread", "time"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+blake3.workspace = true
+odin-process = { version = "0.0.0", path = "../odin-process", features = ["test-support"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+[lints]
+workspace = true

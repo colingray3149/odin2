@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/brain.search.output.json",
+  "title": "brain.search output",
+  "properties": {
+    "policyDigest": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "registryRevision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "posture": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "const": "full"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "const": "lexicalOnly"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "mode",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "pattern": "^brain://"
+          },
+          "hit": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "itemId": {
+                "type": "string",
+                "pattern": "^blake3:[0-9a-f]{64}$"
+              },
+              "source": {
+                "type": "string"
+              },
+              "sourceRevision": {
+                "type": "string",
+                "pattern": "^blake3:[0-9a-f]{64}$"
+              },
+              "factId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "factRevision": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "factOrigin": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "lineage": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "trust": {
+                "type": "string"
+              },
+              "contentDigest": {
+                "type": "string",
+                "pattern": "^blake3:[0-9a-f]{64}$"
+              },
+              "content": {
+                "type": "string"
+              },
+              "score": {
+                "type": "integer"
+              },
+              "citation": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "itemId",
+              "source",
+              "sourceRevision",
+              "factId",
+              "factRevision",
+              "factOrigin",
+              "lineage",
+              "trust",
+              "contentDigest",
+              "content",
+              "score",
+              "citation"
+            ]
+          }
+        },
+        "required": [
+          "url",
+          "hit"
+        ]
+      }
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "policyDigest",
+    "registryRevision",
+    "posture",
+    "results",
+    "truncated"
+  ]
+}

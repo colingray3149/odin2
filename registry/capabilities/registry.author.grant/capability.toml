@@ -1,0 +1,17 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Change Odin's declared access. Fills one registry skeleton that grants or reaches something — a capability, provider, host, node, slice, container, environment or agent harness — or removes one declared environment, decided by the seat's own declarations (no owner question; Huginn carries the audit); compiled strictly, committed to odin main and published through the shared authoring transaction. Effective after odind's next idle reload."
+handler = { id = "registry_author_grant" }
+input_schema = "schemas/capability/registry.author.grant.input.json"
+output_schema = "schemas/capability/registry.author.grant.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_hermes_registry_author_grant_evidence" }

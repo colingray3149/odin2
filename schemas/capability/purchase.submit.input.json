@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/purchase.submit.input.json",
+  "title": "purchase.submit input",
+  "description": "Human-gated purchase submission for the purchase.submit operation. R3: spending money is a consequential effect; the exact-scope approval request is minted in the kernel approval gate and nothing is ever submitted without the operator's consumed approval — denials are recorded durably, and the vendor submission port activates only on the unforgeable authorized-operation proof relayed by the M10 governed dispatch (typed unavailable until a real backend exists, never simulated success). The optional approvalId is a model-supplied selector naming the exact approval on the gate-consumption dispatch route — never itself authority; the kernel consumes that exact approval server-side. The prepare route omits it. No account numbers, PANs, or credentials travel in arguments.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "vendor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "item_description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "amount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "minor_units": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
+        }
+      },
+      "required": ["currency", "minor_units"]
+    },
+    "checkout": {
+      "description": "The governed-browser checkout this purchase runs on Colin's account (W6.5): the product page, its add-to-cart control, the vendor's checkout page and its place-order control, all on one https vendor site. Part of the approved request: the one approval covers exactly these pages and controls, and the order is placed only if the checkout page shows the approved amount.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "product_url": { "type": "string", "minLength": 9, "maxLength": 2048, "pattern": "^https://" },
+        "add_to_cart": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "checkout_url": { "type": "string", "minLength": 9, "maxLength": 2048, "pattern": "^https://" },
+        "place_order": { "type": "string", "minLength": 1, "maxLength": 256 }
+      },
+      "required": ["product_url", "add_to_cart", "checkout_url", "place_order"]
+    }
+  },
+  "required": ["vendor", "item_description", "amount"]
+}

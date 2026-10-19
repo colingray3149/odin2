@@ -1,0 +1,49 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-surface"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "container-patch"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "container"
+type = "id"
+required = true
+meaning = "Existing container."
+
+[[variable]]
+name = "surface_id"
+type = "id"
+required = true
+meaning = "Stable surface ID."
+
+[[variable]]
+name = "surface_kind"
+type = "enum:log|metric|file|render|browser|simulation"
+required = true
+meaning = "ColinRemote surface."
+
+[[variable]]
+name = "source"
+type = "handle"
+required = true
+meaning = "Artifact/file/stream handle, never arbitrary command."
+
+[[variable]]
+name = "media_type"
+type = "media-type"
+required = true
+meaning = "Declared output type."
+
+[[variable]]
+name = "refresh_seconds"
+type = "int:0:86400"
+required = true
+meaning = "Zero means event-driven."
+
+[[variable]]
+name = "renderer"
+type = "id-or-empty"
+required = true
+meaning = "Registered renderer when needed."

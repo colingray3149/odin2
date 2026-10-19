@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/email.manage.output.json",
+  "title": "email.manage output",
+  "description": "The settled receipt of one reversible email.manage batch, fresh or replayed: the durable intent's command id, the managed message identifiers ({\"emailIds\": [...]}, the distinct messages actually updated in first-action order), and the durable replay flag. Message content, labels, and credentials never appear in the result envelope. An unavailable, refused, or uncertain batch is an error, never a receipt.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "command_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 264
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "emailIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 25,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "required": [
+        "emailIds"
+      ]
+    },
+    "replayed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "command_id",
+    "result",
+    "replayed"
+  ]
+}

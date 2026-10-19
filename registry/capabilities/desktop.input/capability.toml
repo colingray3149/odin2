@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Type into the focused window on Colin's desktop (laptop or pc): text as keystrokes and, if asked, Enter, through ydotool in his graphical session over ssh. He sees it happen and can keep typing himself; no desktop session or a locked screen is a typed refusal and nothing is typed. Only for what he asked to have typed, never passwords."
+handler = { id = "desktop_input" }
+input_schema = "schemas/capability/desktop.input.input.json"
+output_schema = "schemas/capability/desktop.input.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_desktop_input_evidence" }

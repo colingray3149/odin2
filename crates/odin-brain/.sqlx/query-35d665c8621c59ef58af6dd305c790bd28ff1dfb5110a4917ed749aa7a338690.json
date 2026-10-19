@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM brain_generation WHERE owner = $1 AND generation_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "35d665c8621c59ef58af6dd305c790bd28ff1dfb5110a4917ed749aa7a338690"
+}

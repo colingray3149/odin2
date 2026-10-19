@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/huginn.read.input.json",
+  "title": "huginn.read input",
+  "description": "One read-only Huginn query. kind=status requests the daemon status snapshot; kind=session requests the caller's own governed session projection. No other kind exists and no mutating call is reachable through this capability.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": ["status", "session"]
+    }
+  },
+  "required": ["kind"]
+}

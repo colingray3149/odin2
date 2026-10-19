@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/task.read.output.json",
+  "title": "task.read output",
+  "description": "Nonblocking lifecycle truth of one delegated worker. The phase comes from the durable delegation row and liveness from the live supervisor; a worker that cannot be proven finished is never reported completed.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "childSession": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["provisioning", "running", "ended", "failed"]
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "state": {
+      "type": ["string", "null"],
+      "maxLength": 128
+    },
+    "epoch": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "answer": {
+      "type": ["string", "null"],
+      "maxLength": 8192,
+      "description": "The child's last observed human-readable answer from the durable history, bounded to 8192 characters. Null is honest absence, never a fabricated completion."
+    },
+    "result": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["artifacts", "eventSequence"],
+      "properties": {
+        "summary": {
+          "type": ["string", "null"],
+          "maxLength": 8192,
+          "description": "The child's own final result summary from the last typed Result event, verbatim and bounded. Null is honest absence."
+        },
+        "artifacts": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+        },
+        "eventSequence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Durable event sequence of the typed Result event this receipt projects — the evidence identity of the completion observation."
+        }
+      },
+      "description": "The child's last observed structured completion result: the last typed Result event the child session published, verbatim and bound to its event sequence. Null is honest absence — facts are never scraped from prose."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "depth": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1
+    },
+    "stalls": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "type": "string", "minLength": 1, "maxLength": 257 },
+      "description": "The model lane (provider/model) of each stall the kernel recovered, in order. Absent when the worker never stalled."
+    },
+    "switchedTo": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 257,
+      "description": "The seat's next declared lane (provider/model) the kernel moved the worker to after a repeated stall. Absent while it runs on provider/model."
+    },
+    "screen": {
+      "type": "string",
+      "maxLength": 4096,
+      "description": "The newest lines of the worker's terminal screen, credential-shaped words withheld. Present when the read asked for it and the worker has a terminal."
+    },
+    "branch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["branch", "base", "stat", "diff", "truncated"],
+      "properties": {
+        "branch": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "base": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "stat": { "type": "string" },
+        "diff": { "type": "string" },
+        "truncated": { "type": "boolean" }
+      },
+      "description": "The live worker's branch, its base commit, git diff --stat and the diff of its capsule against the base, each bounded with a truncation note. Absent when the worker has no Git capsule or has stopped."
+    }
+  },
+  "required": [
+    "childSession",
+    "phase",
+    "active",
+    "state",
+    "epoch",
+    "project",
+    "provider",
+    "model",
+    "depth"
+  ]
+}

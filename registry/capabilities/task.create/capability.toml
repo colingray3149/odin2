@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Delegate one bounded governed implementation worker as a real supervised OMP session of the fixed configured provider and model. The child project must be inside the parent's approved scope, the calling run must carry a recorded accepted plan, worker depth is bounded at one level, and the parent link is durable before the child token or session exists."
+handler = { id = "odin_task.create" }
+input_schema = "schemas/capability/task.create.input.json"
+output_schema = "schemas/capability/task.create.output.json"
+effect_class = "R1"
+seat_tags = ["builder", "coordinator"]
+timeout_seconds = 600
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_task.create_evidence" }

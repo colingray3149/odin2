@@ -1,0 +1,88 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-seat"
+destination = "seats"
+
+[[variable]]
+name = "enabled"
+type = "bool"
+required = true
+meaning = "Whether the seat is active after combined-state validation."
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Human-facing purpose of the seat."
+
+[[variable]]
+name = "categories"
+type = "array<string>"
+required = true
+meaning = "Zero or more authority categories without CSV or sentinel encoding."
+
+[[variable]]
+name = "tool_refs"
+type = "array<id>"
+required = true
+meaning = "Zero or more existing capability IDs granted to the seat."
+
+[[variable]]
+name = "project_scope"
+type = "array<id>"
+required = true
+meaning = "Zero or more project IDs within the seat authority."
+
+[[variable]]
+name = "approval_defaults"
+type = "table"
+required = true
+meaning = "Typed R0 through R3 approval defaults."
+
+[[variable]]
+name = "brain_scope"
+type = "array<id>"
+required = true
+meaning = "Zero or more Atlas subtree IDs visible to the seat."
+
+[[variable]]
+name = "limits"
+type = "table"
+required = true
+meaning = "Typed max_parallel_runs/max_sessions; a budget = { usd_micros, window = { duration_seconds } } cap only where Colin asks for one (no default caps)."
+
+[[variable]]
+name = "live"
+type = "optional<table>"
+required = false
+meaning = "Optional live session limits and file/render transport lanes; these are not model choices. Omission removes the key."
+
+[[variable]]
+name = "knowledge"
+type = "optional<table>"
+required = false
+meaning = "Optional knowledge policy independent of every other policy block."
+
+[[variable]]
+name = "context"
+type = "optional<table>"
+required = false
+meaning = "Optional context profile, token ceiling and knowledge review lane; review_lane does not select the seat's execution model."
+
+[[variable]]
+name = "tools"
+type = "optional<table>"
+required = false
+meaning = "Optional tool policy; deny and disabled_aliases use provider ToolName values, so capability dots map to underscores."
+
+[[variable]]
+name = "conversation"
+type = "optional<table>"
+required = false
+meaning = "Optional standing conversation vehicle with project, ask_capability, guidance, and answer_timeout_seconds; ask_capability must name an enabled implemented capability whose delegate_to is exactly this seat. Omission means the seat is not conversation-owned."
+
+[[variable]]
+name = "sandbox"
+type = "table"
+required = true
+meaning = "Physical confinement. shell true passes the bash tool; false omits it. network is none (unshare the shell network) or host (share the host network). writable and readonly are capsule, scratch, checkout, or an absolute path other than /, a path under /home, or a path with a parent segment. Empty writable on a shell seat means capsule plus scratch."
+

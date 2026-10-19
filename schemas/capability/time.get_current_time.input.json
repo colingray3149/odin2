@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/time.get_current_time.input.json",
+  "title": "time.get_current_time input",
+  "properties": {
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "IANA time zone name, e.g. Asia/Tokyo"
+    }
+  },
+  "required": [
+    "timezone"
+  ]
+}

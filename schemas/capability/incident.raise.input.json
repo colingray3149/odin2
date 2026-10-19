@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/incident.raise.input.json",
+  "title": "incident.raise input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "severity": {
+      "enum": [
+        "info",
+        "warning",
+        "error",
+        "critical"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "detail": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "affected": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    }
+  },
+  "required": [
+    "severity",
+    "summary",
+    "detail"
+  ]
+}

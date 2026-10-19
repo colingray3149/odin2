@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = true
+description = "ColinRemote mobile cockpit: tailnet PWA client of the frozen Huginn protocol, plus its local bridge."
+source_root = ""
+default_seat = "architect"
+memory_namespaces = ["atlas.code", "memory.project.colinremote"]
+artifact_policy = "standard"
+review_verdict = "code.review.verdict"

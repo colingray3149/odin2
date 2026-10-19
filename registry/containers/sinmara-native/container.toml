@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "container"
+enabled = true
+description = "Native OMP process container for sinmara live sessions on the laptop control node: the production bridge launches the manifest-pinned OMP executable with the governed life capability surface beside the pinned external Hermes deployment."
+purpose = "sinmara-native"
+base = "native-process"
+memory_max = 4294967296  # 4 GiB
+seats_offered = ["sinmara"]
+scripts = []
+watchdogs = []
+identity_fields = ["purpose", "base", "contents.kind"]
+tunables = {}
+surface = ["status"]
+
+contents = { kind = "odin_env" }
+monitoring = "none"

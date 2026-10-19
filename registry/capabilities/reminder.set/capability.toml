@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Schedules a reminder in the owner's current time zone: notify sends the text; wake starts a conversation turn. Give one local time, minutes from now, or a calendar event anchor. Repetition requires both repeat_every_minutes and repeat_times; repeat_times counts additional firings after the first."
+handler = { id = "reminder_set" }
+input_schema = "schemas/capability/reminder.set.input.json"
+output_schema = "schemas/capability/reminder.set.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_reminder_set_evidence" }

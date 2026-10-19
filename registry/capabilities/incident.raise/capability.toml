@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Raises a typed incident (severity, summary, detail, affected objects) through the daemon's incident desk: a Huginn incident card, a phone alert for error or critical when a sink is declared, and one wake of the conversation seat for warning and above. Info stays in Huginn. Every leg's outcome is reported; none is faked."
+handler = { id = "incident_raise" }
+input_schema = "schemas/capability/incident.raise.input.json"
+output_schema = "schemas/capability/incident.raise.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_incident_raise_evidence" }

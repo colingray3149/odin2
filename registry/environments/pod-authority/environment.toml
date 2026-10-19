@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "environment"
+enabled = true
+description = "Authority k3s environment for declared driver workloads and existing harness pods. Claude driver sessions use an owned fresh clone, a sandbox copy of only the selected account's sign-in files (never written back to the host), declared resources, default-deny egress and StopAuthority custody; they never mount host paths. The read-only git mirror supplies clones; publication is brokered by the daemon onto the session's claude/<name> branch."
+transport = "k3s-pod"
+seats = ["sinmara", "gungnir", "reginn"]
+git_mirror = "10.77.0.11"
+
+[observation]
+channel = "events"
+
+[pod]
+allow_hosts = ["api.anthropic.com", "platform.claude.com"]
+accounts = ["claude-code"]
+
+[[watchdog]]
+name = "force-push"
+match = "push --force"

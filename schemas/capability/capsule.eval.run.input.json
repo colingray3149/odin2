@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/capsule.eval.run.input.json",
+  "title": "capsule.eval.run input",
+  "description": "One bounded source program for the compiled capsule evaluator. The interpreter is a closed enum; executable paths, working directories, environment, resources, and operation identities are authority-owned and cannot be supplied here.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "interpreter": {
+      "type": "string",
+      "enum": ["python", "bun"]
+    },
+    "source": {
+      "type": "string",
+      "maxLength": 65536
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60000
+    },
+    "max_stdout_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 262144
+    },
+    "max_stderr_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 262144
+    }
+  },
+  "required": [
+    "interpreter",
+    "source",
+    "source_sha256",
+    "timeout_ms",
+    "max_stdout_bytes",
+    "max_stderr_bytes"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/seat.model.set.input.json",
+  "title": "seat.model.set input",
+  "description": "Select a seat and one exact provider/model pair from its declared live launch options. Omit approvalId on the first call to request operator approval; retry with the exact approved selector. Neither the selector nor a model name grants authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "seat": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "provider": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "model": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "approvalId": { "type": "string", "minLength": 1, "maxLength": 128 }
+  },
+  "required": ["seat", "provider", "model"]
+}

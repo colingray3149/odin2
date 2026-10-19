@@ -1,0 +1,33 @@
+[package]
+name = "odin-kube"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+odin-confined-fs.workspace = true
+base64.workspace = true
+k8s-openapi.workspace = true
+rusqlite.workspace = true
+odin-domain.workspace = true
+odin-registry.workspace = true
+odin-types = { version = "0.0.0", path = "../odin-types" }
+odin-kernel.workspace = true
+odin-ledger.workspace = true
+futures-util.workspace = true
+kube.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+odin-registry.workspace = true
+tempfile.workspace = true
+tokio-tungstenite.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,9 @@
+function decode$NAME(value: unknown, path: string): $NAME {
+	const record = jsonRecord(value, path);
+	const kind = stringField(record.kind, `${path}.kind`);
+	switch (kind) {
+$CASES		default:
+			fail("protocol.kind", `${path}.kind is unknown: ${JSON.stringify(kind)}`);
+	}
+}
+

@@ -1,0 +1,20 @@
+schema = "odin.skeleton.patch.v1"
+kind = "new-surface"
+# Patch target kind; container is the supported value.
+target_kind = "container"
+# Existing container ID to update.
+target_id = "__container__"
+# Patch operation; append_surface adds one exposed surface.
+operation = "append_surface"
+# Unique surface ID within the container.
+surface_id = "__surface_id__"
+# Surface type: log, metric, file, render, browser, or simulation.
+surface_kind = "__surface_kind__"
+# Artifact, file, or stream handle; never a shell command.
+source = "__source__"
+# Output MIME type, such as text/plain.
+media_type = "__media_type__"
+# Refresh interval in seconds, 0..86400; zero is event-driven.
+refresh_seconds = "__refresh_seconds__"
+# Registered renderer ID, or empty when no renderer is needed.
+renderer = "__renderer__"

@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = true
+description = "BagCore backpack appliance software — Gungnir works on the existing colingray3149/bagcore repo"
+source_root = "/home/colin/valhalla/bagcore"
+default_seat = "gungnir"
+memory_namespaces = ["atlas.code", "memory.project.bagcore"]
+artifact_policy = "standard"
+review_verdict = "code.review.verdict"

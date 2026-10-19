@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Suspend one observed finite Kubernetes Job by run identity: the caller supplies the exact opaque resourceVersion observed at admission as the compare-and-swap, and the trusted runtime applies the suspend patch under operator approval and recorded idempotency."
+handler = { id = "odin_kube.workload.pause" }
+input_schema = "schemas/capability/kube.workload.pause.input.json"
+output_schema = "schemas/capability/kube.workload.pause.output.json"
+effect_class = "R3"
+seat_tags = ["operator"]
+# Covers the runtime's actuation bound: the declared 120s teardown window
+# plus 2 bounded 30s request phases and 10s slack (190s), plus the 320s a
+# checkpoint of the paused pod's state may take (520s).
+timeout_seconds = 520
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_kube.workload.pause_evidence" }

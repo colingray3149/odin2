@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.health.read.output.json",
+  "title": "kube.health.read output",
+  "description": "One bounded read-only cluster health observation. status ok carries the health object exactly as observed live from the API server — nodes with readiness and pressure conditions, pods with observed problems, and recent warning events; empty arrays are real observations from a reachable cluster, never an inferred-healthy placeholder. unavailable carries a typed reason. Never mutates cluster state.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "unavailable"
+      ]
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cluster": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "nodes": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "uid": { "type": "string" },
+              "state": {
+                "type": "string",
+                "enum": ["ready", "notReady", "unschedulable", "unknown"]
+              },
+              "architecture": { "type": "string" },
+              "operatingSystem": { "type": "string" },
+              "pressures": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": { "type": "string" },
+                    "status": { "type": "string" }
+                  },
+                  "required": ["kind", "status"]
+                }
+              },
+              "unschedulable": { "type": "boolean" },
+              "capacity": { "$ref": "#/$defs/resources" },
+              "allocatable": { "$ref": "#/$defs/resources" }
+            },
+            "required": [
+              "name",
+              "uid",
+              "state",
+              "architecture",
+              "operatingSystem",
+              "pressures",
+              "unschedulable",
+              "capacity",
+              "allocatable"
+            ]
+          }
+        },
+        "podsObserved": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "podProblems": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "namespace": { "type": "string" },
+              "name": { "type": "string" },
+              "uid": { "type": "string" },
+              "node": { "type": ["string", "null"] },
+              "phase": { "type": ["string", "null"] },
+              "reason": { "type": ["string", "null"] },
+              "containers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": { "type": "string" },
+                    "image": { "type": "string" },
+                    "ready": { "type": "boolean" },
+                    "restartCount": { "type": "integer", "minimum": 0 },
+                    "waitingReason": { "type": ["string", "null"] }
+                  },
+                  "required": [
+                    "name",
+                    "image",
+                    "ready",
+                    "restartCount",
+                    "waitingReason"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "namespace",
+              "name",
+              "uid",
+              "node",
+              "phase",
+              "reason",
+              "containers"
+            ]
+          }
+        },
+        "warningEvents": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "namespace": { "type": ["string", "null"] },
+              "involvedKind": { "type": "string" },
+              "involvedName": { "type": "string" },
+              "reason": { "type": "string" },
+              "message": { "type": "string" },
+              "count": { "type": "integer", "minimum": 1 },
+              "firstTimestamp": { "type": ["string", "null"] },
+              "lastTimestamp": { "type": ["string", "null"] }
+            },
+            "required": [
+              "namespace",
+              "involvedKind",
+              "involvedName",
+              "reason",
+              "message",
+              "count",
+              "firstTimestamp",
+              "lastTimestamp"
+            ]
+          }
+        }
+      },
+      "required": [
+        "cluster",
+        "observedAt",
+        "nodes",
+        "podsObserved",
+        "podProblems",
+        "warningEvents"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ok"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "health"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "unavailable"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "reason"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpuMillis": { "type": "integer", "minimum": 0 },
+        "memoryBytes": { "type": "integer", "minimum": 0 },
+        "ephemeralStorageBytes": { "type": "integer", "minimum": 0 },
+        "gpuCount": { "type": "integer", "minimum": 0 }
+      },
+      "required": [
+        "cpuMillis",
+        "memoryBytes",
+        "ephemeralStorageBytes",
+        "gpuCount"
+      ]
+    }
+  }
+}

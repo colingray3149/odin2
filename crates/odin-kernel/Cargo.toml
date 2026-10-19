@@ -1,0 +1,25 @@
+[package]
+name = "odin-kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tracing.workspace = true
+odin-domain.workspace = true
+dashmap.workspace = true
+jsonschema.workspace = true
+odin-types = { version = "0.0.0", path = "../odin-types" }
+odin-process = { version = "0.0.0", path = "../odin-process" }
+odin-ledger.workspace = true
+odin-registry.workspace = true
+rustix = { workspace = true, features = ["event", "net"] }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+
+[lints]
+workspace = true

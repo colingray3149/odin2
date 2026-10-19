@@ -1,0 +1,336 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/workload.draft.input.json",
+  "title": "workload.draft input",
+  "description": "Draft compilation for the workload.draft operation. R2: the draft is a revisable private artifact (a generated vault page plus the typed result); it publishes and launches nothing. Compiles the caller's answers against the strict new-workload skeleton contract and the published registry: every reference (seat, project, gateway lane, memory namespace) must resolve to enabled declarations, the image reference must be fully qualified and digest-pinned, and every answer must satisfy the skeleton's declared grammar. Absent answers come back as the declared clarification list with the skeleton contract's own meanings; a complete answer set returns the exact canonical declaration and its blake3 digest — the selector the operator's publish approval binds. All values are caller-provided untrusted data; no credential, seat authority, or model override ever travels in arguments.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "profileId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Registry id of the new workload profile; must not collide with any existing registry object."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "The pod's role in one sentence."
+    },
+    "enabled": {
+      "type": "boolean",
+      "description": "Whether the profile is enabled after publication."
+    },
+    "seat": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Existing enabled seat the pod agent runs as."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Existing enabled project inside the seat's project_scope."
+    },
+    "gatewayLane": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Gateway route lane declared by an enabled provider; the declared model choice."
+    },
+    "allowHosts": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 253
+      },
+      "description": "Allowlisted bare egress hostnames; the pod may reach exactly these and nothing else. Empty: no site at all (DNS only; an agent still reaches its model gateway)."
+    },
+    "screen": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Virtual display geometry <width>x<height>x<depth>."
+    },
+    "stream": {
+      "type": "boolean",
+      "description": "Whether the pod browser surface streams to the owner."
+    },
+    "statePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Absolute in-pod mount path of the per-pod state volume. Omit it: the deployment's pinned workload image supplies it."
+    },
+    "stateStorage": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16,
+      "description": "Persistent storage quantity for the per-pod state volume (for example 2Gi); the custody layer requests exactly this."
+    },
+    "exportPodPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Absolute in-pod path of the exported folder. Omit it: the deployment's pinned workload image supplies it."
+    },
+    "exportHostFolder": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "description": "Absolute host folder of the explicit export."
+    },
+    "briefText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384,
+      "description": "Pod task brief injected into every agent turn; declaration text, never runtime state."
+    },
+    "deadlineSeconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 86400,
+      "description": "Hard lifetime of one run in seconds; the pod is ended after it, whatever it is doing."
+    },
+    "memoryNamespace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "atlas.<subtree> namespace inside the bound seat's brain_scope; memory is untrusted data, never authority."
+    },
+    "expectedRegistryRevision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optional re-draft base pin: the registry revision this draft's answers were compiled against (provenance base); a mismatch is a typed stale-scope refusal."
+    },
+    "harness": {
+      "enum": [
+        "omp",
+        "script"
+      ],
+      "description": "script: the pod runs scriptCommand in imageReference and no agent (no gateway lane, memory, display). omp or omitted: an agent pod on the platform image."
+    },
+    "imageReference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "A script pod's image: \"platform\" (Odin's deployed workload image) or fully qualified and pinned by @sha256 manifest digest. Agent pods omit it (they run \"platform\")."
+    },
+    "scriptCommand": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "description": "A script pod's command, argv form, run inside the image."
+    },
+    "gpuCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8,
+      "description": "NVIDIA GPUs the pod reserves."
+    },
+    "placement": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 63
+      },
+      "description": "Node capabilities the pod needs (registry node capabilities such as cuda, gpu, cfd, scrape, embed)."
+    },
+    "mode": {
+      "enum": [
+        "job",
+        "service"
+      ],
+      "description": "job: finite, ends at deadlineSeconds. service: long-lived, restarted on failure, ended by a stop; declares no deadlineSeconds."
+    },
+    "monitoringCadenceSeconds": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 3600,
+      "description": "How often code reads the pod's newest `ODIN-STATUS {json}` stdout line; with watchdogs."
+    },
+    "watchdogs": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "condition": {
+            "type": "string",
+            "description": "<counter> <op> <number>, e.g. residual > 1e-3"
+          },
+          "consecutive_hits": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "cooldown_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warning",
+              "error",
+              "critical"
+            ]
+          },
+          "slice": {
+            "type": "string",
+            "description": "The slice of the seat that handles the finding (kubert-ops for Kubert)."
+          },
+          "action": {
+            "enum": [
+              "notify",
+              "stop"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "condition",
+          "consecutive_hits",
+          "cooldown_seconds",
+          "severity",
+          "slice"
+        ]
+      },
+      "description": "Code-evaluated alerts over the pod's ODIN-STATUS counters; zero model calls while healthy."
+    },
+    "progress": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_]{1,64}$",
+      "description": "Anti-stuck: the ODIN-STATUS counter whose growth is the pod's useful progress (a repeated value or heartbeat is not). Declare with stallSeconds and recovery."
+    },
+    "stallSeconds": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 86400,
+      "description": "Anti-stuck: how long the pod may run without useful progress; at least two monitoring reads."
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "retry": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "restart_worker": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "checkpoint": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rehome": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "escalate": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "retry",
+            "restart_worker",
+            "checkpoint",
+            "rehome",
+            "escalate"
+          ]
+        },
+        "cooldown_seconds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "retry": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "restart_worker": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "checkpoint": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rehome": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "escalate": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "retry",
+            "restart_worker",
+            "checkpoint",
+            "rehome",
+            "escalate"
+          ]
+        },
+        "allowed_rungs": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "restart_worker",
+              "escalate"
+            ]
+          },
+          "minItems": 1
+        },
+        "blocked_missing_decision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
+      },
+      "required": [
+        "max_attempts",
+        "cooldown_seconds",
+        "allowed_rungs",
+        "blocked_missing_decision"
+      ],
+      "description": "Anti-stuck ladder: when the pod stalls the kernel authorizes one step at a time — restart_worker (its seat restarts it) up to max_attempts, then escalate (an incident to Colin)."
+    },
+    "tools": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "description": "Host capabilities the pod's agent may call — a subset of its seat's tools (e.g. memory.remember); a pod never launches pods, asks seats or creates. Omitted: none."
+    }
+  },
+  "required": [
+    "profileId"
+  ]
+}

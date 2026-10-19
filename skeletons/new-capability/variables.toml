@@ -1,0 +1,61 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-capability"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "capabilities"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "enabled"
+type = "bool"
+required = true
+meaning = "Only a capability resolved to an admitted compiled binding may be enabled."
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Signature-non-obvious semantics."
+
+[[variable]]
+name = "binding_id"
+type = "id"
+required = true
+meaning = "Stable selector of one exact pre-admitted handler/schema/version tuple."
+
+[[variable]]
+name = "effect_class"
+type = "enum:R0|R1|R2|R3"
+required = true
+meaning = "Effect class."
+
+[[variable]]
+name = "seat_tags"
+type = "array<id-or-star>"
+required = true
+meaning = "Zero or more eligible seat categories without singleton or CSV encoding."
+
+[[variable]]
+name = "timeout_seconds"
+type = "int:1:86400"
+required = true
+meaning = "Hard timeout."
+
+[[variable]]
+name = "idempotency"
+type = "enum:pure|required"
+required = true
+meaning = "Deduplication contract."
+
+[[variable]]
+name = "max_attempts"
+type = "int:0:10"
+required = true
+meaning = "Bounded retries."
+
+[[variable]]
+name = "approval_policy"
+type = "enum:none|operator"
+required = true
+meaning = "Approval policy."

@@ -1,0 +1,17 @@
+schema = "odin.registry.v1"
+kind = "harness"
+enabled = true
+description = "Codex CLI exec mode, one process per prompt, JSON event stream, its own workspace-write sandbox; Odin watches and stops it but does not mediate its tools."
+protocol = "process"
+governance = "observed"
+command = ["codex", "exec", "--json", "--skip-git-repo-check", "--sandbox", "workspace-write"]
+prompt = "argv"
+output = "codex-json"
+model_arg = "--model"
+account = "codex"
+
+brief = """You run under Odin as a CLI agent in this session's own workspace, a clone on the seat branch. Do not commit, sign or push: after every turn Odin commits your workspace changes and pushes the seat branch itself, so report only what you changed and never describe the commit or push state (not "uncommitted", not "blocked"). The Odin tool names in the brief below (context_read, capsule_eval_run, memory_remember, memory_forget, task tools) are not available to you: use your own tools and skip the steps that need them."""
+
+[stop]
+signal = "SIGINT"
+grace_seconds = 10

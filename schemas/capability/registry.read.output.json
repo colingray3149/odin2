@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/registry.read.output.json",
+  "title": "registry.read output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "kinds": {
+      "type": "object"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "declaration": {
+      "type": "object"
+    },
+    "lastFired": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A routine: when it last fired, in Colin's local time, or since when it never has."
+    },
+    "sourceProblem": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A routine: the source read its last poll could not make."
+    }
+  },
+  "required": [
+    "revision"
+  ]
+}

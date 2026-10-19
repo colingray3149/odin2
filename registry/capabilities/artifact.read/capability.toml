@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Reads one content-addressed artifact that a ledger reference shares with the caller's seat or project, digest-verified; text inline, other content as base64, up to 256 KiB."
+handler = { id = "artifact_read" }
+input_schema = "schemas/capability/artifact.read.input.json"
+output_schema = "schemas/capability/artifact.read.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_artifact_read_evidence" }

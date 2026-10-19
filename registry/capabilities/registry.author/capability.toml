@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Fills one registry skeleton that adds no authority — a lane for a project, an alert or a status surface on a container, a watchdog on a pod profile — compiles it strictly, commits it to odin main and publishes it through the shared authoring transaction (the whole candidate registry is validated first). Effective after odind's next idle reload."
+handler = { id = "registry_author" }
+input_schema = "schemas/capability/registry.author.input.json"
+output_schema = "schemas/capability/registry.author.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_registry_author_evidence" }

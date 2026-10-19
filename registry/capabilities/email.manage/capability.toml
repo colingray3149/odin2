@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Organize these emails — label, archive or move them to the trash. Reversible mailbox organization through the odin-hermes life adapter under a scoped opaque credential lease (LIFE-002): one bounded batch of label, archive, or trash actions on the explicitly named account, without an owner question — permanent deletion and unsubscribe are not representable. The durable management intent is keyed by its operation (CORE-004) — a replayed request settles to the recorded outcome and an uncertain one is never silently retried; an unknown account, missing credentials, or an unavailable service is typed unavailable, never a pretended application."
+handler = { id = "email_manage" }
+input_schema = "schemas/capability/email.manage.input.json"
+output_schema = "schemas/capability/email.manage.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_email_manage_evidence" }

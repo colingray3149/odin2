@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = true
+description = "Odin control plane, Huginn, registry, kernel, scheduler, and adapters."
+source_root = ""
+default_seat = "gungnir"
+memory_namespaces = ["atlas.code", "memory.project.odin"]
+artifact_policy = "standard"
+review_verdict = "code.review.verdict"

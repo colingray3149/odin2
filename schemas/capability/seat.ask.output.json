@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/seat.ask.output.json",
+  "title": "seat.ask output",
+  "description": "Honest receipt of one governed delegation dispatched through the generic seat_ask primitive to the capability's published target seat. target_seat names the exact published target this receipt belongs to \u2014 a bounded registry SeatId carried from the dispatch, never a compiled identity constant, so one generic primitive serves every declared delegation. status is \"recorded\" only after the real child exists: durable delegation link, minted child token, opened session on the target seat's own declared composition, inherited accepted plan, and dispatched prompt \u2014 never a task-recorded-only ack. status is \"settled\" only when an optional bounded wait proved the child finished through the governed task.read lifecycle truth; phase, child_state, and active carry that proof. A wait that elapses without proof leaves status \"recorded\" with the live truth fields; await_error names a typed poll failure without fabricating completion. Governance rejections are typed host-tool errors, never output receipts; idempotency replays fail typed at kernel dispatch before the handler runs, and a denied or expired gate approval never produces this receipt \u2014 the denial is the recorded outcome. The parent reads the ongoing answer through task.read with the returned child session. status is \"escalated\" when the target is the owner-facing conversation seat (FINAL-PASS W1.5): no child exists; the structured question became one turn of that conversation and the decision returns to the asking session as its next instruction.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "enum": [
+        "recorded",
+        "settled",
+        "escalated"
+      ]
+    },
+    "ask_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "session": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "child_run": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "target_seat": {
+      "description": "The published delegation target seat this receipt belongs to, as dispatched. A bounded registry SeatId \u2014 never a compiled identity constant.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "plan_accepted": {
+      "type": "boolean"
+    },
+    "prompt_bytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "provisioning",
+        "running",
+        "ended",
+        "failed"
+      ]
+    },
+    "child_state": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "await_error": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "answer": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "next": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "ask_id",
+    "session",
+    "target_seat"
+  ]
+}

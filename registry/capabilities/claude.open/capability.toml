@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Open a declared sandboxed Claude driver (pod default) or Colin-owned host tab; no seat or ACP delegation. Preset normal opens an unsandboxed Colin-owned tab with Remote Control and skip permissions on, in dir or the declared checkout or HOME, without a worktree or branch. Ordinary workload future explicit publication requests are restricted to the resolved declared project and exact refs/heads/claude/<name> under the original kernel lease for this session lifetime; no global push authority."
+handler = { id = "claude_open" }
+input_schema = "schemas/capability/claude.open.input.json"
+output_schema = "schemas/capability/claude.open.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator", "builder"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_claude_open_evidence" }

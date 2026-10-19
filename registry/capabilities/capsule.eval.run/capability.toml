@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Run bounded Python or Bun source inside the exact retained capsule through the canonical operation authority and compiled effector."
+handler = { id = "odin_eval.run" }
+input_schema = "schemas/capability/capsule.eval.run.input.json"
+output_schema = "schemas/capability/capsule.eval.run.output.json"
+effect_class = "R1"
+seat_tags = ["builder", "judge"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_eval.run_evidence" }

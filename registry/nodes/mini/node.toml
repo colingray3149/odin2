@@ -1,0 +1,14 @@
+schema = "odin.registry.v1"
+kind = "node"
+enabled = true
+description = "Always-on authoritative control runtime, local inference, and k3s server on the tailnet mini host."
+host = "mini"
+role = "control"
+capabilities = ["operator", "control", "inference", "embed", "scrape", "k3s-server"]
+allow_workloads = true
+authoritative_state = true
+
+# The node-local gateway the pods placed on this node reach: host authority
+# is the declared reachable (tailnet) address of this node, the port is the
+# declared node-facing LiteLLM service port, and the path is the API base.
+gateway_endpoint = "http://100.64.0.11:14000/v1"

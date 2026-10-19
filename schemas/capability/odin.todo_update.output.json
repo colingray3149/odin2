@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/odin.todo_update.output.json",
+  "title": "odin.todo_update output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "revision": { "type": "integer" }
+  }
+}

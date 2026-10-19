@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/task.read.input.json",
+  "title": "task.read input",
+  "description": "One nonblocking lifecycle read of a delegated worker. Only the delegating parent may read a delegation row.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "childSession": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "screen": {
+      "type": "boolean",
+      "description": "Also return the newest lines of the worker's terminal screen (what its tab shows now)."
+    }
+  },
+  "required": ["childSession"]
+}

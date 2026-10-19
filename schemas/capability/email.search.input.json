@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/email.search.input.json",
+  "title": "email.search input",
+  "description": "Bounded search request for the email.search operation. R0: the request reads the mailbox of the explicitly named account through the governed life adapter under a scoped opaque credential lease and produces no side effects. The `account` selector names one configured life account and travels with every request; credential material never travels in arguments. Search text is bounded at 400 Unicode scalar values and the page at 20 hits, exactly the adapter's enforced bounds. An unknown account, missing credentials, or an unreachable service is a typed unavailable outcome, never an empty success.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "account": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20
+    }
+  },
+  "required": ["account", "text"]
+}

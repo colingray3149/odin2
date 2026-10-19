@@ -1,0 +1,15 @@
+schema = "odin.authoring.fill.v1"
+
+[[fill]]
+skeleton = "new-seat"
+destination_id = "home-normal"
+
+[fill.values]
+enabled = true
+description = "Typed authoring seat with independently omitted optional policy blocks."
+categories = ["home-observe"]
+tool_refs = ["home-observe"]
+project_scope = ["odin"]
+approval_defaults = { r0 = "auto", r1 = "plan", r2 = "approval", r3 = "deny" }
+brain_scope = ["atlas.operations"]
+limits = { max_parallel_runs = 1, max_sessions = 2, budget = { usd_micros = 1_000_000, window = { duration_seconds = 86_400 } } }

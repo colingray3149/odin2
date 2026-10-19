@@ -1,0 +1,17 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Choose an allowed provider/model for a seat's future sessions and switch its live session when possible; the tool lists the bound choices and requires operator approval"
+handler = { id = "seat_model_set" }
+input_schema = "schemas/capability/seat.model.set.input.json"
+output_schema = "schemas/capability/seat.model.set.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_hermes_seat_model_set_evidence" }

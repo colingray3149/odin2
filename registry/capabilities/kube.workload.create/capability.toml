@@ -1,0 +1,19 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Launch one finite Kubernetes Job from an admitted published container profile: the trusted runtime resolves the profile image and declared command into JobLaunch, so the model names only the profile and never supplies an image, command, or worker identity. Optional targetNode narrows initial placement to a node in the pinned declared allowed_nodes, still subject to unchanged profile labels and live placement checks; arbitrary selectors are forbidden. For agent workloads it must equal the resolved serving/session node. Omit it for normal placement. This initial choice does not pin the profile or constrain a later restart rehome, which uses its own targetNode. It returns once the pod is admitted; an agent pod's final answer is reported to Colin's conversation when it finishes, so do not wait for it in your turn."
+handler = { id = "odin_kube.workload.create" }
+input_schema = "schemas/capability/kube.workload.create.input.json"
+output_schema = "schemas/capability/kube.workload.create.output.json"
+effect_class = "R3"
+seat_tags = ["operator"]
+# Covers the runtime's actuation bound: 4 bounded request phases at the
+# declared 30s request window plus 10s scheduling slack (130s).
+timeout_seconds = 130
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_kube.workload.create_evidence" }

@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Bounded R0 single-message read through the odin-hermes JMAP adapter under a scoped opaque credential lease (LIFE-002): one sanitized message projection — subject, sender, timestamp, bounded body text — with adapter provenance and no side effects. The mailbox account is configuration-selected by the host, never a model argument; an absent identifier is the explicit found=false success, unknown accounts, missing credentials, and unreachable services are typed unavailable, never empty successes."
+handler = { id = "email_read" }
+input_schema = "schemas/capability/email.read.input.json"
+output_schema = "schemas/capability/email.read.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_email_read_evidence" }

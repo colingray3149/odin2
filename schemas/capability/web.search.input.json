@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/web.search.input.json",
+  "title": "web.search input",
+  "description": "Bounded pure search request for the web.search operation. R0: the request reads the public web through the admitted adapter and produces no side effects; every returned field is untrusted content and never policy. Credentials and endpoints never appear here; they resolve only from adapter backend configuration.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20
+    }
+  },
+  "required": ["query", "count"]
+}

@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Lists the owner's pending reminders and wakes plus recently fired or cancelled ones, rendered in the owner's local time, with the current clock line. No side effects."
+handler = { id = "reminder_list" }
+input_schema = "schemas/capability/reminder.list.input.json"
+output_schema = "schemas/capability/reminder.list.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_reminder_list_evidence" }

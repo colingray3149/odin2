@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/brain.input.json",
+  "title": "brain input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "op": {
+      "type": "string",
+      "enum": [
+        "search",
+        "person",
+        "fact",
+        "asset",
+        "photo"
+      ]
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "description": "person: slug, name, handle, email or phone; fact: fact id; photo: exact asset path from a result"
+    },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "unit",
+            "fact",
+            "person",
+            "photo",
+            "doc"
+          ]
+        },
+        "person": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "discord, snapchat, instagram, chat"
+        },
+        "topic": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "from": {
+          "type": "string",
+          "description": "YYYY, YYYY-MM or YYYY-MM-DD"
+        },
+        "to": {
+          "type": "string",
+          "description": "YYYY, YYYY-MM or YYYY-MM-DD"
+        },
+        "near": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "lat": {
+              "type": "number"
+            },
+            "lon": {
+              "type": "number"
+            },
+            "km": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "lat",
+            "lon",
+            "km"
+          ]
+        }
+      }
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    }
+  },
+  "required": [
+    "op"
+  ]
+}

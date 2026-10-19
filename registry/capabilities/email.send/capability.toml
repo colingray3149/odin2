@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Send this email draft. Approval applies only to the specified draft and recipients and can be used once; missing credentials or an unavailable mail service are reported without pretending the message was sent."
+handler = { id = "email_send" }
+input_schema = "schemas/capability/email.send.input.json"
+output_schema = "schemas/capability/email.send.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+batchable = true
+preview = "email"
+evidence_extractor = { id = "odin_hermes_email_send_evidence" }

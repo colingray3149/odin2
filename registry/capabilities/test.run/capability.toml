@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Runs the session capsule's tests and returns parsed passed, failed and ignored counts, failing-test messages and compiler diagnostics. A named flake output or all flake checks run through the Nix build sandbox. paths instead runs exactly 1 to 8 capsule-relative pytest files in a registered task-owned sandbox using the capsule's Nix dev environment; shell setup and tests cannot write another task or daemon state. The scoped run uses a disposable writable project copy, bounded output and owned stop/retirement, and names the files it ran. attr and paths are never combined. An unrecognized log reports no frameworks, never a pass. Bounded to 20 minutes."
+handler = { id = "test_run" }
+input_schema = "schemas/capability/test.run.input.json"
+output_schema = "schemas/capability/test.run.output.json"
+effect_class = "R1"
+seat_tags = ["builder", "judge"]
+timeout_seconds = 1260
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_test_run_evidence" }

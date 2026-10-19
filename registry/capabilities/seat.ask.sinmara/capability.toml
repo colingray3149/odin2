@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Escalate a decision to Sinmara, the owner-facing coordinator: the structured question (subject, question, options) becomes one turn of her conversation; she decides or asks Colin once and sends the decision back as your next instruction. Asking never needs an approval; repeating the same question queues it once."
+handler = { id = "seat_ask" }
+delegate_to = "sinmara"
+input_schema = "schemas/capability/seat.ask.input.json"
+output_schema = "schemas/capability/seat.ask.output.json"
+effect_class = "R3"
+seat_tags = ["builder", "coordinator", "operator", "judge"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_hermes_seat_ask_evidence" }

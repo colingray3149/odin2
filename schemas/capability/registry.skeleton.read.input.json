@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/registry.skeleton.read.input.json",
+  "title": "registry.skeleton.read input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "skeleton": {
+      "enum": [
+        "new-lane",
+        "new-alert",
+        "new-surface",
+        "new-capability",
+        "new-provider",
+        "new-host",
+        "new-node",
+        "new-slice",
+        "new-container",
+        "new-environment",
+        "new-harness",
+        "enable-capability",
+        "remove-environment"
+      ]
+    }
+  },
+  "required": [
+    "skeleton"
+  ]
+}

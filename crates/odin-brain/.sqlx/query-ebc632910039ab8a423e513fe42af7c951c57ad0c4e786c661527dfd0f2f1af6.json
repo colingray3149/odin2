@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(DISTINCT generation_id) AS \"pending!\" FROM brain_chunk\n                   WHERE generation_id = ANY($1) AND embedding IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pending!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ebc632910039ab8a423e513fe42af7c951c57ad0c4e786c661527dfd0f2f1af6"
+}

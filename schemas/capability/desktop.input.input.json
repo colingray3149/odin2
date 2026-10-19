@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/desktop.input.input.json",
+  "title": "desktop.input input",
+  "description": "Keystrokes for the focused window on one declared fleet device's desktop.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "device": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Declared fleet device (laptop, pc) whose desktop to type on."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "description": "The text to type, as keystrokes."
+    },
+    "enter": {
+      "type": "boolean",
+      "description": "Press Enter after the text."
+    }
+  },
+  "required": ["device", "text"]
+}

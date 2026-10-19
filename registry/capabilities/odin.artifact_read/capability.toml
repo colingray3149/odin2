@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Read one registered artifact whose reference is shared with the caller's scope."
+handler = { id = "odin_artifact_read" }
+input_schema = "schemas/capability/odin.artifact_read.input.json"
+output_schema = "schemas/capability/odin.artifact_read.output.json"
+effect_class = "R0"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_artifact_read_evidence" }

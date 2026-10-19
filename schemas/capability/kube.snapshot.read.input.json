@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.snapshot.read.input.json",
+  "title": "kube.snapshot.read input",
+  "description": "Pure read of the real cluster workload surface. No parameters: cluster and namespace come from the trusted runtime configuration, never from the model.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {},
+  "required": []
+}

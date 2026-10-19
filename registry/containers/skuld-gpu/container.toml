@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+kind = "container"
+enabled = true
+description = "Generic one-GPU compute profile for the Skuld builder and judge seats: the bounded GPU smoke path reused from the kubert profile, carrying no application content. Placement is the existing pc worker node declaration (allow_workloads with the cuda capability); the declaration reserves one nvidia.com/gpu per Job and leaves the application image to a later declaration."
+purpose = "skuld-gpu"
+base = "nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04"
+seats_offered = ["skuld-builder", "skuld-judge"]
+scripts = ["cuda-samples/sample"]
+watchdogs = []
+identity_fields = ["base", "contents.kind", "deadline_seconds", "gpu_count", "purpose", "scripts"]
+surface = ["stdout"]
+gpu_count = 1
+deadline_seconds = 300
+monitoring = "none"
+
+[tunables]
+parallelism = 1
+
+[contents]
+kind = "scripts"

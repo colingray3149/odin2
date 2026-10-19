@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/workspace.connect.output.json",
+  "title": "workspace.connect output",
+  "description": "The resolved governed workspace connection: the exact command that opens the target (a zellij session through the host's zr wrapper, or a declared project through zed over ssh), the connection kind, and the declared host the command reaches. An unresolvable target or an offline host is a typed error, never a fabricated command.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "zellij",
+        "zed"
+      ]
+    },
+    "host": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1
+    },
+    "opened": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What opened where, when `openOn` was given (one sentence)."
+    },
+    "ownership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "owner"],
+      "properties": {
+        "unit": {"type": "string", "pattern": "^odin-workspace-[a-z0-9][a-z0-9-]{0,63}\\.service$"},
+        "owner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["group", "invocation", "inode", "device"],
+          "properties": {
+            "group": {"type": "string", "minLength": 1},
+            "invocation": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+            "inode": {"type": "integer", "minimum": 1},
+            "device": {"type": "integer", "minimum": 0}
+          }
+        }
+      },
+      "description": "Only present for launchOwner. A service-published cgroup identity lease; every field must still match before cleanup. Recovery receipt: $XDG_RUNTIME_DIR/odin-workspace-TOKEN/ownership.json; absence never authorizes adopting or killing a unit."
+    }
+  },
+  "required": [
+    "command",
+    "kind",
+    "host",
+    "target"
+  ]
+}

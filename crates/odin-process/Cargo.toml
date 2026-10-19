@@ -1,0 +1,30 @@
+[package]
+name = "odin-process"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+test-support = ["rustix/stdio"]
+
+[dependencies]
+blake3.workspace = true
+odin-domain.workspace = true
+odin-types = { version = "0.0.0", path = "../odin-types" }
+rustix = { workspace = true, features = ["event", "mount", "pipe", "rand", "thread"] }
+serde.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+rustix = { workspace = true, features = ["stdio"] }
+serde_json.workspace = true
+tempfile.workspace = true
+
+[[bin]]
+name = "odin-worker-bootstrap"
+path = "src/bin/odin-worker-bootstrap.rs"

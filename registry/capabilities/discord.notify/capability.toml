@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "R2 Discord correlation egress (LIFE-001): status posts to the owner-paired channel derived only from subscribed EventBus/LiveEventStream state — never synthesized; approvals visible on Discord stay bound to the kernel approval flow, and missing credentials or routing are typed unavailable, never silent drops."
+handler = { id = "discord_notify" }
+input_schema = "schemas/capability/discord.notify.input.json"
+output_schema = "schemas/capability/discord.notify.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_discord_notify_evidence" }

@@ -1,0 +1,58 @@
+brain_scope = ["atlas.code", "state.repos", "memory.forseti"]
+categories = ["judge"]
+description = "Forseti: independent code review for builder seats. Reads a builder's exact diff and its test report, checks what it doubts (navigation, diagnostics, tests), and records an approve or changes verdict; never edits or pushes code and never reviews its own work."
+enabled = true
+kind = "seat"
+project_scope = ["skuld", "odin", "surtr", "colinremote", "ringd", "bagcore", "rig", "parsec"]
+schema = "odin.registry.v1"
+# System guidance for this seat (a seat without a conversation).
+guidance = "Colin's code is a one-person tool: correct, minimal, readable and declarative beats clever or general. Start from the exact change: code_navigate show of the reviewed revision (or diff against its base), then read the code around it; re-run tests only where the report leaves you in doubt. Request changes, naming file:line and the smallest fix, for: real bugs and unhandled errors; seat, host, project, model, lane or path names hardcoded where the registry or config should supply them; layers, traits, wrappers, fallbacks, retries, compatibility shims or proof and audit machinery the change does not need; dead, duplicated or speculative code; errors that drop their cause or do not say what failed and where; comments and docstrings that narrate history, cite plans or dates, or restate the code; tests that were deleted, loosened, skipped or rewritten to pass, or that assert on mocks, strings or hashes instead of behaviour. Approve when none of these apply; do not request changes for taste or style."
+tool_refs = ["registry.read", "artifact.read", "code.navigate", "code.diagnostics", "test.run", "code.review.verdict", "seat.ask.sinmara", "memory.remember", "brain.search", "brain.read", "memory.forget", "incident.raise"]
+
+[approval_defaults]
+r0 = "auto"
+r1 = "auto"
+r2 = "auto"
+r3 = "approval"
+
+[context]
+max_bundle_tokens = 24576
+profile = "medium"
+review_lane = "grok"
+
+[knowledge]
+atlas_sources = ["atlas.code", "state.repos", "memory.forseti"]
+denied_tags = []
+required_tags = []
+top_k = 16
+
+[limits]
+max_parallel_runs = 4
+max_sessions = 4
+
+[live]
+file_egress_lane = "sinmara.file.out"
+file_ingress_lane = "sinmara.file.in"
+max_sessions = 4
+render_egress_lane = "sinmara.render.out"
+render_ingress_lane = "sinmara.render.in"
+
+[live.rollover]
+history_tail_events = 128
+max_brief_bytes = 8000
+threshold_tokens = 180000
+
+[tools]
+deny = []
+
+[tools.redirects]
+allow_cross_origin = false
+disabled_aliases = []
+max_http_hops = 2
+
+[sandbox]
+shell = true
+network = "none"
+writable = ["scratch"]
+readonly = ["checkout"]
+

@@ -1,0 +1,15 @@
+schema = "odin.registry.v1"
+kind = "environment"
+enabled = true
+description = "A transient user unit on the authority host (mini): the session workspace and the harness's own state are writable, keys, secrets and Odin's own state are hidden."
+transport = "fleet-host"
+host = "mini"
+seats = ["gungnir", "reginn", "architect", "kubert"]
+git_mirror = "10.77.0.11"
+
+[observation]
+channel = "events"
+
+[sandbox]
+confine_writes = true
+hidden = [".ssh", ".config/sops-nix", ".local/state/odin", ".gnupg", ".config/gh"]

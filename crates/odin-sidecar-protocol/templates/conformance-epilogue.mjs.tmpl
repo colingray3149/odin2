@@ -1,0 +1,122 @@
+function fromHex(hex) {
+	assert.equal(hex.length % 2, 0, "hex must contain complete bytes");
+	return Uint8Array.from(hex.match(/.{2}/gu) ?? [], (pair) => Number.parseInt(pair, 16));
+}
+function payloadOf(frame) {
+	assert.ok(frame.length >= 4, "frame has four-byte prefix");
+	const declared = new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint32(0, false);
+	assert.equal(frame.length, 4 + declared, "frame length matches prefix"); return frame.slice(4);
+}
+function assertThrowsCode(run, code, name) { assert.throws(run, (error) => error instanceof WireV2Error && error.code === code, name); }
+function changedId(field, value) {
+	if (value === null) return "z";
+	const [primary, alternate] = field === "correlation_id" ? ["f", "e"] : ["z", "y"];
+	const replacement = primary.repeat(value.length);
+	return replacement === value ? alternate.repeat(value.length) : replacement;
+}
+function nestedArgument(depth) {
+	let value = null;
+	for (let index = 0; index < depth; index += 1) value = [value];
+	return value;
+}
+const typed = new Map();
+for (const vector of VECTORS) {
+	const expectedFrame = fromHex(vector.frame_hex);
+	const decoded = vector.direction === "request" ? decodeRequest(vector.message) : decodeResponse(vector.message);
+	const encoded = vector.direction === "request" ? encodeRequest(decoded) : encodeResponse(decoded);
+	assert.equal(encoded, vector.canonical, `${vector.name}: TypeScript canonical bytes equal Rust vector`);
+	const framed = vector.direction === "request" ? frameRequest(decoded, LIMITS) : frameResponse(decoded, LIMITS);
+	assert.deepEqual(framed, expectedFrame, `${vector.name}: four-byte frame equals Rust vector`);
+	const payload = payloadOf(expectedFrame);
+	const reparsed = vector.direction === "request" ? parseRequestPayload(payload) : parseResponsePayload(payload);
+	assert.deepEqual(reparsed, decoded, `${vector.name}: payload round trip`); typed.set(vector.name, decoded);
+}
+for (const pair of ECHO_PAIRS) {
+	const request = typed.get(pair.request); const response = typed.get(pair.response); assert.ok(request && response, `${pair.request} -> ${pair.response}: vector exists`);
+	assert.equal(echoes(response, request), true, `${pair.request} -> ${pair.response}: exact ID echoes`);
+	const fields = ["capsule_id", "correlation_id"];
+	if ("operation_id" in request) fields.push("operation_id");
+	for (const field of fields) {
+		assert.equal(field in response, true, `${pair.response}: response carries ${field}`);
+		const changed = { ...response, [field]: changedId(field, request[field]) };
+		assert.equal(echoes(changed, request), false, `${pair.response}: changed ${field} echo fails`);
+	}
+}
+for (const rejection of V1_REJECTIONS) {
+	const value = JSON.parse(rejection.payload);
+	assert.throws(() => (rejection.direction === "request" ? decodeRequest(value) : decodeResponse(value)), WireV2Error, `${rejection.name}: v1 payload rejected`);
+}
+for (const malformed of MALFORMED) {
+	const payload = fromHex(malformed.payload_hex);
+	assert.throws(() => (malformed.direction === "request" ? parseRequestPayload(payload) : parseResponsePayload(payload)), WireV2Error, `${malformed.name}: rejected`);
+}
+for (const decimal of ["0", "1", "9007199254740991", "9007199254740992", "9007199254740993", "9999999999999999999", "10000000000000000000", "18446744073709551615"]) {
+	assert.equal(u64(decimal), decimal, `${decimal}: decimal-string u64 remains exact`);
+}
+assert.equal(u64(0n), "0"); assert.equal(u64(18_446_744_073_709_551_615n), "18446744073709551615");
+assertThrowsCode(() => u64(1), "protocol.u64", "TS number u64 is forbidden");
+for (const invalid of ["", "00", "01", "-1", "+1", "1\n", "18446744073709551616"]) {
+	assertThrowsCode(() => u64(invalid), "protocol.u64", `${JSON.stringify(invalid)}: invalid decimal-string u64 is forbidden`);
+}
+const invoke = typed.get("invoke-basic"); const rejected = typed.get("rejected"); assert.ok(invoke && rejected);
+const safeIntegerRequest = decodeRequest({ ...invoke, arguments: { maximum: Number.MAX_SAFE_INTEGER, minimum: Number.MIN_SAFE_INTEGER } });
+const safeIntegerCanonical = encodeRequest(safeIntegerRequest);
+assert.deepEqual(parseRequestPayload(new TextEncoder().encode(safeIntegerCanonical)), safeIntegerRequest, "safe generic integer boundaries round trip exactly");
+assert.throws(() => decodeRequest({ ...invoke, arguments: { unsafe: Number.MAX_SAFE_INTEGER + 1 } }), WireV2Error, "unsafe positive generic integer is rejected");
+assert.throws(() => decodeRequest({ ...invoke, arguments: { unsafe: Number.MIN_SAFE_INTEGER - 1 } }), WireV2Error, "unsafe negative generic integer is rejected");
+const exactArray = Array.from({ length: 1_024 }, () => null);
+assert.doesNotThrow(() => decodeRequest({ ...invoke, arguments: exactArray }), "1024 argument items are accepted");
+assert.throws(() => decodeRequest({ ...invoke, arguments: [...exactArray, null] }), WireV2Error, "1025 argument items are rejected");
+const exactObject = Object.fromEntries(Array.from({ length: 256 }, (_, index) => [`key-${index}`, null]));
+assert.doesNotThrow(() => decodeRequest({ ...invoke, arguments: exactObject }), "256 argument properties are accepted");
+assert.throws(() => decodeRequest({ ...invoke, arguments: { ...exactObject, overflow: null } }), WireV2Error, "257 argument properties are rejected");
+assert.doesNotThrow(() => decodeRequest({ ...invoke, arguments: nestedArgument(32) }), "argument depth 32 is accepted");
+assert.throws(() => decodeRequest({ ...invoke, arguments: nestedArgument(33) }), WireV2Error, "argument depth 33 is rejected");
+const exactString = "😀".repeat(65_536);
+const exactStringRequest = decodeRequest({ ...invoke, arguments: { value: exactString } });
+assert.doesNotThrow(() => encodeRequest(exactStringRequest), "65536-code-point non-ASCII argument string is accepted");
+assert.throws(() => decodeRequest({ ...invoke, arguments: { value: `${exactString}a` } }), WireV2Error, "65537-code-point argument string is rejected");
+assertThrowsCode(() => frameRequest(exactStringRequest, LIMITS), "protocol.frame_too_large", "escaped non-ASCII argument exceeds the request byte ceiling before materialization");
+const exactKey = "😀".repeat(256);
+const exactKeyRequest = decodeRequest({ ...invoke, arguments: { [exactKey]: null } });
+assert.doesNotThrow(() => encodeRequest(exactKeyRequest), "256-code-point non-ASCII argument key is accepted");
+assert.throws(() => decodeRequest({ ...invoke, arguments: { [`${exactKey}a`]: null } }), WireV2Error, "257-code-point argument key is rejected");
+const exactDetail = "😀".repeat(4_096);
+assert.doesNotThrow(() => encodeResponse(decodeResponse({ ...rejected, detail: exactDetail })), "4096-code-point non-ASCII detail is accepted");
+assert.throws(() => decodeResponse({ ...rejected, detail: `${exactDetail}a` }), WireV2Error, "4097-code-point detail is rejected");
+
+const resume = typed.get("resume-operation"); const close = typed.get("close-drain"); assert.ok(resume && close);
+const firstFrame = frameRequest(resume, LIMITS); const secondFrame = frameRequest(close, LIMITS);
+const combined = new Uint8Array(firstFrame.length + secondFrame.length); combined.set(firstFrame); combined.set(secondFrame, firstFrame.length);
+const reader = new FrameReader(LIMITS.maxRequestBytes); assert.deepEqual(reader.push(combined.slice(0, 2)), [], "partial prefix buffers");
+const payloads = reader.push(combined.slice(2)); assert.equal(payloads.length, 2, "multiple frames decode in order");
+assert.deepEqual(parseRequestPayload(payloads[0]), resume); assert.deepEqual(parseRequestPayload(payloads[1]), close); reader.end();
+
+const byteReader = new FrameReader(LIMITS.maxRequestBytes); const bytePayloads = [];
+for (const byte of combined) bytePayloads.push(...byteReader.push(Uint8Array.of(byte)));
+assert.equal(bytePayloads.length, 2, "byte-at-a-time input yields both frames");
+assert.deepEqual(parseRequestPayload(bytePayloads[0]), resume); assert.deepEqual(parseRequestPayload(bytePayloads[1]), close); byteReader.end();
+
+for (const bytes of [new Uint8Array([0]), new Uint8Array([0, 0]), new Uint8Array([0, 0, 0])]) {
+	const partial = new FrameReader(64); assert.deepEqual(partial.push(bytes), []); assertThrowsCode(() => partial.end(), "protocol.truncated_frame", "partial prefix fails on EOF");
+}
+const truncated = new FrameReader(64); assert.deepEqual(truncated.push(new Uint8Array([0, 0, 0, 5, 1, 2])), [], "partial payload buffers");
+assertThrowsCode(() => truncated.end(), "protocol.truncated_frame", "partial payload fails on EOF");
+const empty = new FrameReader(64); assertThrowsCode(() => empty.push(new Uint8Array([0, 0, 0, 0])), "protocol.empty_frame", "zero frame fails");
+
+const oversizedFirstChunk = new Uint8Array(20); new DataView(oversizedFirstChunk.buffer).setUint32(0, 65, false);
+const oversized = new FrameReader(64); assertThrowsCode(() => oversized.push(oversizedFirstChunk), "protocol.frame_too_large", "oversized first chunk fails before payload allocation");
+const firstPayload = payloadOf(firstFrame);
+const tooSmallLimits = { maxRequestBytes: firstPayload.length - 1, maxFrameBytes: LIMITS.maxFrameBytes };
+assertThrowsCode(() => frameRequest(resume, tooSmallLimits), "protocol.frame_too_large", "request encoder rejects one byte beyond its ceiling");
+const exactReader = new FrameReader(firstPayload.length); assert.equal(exactReader.push(firstFrame).length, 1, "exact ceiling is accepted"); exactReader.end();
+const nextSize = new Uint8Array(4); new DataView(nextSize.buffer).setUint32(0, firstPayload.length + 1, false);
+const nextSizeReader = new FrameReader(firstPayload.length);
+assertThrowsCode(() => nextSizeReader.push(nextSize), "protocol.frame_too_large", "one byte beyond ceiling is rejected before allocation");
+
+const framePlusNextByte = new Uint8Array(firstFrame.length + 1); framePlusNextByte.set(firstFrame); framePlusNextByte[firstFrame.length] = 0;
+const boundaryReader = new FrameReader(LIMITS.maxRequestBytes); const boundaryPayloads = boundaryReader.push(framePlusNextByte);
+assert.equal(boundaryPayloads.length, 1, "complete frame is emitted before next prefix byte");
+assert.deepEqual(parseRequestPayload(boundaryPayloads[0]), resume);
+assertThrowsCode(() => boundaryReader.end(), "protocol.truncated_frame", "one retained next-prefix byte fails on EOF");
+console.log(`authority-wire-v2 conformance: ${VECTORS.length} vectors, ${V1_REJECTIONS.length} v1 rejections, ${MALFORMED.length} malformed payloads — OK`);

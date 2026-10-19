@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "lane"
+enabled = true
+description = "Sinmara render ingress lane for ColinRemote exchange."
+# Existing project ID whose scope this lane belongs to.
+project = "life"
+# Descriptive lane-family label; any non-empty string, not a dispatch enum.
+family = "transfer"
+# Existing seat ID used when no seat is selected explicitly.
+default_seat = "sinmara"
+# Descriptive queue label; any non-empty string, not a scheduling guarantee.
+queue = "interactive"
+# true requires a separate reviewer before publishing code; false does not.
+requires_independent_review = false
+# Transfer direction: internal, ingress, or egress; declare with payload_kind.
+direction = "ingress"
+# Transfer payload: command, event, file, render, or scientific; declare with direction.
+payload_kind = "render"

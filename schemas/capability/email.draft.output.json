@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/email.draft.output.json",
+  "title": "email.draft output",
+  "description": "Terminal receipt of one durable draft command. The public success result contains draftId and draftDigest, binding the exact saved draft content for email.send. The private transport binding, draft body, recipients, and credentials are not status-envelope fields. A provably undispatched failure retains executed:false and its typed reason. A completed draft also reports its derived drafts-area vault page separately as receiptPublication: published, failed (with each page's outcome and bounded detail) or unavailable (no vault composed); its correlationId is the original operation a vault.write_generated receipt repair names. A failed page never changes the committed draft. The draft remains unsent until the kernel authorizes email.send.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "command_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 264
+    },
+    "result": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "draftId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "draftDigest": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "draftId",
+            "draftDigest"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "executed": {
+              "const": false
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "account-unavailable",
+                "credential-unavailable",
+                "service-unavailable",
+                "protocol-failure",
+                "timeout",
+                "lease-refused"
+              ]
+            }
+          },
+          "required": [
+            "executed",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "replayed": {
+      "type": "boolean"
+    },
+    "receiptPublication": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["published", "failed", "unavailable"] },
+        "correlationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "detail": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "pages": {
+          "type": "array",
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "pageName": { "type": "string", "minLength": 1, "maxLength": 512 },
+              "outcome": { "enum": ["written", "identical", "conflict", "failed"] },
+              "contentDigest": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+              "detail": { "type": "string", "minLength": 1, "maxLength": 1024 }
+            },
+            "required": ["pageName", "outcome"]
+          }
+        }
+      },
+      "required": ["status", "correlationId", "pages"]
+    }
+  },
+  "required": [
+    "command_id",
+    "result",
+    "replayed"
+  ]
+}

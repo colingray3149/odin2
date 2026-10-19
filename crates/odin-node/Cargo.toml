@@ -1,0 +1,13 @@
+[package]
+name = "odin-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+odin-registry.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Bounded R0 mailbox search through the odin-hermes JMAP adapter under a scoped opaque credential lease (LIFE-002): hit identifiers and untrusted summaries only, newest first — subjects, senders, timestamps, previews — with no bodies and no side effects. The mailbox account is configuration-selected by the host, never a model argument; unknown accounts, missing credentials, and unreachable services are typed unavailable, never empty successes. Search text is bounded at 400 characters and the page at 20 hits, exactly the adapter's enforced bounds."
+handler = { id = "email_search" }
+input_schema = "schemas/capability/email.search.input.json"
+output_schema = "schemas/capability/email.search.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_email_search_evidence" }

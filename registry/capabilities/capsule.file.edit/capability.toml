@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Authority-journaled atomic edit of one UTF-8 file inside the kernel-issued private capsule: one exact old/new text replacement, or a whole-file write guarded by an exact SHA-256 preimage declaration; reconciled from durable post-world evidence."
+handler = { id = "odin_file.edit" }
+input_schema = "schemas/capability/capsule.file.edit.input.json"
+output_schema = "schemas/capability/capsule.file.edit.output.json"
+effect_class = "R1"
+seat_tags = ["builder"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_file.edit_evidence" }

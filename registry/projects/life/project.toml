@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = true
+description = "Private personal task boundary for Sinmara adapters."
+source_root = ""
+default_seat = "sinmara"
+memory_namespaces = ["atlas.personal"]
+artifact_policy = "private"

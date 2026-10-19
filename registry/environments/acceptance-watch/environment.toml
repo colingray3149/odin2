@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+kind = "environment"
+enabled = true
+description = "Scratch transcript directory on pc. Kubert watches it; Odin cannot confine or stop the writer. Not classwork."
+transport = "remote-session"
+host = "colin@pc"
+seats = ["kubert"]
+
+[observation]
+channel = "transcript"
+path = "/home/colin/.local/state/odin/acceptance-watch"
+format = "claude-stream-json"
+
+[[watchdog]]
+name = "force-push"
+match = "push --force"
+
+[[watchdog]]
+name = "stalled"
+silent_seconds = 900

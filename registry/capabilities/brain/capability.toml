@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Read Colin's curated brain records: people, conversation units, facts with evidence, and the photo/doc index; local_only and secret-bearing records are refused."
+handler = { id = "odin_brain.records" }
+input_schema = "schemas/capability/brain.input.json"
+output_schema = "schemas/capability/brain.output.json"
+effect_class = "R0"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_brain.records_evidence" }

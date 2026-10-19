@@ -1,0 +1,172 @@
+function compareScalars(left: string, right: string): number {
+	let leftIndex = 0; let rightIndex = 0;
+	while (leftIndex < left.length && rightIndex < right.length) {
+		const leftPoint = left.codePointAt(leftIndex); const rightPoint = right.codePointAt(rightIndex);
+		if (leftPoint === undefined || rightPoint === undefined) break;
+		if (leftPoint !== rightPoint) return leftPoint - rightPoint;
+		leftIndex += leftPoint > 0xffff ? 2 : 1; rightIndex += rightPoint > 0xffff ? 2 : 1;
+	}
+	return left.length - right.length;
+}
+function quoted(value: string): string {
+	scalarString(value, "canonical string"); let output = "\"";
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.codePointAt(index); if (code === undefined) fail("protocol.unicode", "string ended unexpectedly"); if (code > 0xffff) index += 1;
+		switch (code) {
+			case 0x22: output += "\\\""; break; case 0x5c: output += "\\\\"; break; case 0x08: output += "\\b"; break;
+			case 0x0c: output += "\\f"; break; case 0x0a: output += "\\n"; break; case 0x0d: output += "\\r"; break; case 0x09: output += "\\t"; break;
+			default:
+				if (code < 0x20 || code >= 0x80) {
+					if (code <= 0xffff) output += `\\u${code.toString(16).padStart(4, "0")}`;
+					else { const adjusted = code - 0x10000; const high = 0xd800 + (adjusted >> 10); const low = 0xdc00 + (adjusted & 0x3ff); output += `\\u${high.toString(16)}\\u${low.toString(16)}`; }
+				} else output += String.fromCodePoint(code);
+		}
+	}
+	return `${output}\"`;
+}
+function canonicalJson(value: unknown): string {
+	if (value === null) return "null"; if (typeof value === "boolean") return value ? "true" : "false"; if (typeof value === "string") return quoted(value);
+	if (typeof value === "number") { if (!Number.isSafeInteger(value)) fail("protocol.encode", "numbers must be JavaScript-safe integers"); return Object.is(value, -0) ? "0" : String(value); }
+	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+	const record = jsonRecord(value, "canonical value");
+	return `{${Object.keys(record).sort(compareScalars).map((key) => `${quoted(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+}
+function addCanonicalBytes(total: number, additional: number, ceiling: number): number {
+	if (additional > ceiling - total) fail("protocol.frame_too_large", `canonical payload exceeds byte ceiling ${ceiling}`);
+	return total + additional;
+}
+function countQuotedCanonicalBytes(value: string, total: number, ceiling: number): number {
+	scalarString(value, "canonical string");
+	total = addCanonicalBytes(total, 2, ceiling);
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.codePointAt(index);
+		if (code === undefined) fail("protocol.unicode", "string ended unexpectedly");
+		if (code > 0xffff) index += 1;
+		let width: number;
+		switch (code) {
+			case 0x22: case 0x5c: case 0x08: case 0x0c: case 0x0a: case 0x0d: case 0x09:
+				width = 2;
+				break;
+			default:
+				if (code < 0x20 || code >= 0x80) width = code <= 0xffff ? 6 : 12;
+				else width = 1;
+		}
+		total = addCanonicalBytes(total, width, ceiling);
+	}
+	return total;
+}
+function countCanonicalJsonBytes(value: unknown, total: number, ceiling: number): number {
+	if (value === null) return addCanonicalBytes(total, 4, ceiling);
+	if (typeof value === "boolean") return addCanonicalBytes(total, value ? 4 : 5, ceiling);
+	if (typeof value === "string") return countQuotedCanonicalBytes(value, total, ceiling);
+	if (typeof value === "number") {
+		if (!Number.isSafeInteger(value)) fail("protocol.encode", "numbers must be JavaScript-safe integers");
+		const encoded = Object.is(value, -0) ? "0" : String(value);
+		return addCanonicalBytes(total, encoded.length, ceiling);
+	}
+	if (Array.isArray(value)) {
+		total = addCanonicalBytes(total, 1, ceiling);
+		for (let index = 0; index < value.length; index += 1) {
+			if (index !== 0) total = addCanonicalBytes(total, 1, ceiling);
+			total = countCanonicalJsonBytes(value[index], total, ceiling);
+		}
+		return addCanonicalBytes(total, 1, ceiling);
+	}
+	const record = jsonRecord(value, "canonical value");
+	total = addCanonicalBytes(total, 1, ceiling);
+	const keys = Object.keys(record).sort(compareScalars);
+	for (let index = 0; index < keys.length; index += 1) {
+		if (index !== 0) total = addCanonicalBytes(total, 1, ceiling);
+		const key = keys[index];
+		total = countQuotedCanonicalBytes(key, total, ceiling);
+		total = addCanonicalBytes(total, 1, ceiling);
+		total = countCanonicalJsonBytes(record[key], total, ceiling);
+	}
+	return addCanonicalBytes(total, 1, ceiling);
+}
+function parseCanonical<T>(payload: Uint8Array, decode: (value: unknown) => T): T {
+	let text: string; try { text = UTF8_FATAL.decode(payload); } catch (error) { fail("protocol.decode", `payload is not UTF-8: ${String(error)}`); }
+	let value: unknown; try { value = JSON.parse(text); } catch (error) { fail("protocol.decode", `payload is not JSON: ${String(error)}`); }
+	const decoded = decode(value);
+	if (canonicalJson(decoded) !== text) fail("protocol.decode", "v2 payload is not canonical JSON"); return decoded;
+}
+export function encodeRequest(request: Request): string { return canonicalJson(decodeRequest(request)); }
+export function encodeResponse(response: Response): string { return canonicalJson(decodeResponse(response)); }
+export function parseRequestPayload(payload: Uint8Array): Request { return parseCanonical(payload, decodeRequest); }
+export function parseResponsePayload(payload: Uint8Array): Response { return parseCanonical(payload, decodeResponse); }
+function positiveCeiling(value: number, path: string): number {
+	if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_U32) fail("protocol.invalid_limits", `${path} must be in 1..=u32::MAX`); return value;
+}
+export function validateLimits(limits: WireLimits): WireLimits {
+	const maxRequestBytes = positiveCeiling(limits.maxRequestBytes, "maxRequestBytes"); const maxFrameBytes = positiveCeiling(limits.maxFrameBytes, "maxFrameBytes");
+	if (maxRequestBytes > maxFrameBytes) fail("protocol.invalid_limits", "maxRequestBytes must not exceed maxFrameBytes"); return { maxRequestBytes, maxFrameBytes };
+}
+function frameCanonical(value: unknown, ceiling: number): Uint8Array {
+	positiveCeiling(ceiling, "frame ceiling");
+	const counted = countCanonicalJsonBytes(value, 0, ceiling);
+	if (counted === 0) fail("protocol.empty_frame", "zero-length frames are forbidden");
+	const payload = canonicalJson(value);
+	const bytes = UTF8.encode(payload);
+	if (bytes.length !== counted) fail("protocol.encode", `canonical byte counter drifted: counted ${counted}, encoded ${bytes.length}`);
+	const framed = new Uint8Array(4 + bytes.length); new DataView(framed.buffer, framed.byteOffset, framed.byteLength).setUint32(0, bytes.length, false); framed.set(bytes, 4); return framed;
+}
+export function frameRequest(request: Request, limits: WireLimits): Uint8Array { const checked = validateLimits(limits); return frameCanonical(decodeRequest(request), checked.maxRequestBytes); }
+export function frameResponse(response: Response, limits: WireLimits): Uint8Array { const checked = validateLimits(limits); return frameCanonical(decodeResponse(response), checked.maxFrameBytes); }
+export class FrameReader {
+	readonly #ceiling: number;
+	readonly #prefix = new Uint8Array(4);
+	#prefixLength = 0;
+	#payload: Uint8Array | null = null;
+	#payloadLength = 0;
+
+	constructor(ceiling: number) {
+		this.#ceiling = positiveCeiling(ceiling, "frame ceiling");
+	}
+
+	push(chunk: Uint8Array): Uint8Array[] {
+		if (!(chunk instanceof Uint8Array)) fail("protocol.shape", "frame chunk must be Uint8Array");
+		const payloads: Uint8Array[] = [];
+		let offset = 0;
+		while (offset < chunk.length) {
+			if (this.#payload === null) {
+				const take = Math.min(4 - this.#prefixLength, chunk.length - offset);
+				this.#prefix.set(chunk.subarray(offset, offset + take), this.#prefixLength);
+				this.#prefixLength += take;
+				offset += take;
+				if (this.#prefixLength < 4) continue;
+
+				const declared = new DataView(
+					this.#prefix.buffer,
+					this.#prefix.byteOffset,
+					this.#prefix.byteLength,
+				).getUint32(0, false);
+				if (declared === 0) fail("protocol.empty_frame", "zero-length frames are forbidden");
+				if (declared > this.#ceiling) {
+					fail("protocol.frame_too_large", `frame length ${declared} exceeds ceiling ${this.#ceiling}`);
+				}
+				this.#payload = new Uint8Array(declared);
+				this.#payloadLength = 0;
+				this.#prefixLength = 0;
+			}
+
+			const payload = this.#payload;
+			if (payload === null) fail("protocol.frame_state", "payload allocation was lost");
+			const take = Math.min(payload.length - this.#payloadLength, chunk.length - offset);
+			payload.set(chunk.subarray(offset, offset + take), this.#payloadLength);
+			this.#payloadLength += take;
+			offset += take;
+			if (this.#payloadLength === payload.length) {
+				payloads.push(payload);
+				this.#payload = null;
+				this.#payloadLength = 0;
+			}
+		}
+		return payloads;
+	}
+
+	end(): void {
+		if (this.#prefixLength !== 0 || this.#payload !== null) {
+			fail("protocol.truncated_frame", "frame ended before its declared length");
+		}
+	}
+}

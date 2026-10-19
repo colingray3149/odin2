@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/discord.notify.input.json",
+  "title": "discord.notify input",
+  "description": "One egress status notification for the owner-paired Discord channel (LIFE-001). R2: the post is outbound but scoped to the configured owner-paired channel and composed from subscribed real EventBus/LiveEventStream state — never synthesized. message is the bounded status text; the egress scrub pass strips sensitive tokens before transport, and credentials, tokens, and unpaired channel targets never travel in arguments — routing comes only from adapter configuration. A missing notify bridge or unpaired channel is typed unavailable, never a silent drop.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    }
+  },
+  "required": ["message"]
+}

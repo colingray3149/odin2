@@ -1,0 +1,23 @@
+schema = "odin.registry.v1"
+kind = "container"
+enabled = true
+description = "Bounded one-GPU smoke test: NVIDIA vectorAdd computes and verifies on device, exit code carries the verdict."
+purpose = "gpu-smoke"
+base = "nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04"
+seats_offered = ["kubert"]
+scripts = ["cuda-samples/sample"]
+watchdogs = []
+identity_fields = ["base", "contents.kind", "deadline_seconds", "gpu_count", "monitoring.slice", "purpose", "scripts"]
+surface = ["stdout"]
+gpu_count = 1
+deadline_seconds = 300
+
+[tunables]
+parallelism = 1
+
+[contents]
+kind = "scripts"
+
+[monitoring]
+slice = "kubert-ops"
+cadence_seconds = 30

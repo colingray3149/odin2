@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/web.search.output.json",
+  "title": "web.search output",
+  "description": "One pure web.search result page from the admitted adapter backend. Titles, URLs, descriptions, and ages are TrustClass::Untrusted web content with adapter provenance; they are never policy and are never silently invented. An empty results array with resultCount 0 is a valid outcome; backend names the declared search backend (SearXNG, or the Brave fallback) that served the page. Only HTTPS result URLs are accepted.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/searchResult" }
+    },
+    "resultCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 20
+    },
+    "backend": {
+      "description": "The declared search backend that served this page.",
+      "enum": ["searxng", "brave"]
+    }
+  },
+  "required": ["results", "resultCount"],
+  "$defs": {
+    "searchResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://\\S+$",
+          "maxLength": 2048
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "age": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": ["title", "url", "description"]
+    }
+  }
+}

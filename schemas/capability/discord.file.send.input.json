@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/discord.file.send.input.json",
+  "title": "discord.file.send input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "intake": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 40
+    },
+    "file_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "artifact": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "asset": {
+      "description": "A brain search result id (immich/<uuid> or a doc path under the brain raw root); never combined with intake, file_name or artifact.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    }
+  },
+  "if": { "required": ["asset"] },
+  "then": { "not": { "anyOf": [{ "required": ["intake"] }, { "required": ["file_name"] }, { "required": ["artifact"] }] } }
+}

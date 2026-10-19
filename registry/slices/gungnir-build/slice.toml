@@ -1,0 +1,103 @@
+schema = "odin.registry.v1"
+kind = "slice"
+enabled = true
+description = "Builder slice (Gungnir, Reginn, and Forseti the reviewer): registry and task reads, Nix build and check runs of the session capsule (each session's own clone of the project), code navigation, located compiler diagnostics and parsed test results over it, capsule evaluation and file edits, handing work back as a seat branch pushed to the project's remote, memory, incidents, escalation to the Sinmara coordinator, and the status of the project's pods."
+capabilities = [
+  "claude.open", "claude.prompt", "claude.read", "claude.stop",
+  "task.read",
+  "task.create",
+  "task.pause",
+  "git.patch.propose",
+  "build.run",
+  "check.run",
+  "code.navigate",
+  "code.diagnostics",
+  "test.run",
+  "code.review.request",
+  "code.review.verdict",
+  "seat.ask.forseti",
+  "capsule.eval.run",
+  "capsule.file.edit",
+  "seat.ask.sinmara",
+  "memory.remember",
+  "brain.search",
+  "brain.read",
+  "registry.read",
+  "incident.raise",
+  "artifact.write",
+  "artifact.read",
+  "memory.forget",
+  "kube.workload.summarize",
+]
+variables = {}
+[redirects]
+out_of_scope = "NeedsPlan"
+
+[knowledge]
+required = false
+atlas_sources = ["memory.colin", "atlas.code", "state.repos", "memory.gungnir", "memory.reginn", "memory.scribe", "memory.forseti", "memory.project.odin", "memory.project.surtr", "memory.project.skuld", "memory.project.ringd", "memory.project.bagcore", "memory.project.weno5", "memory.project.colinremote", "memory.project.rig"]
+retrieval_mode = "hybrid"
+candidate_limit = 128
+top_k = 16
+min_score_micros = 1
+chunk_tokens = 512
+chunk_overlap_tokens = 64
+embedding_backend = "local"
+
+[context]
+# Budgets count UTF-8 bytes (the pinned default counter; ~4 bytes per token);
+# sized for bounded conversational sessions that roll over well below the window.
+max_bundle_tokens = 196608
+reserve_output_tokens = 16384
+control_tokens = 8192
+history_tokens = 139264
+core_tokens = 2_048
+prefetch_tokens = 512
+tool_result_tokens = 16384
+tool_schema_tokens = 16384
+max_item_tokens = 8192
+
+[tools]
+allow = [
+  "claude_open", "claude_prompt", "claude_read", "claude_stop",
+  "task_read",
+  "task_create",
+  "task_pause",
+  "git_patch_propose",
+  "build_run",
+  "check_run",
+  "code_navigate",
+  "code_diagnostics",
+  "test_run",
+  "code_review_request",
+  "code_review_verdict",
+  "seat_ask_forseti",
+  "capsule_eval_run",
+  "capsule_file_edit",
+  "seat_ask_sinmara",
+  "memory_remember",
+  "brain_search",
+  "brain_read",
+  "registry_read",
+  "incident_raise",
+  "artifact_write",
+  "artifact_read",
+  "memory_forget",
+  "kube_workload_summarize",
+]
+deny = []
+alias_redirect = []
+
+[tools.redirects]
+max_http_hops = 2
+allow_cross_origin = false
+allow_https_downgrade = false
+
+[live]
+max_sessions_per_seat = 4
+max_prompt_bytes = 262144
+transfer_chunk_bytes = 1048576
+max_file_bytes = 268435456
+max_render_bytes = 67108864
+allowed_file_media_types = ["application/pdf", "text/plain", "image/png"]
+allowed_render_media_types = ["image/png", "image/jpeg", "image/svg+xml", "application/pdf"]

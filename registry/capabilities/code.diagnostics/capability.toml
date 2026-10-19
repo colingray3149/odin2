@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Builds the session's capsule with Nix (a named flake output, or every flake check) in the build sandbox and returns the compiler, linter and type-checker findings as located diagnostics (file, line, column, code, message) instead of a log tail. Bounded to 20 minutes."
+handler = { id = "code_diagnostics" }
+input_schema = "schemas/capability/code.diagnostics.input.json"
+output_schema = "schemas/capability/code.diagnostics.output.json"
+effect_class = "R1"
+seat_tags = ["builder", "judge"]
+timeout_seconds = 1260
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_code_diagnostics_evidence" }

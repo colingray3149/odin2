@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/time.zone.set.output.json",
+  "title": "time.zone.set output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "zone": {
+      "type": "string"
+    },
+    "now": {
+      "type": "string"
+    },
+    "until": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "zone",
+    "now"
+  ]
+}

@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Runs `nix flake check` on the session's capsule (its own clone of the project, with every change staged) inside the Nix build sandbox; returns success or the failure log tail. Bounded to 20 minutes. Every project of Colin's is a Nix flake: its tests run here as a flake check (a checks output running the test suite in a Nix-declared environment, never pip or a venv), and a project without a flake gets one — dev shell, dependencies and checks — before other work."
+handler = { id = "check_run" }
+input_schema = "schemas/capability/check.run.input.json"
+output_schema = "schemas/capability/check.run.output.json"
+effect_class = "R1"
+seat_tags = ["builder", "judge"]
+timeout_seconds = 1260
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_check_run_evidence" }

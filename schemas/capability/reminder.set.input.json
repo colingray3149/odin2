@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/reminder.set.input.json",
+  "title": "reminder.set input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "notify",
+        "wake"
+      ]
+    },
+    "at": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 19
+    },
+    "in_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 576000
+    },
+    "anchor_date": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 10
+    },
+    "anchor_account": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "anchor_match": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "lead_minutes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 720
+    },
+    "repeat_every_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440
+    },
+    "repeat_times": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500,
+      "description": "Additional firings after the first; required with repeat_every_minutes."
+    }
+  },
+  "required": [
+    "text"
+  ],
+  "dependentRequired": {
+    "repeat_every_minutes": ["repeat_times"],
+    "repeat_times": ["repeat_every_minutes"]
+  }
+}

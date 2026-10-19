@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/odin.approval_request.input.json",
+  "title": "odin.approval_request input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "approvalId": { "type": "string", "minLength": 1 },
+    "targetKind": { "enum": ["seat", "project", "lane", "run", "attempt", "session", "node"] },
+    "targetId": { "type": "string", "minLength": 1 },
+    "capabilityId": { "type": "string", "minLength": 1 },
+    "requestedAtMs": { "type": "integer" },
+    "expiresAtMs": { "type": "integer" },
+    "arguments": {}
+  },
+  "required": ["approvalId", "targetKind", "targetId", "capabilityId", "requestedAtMs", "expiresAtMs", "arguments"]
+}

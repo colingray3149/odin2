@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/spend.read.input.json",
+  "title": "spend.read input",
+  "properties": {
+    "days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 31
+    }
+  }
+}

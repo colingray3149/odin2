@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "R2 durable draft creation through the odin-hermes JMAP adapter under a scoped opaque credential lease (LIFE-002): a reversible mailbox-side artifact in the configured drafts mailbox, addressed by the caller but never sent by this operation. The durable draft command is idempotency-keyed (CORE-004) — replayed drafts settle to the recorded outcome. receiptPublication separately reports whether the derived vault page was published, failed, or unavailable; a page failure never means the draft failed. Repair only the page through vault_write_generated with the original receipt_correlation_id, never create another draft to repair a page. Delivery stays behind the ledger-gated email.send effect: at most 10 recipients of 320 characters, subject 200, body 20000, exactly the adapter's enforced bounds."
+handler = { id = "email_draft" }
+input_schema = "schemas/capability/email.draft.input.json"
+output_schema = "schemas/capability/email.draft.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_email_draft_evidence" }

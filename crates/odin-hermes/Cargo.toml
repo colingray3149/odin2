@@ -1,0 +1,46 @@
+[package]
+name = "odin-hermes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64 = "0.22"
+futures-util.workspace = true
+jiff = "0.2"
+odin-adapter-core.workspace = true
+odin-brain.workspace = true
+odin-confined-fs.workspace = true
+odin-domain.workspace = true
+odin-kernel.workspace = true
+odin-ledger.workspace = true
+odin-omp.workspace = true
+odin-registry.workspace = true
+parking_lot.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
+rusqlite.workspace = true
+rustix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+time.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+url.workspace = true
+uuid.workspace = true
+webpki-roots = "0.26"
+
+[dev-dependencies]
+axum.workspace = true
+odin-types.workspace = true
+rusqlite = { workspace = true, features = ["trace"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

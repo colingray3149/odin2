@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "project"
+enabled = true
+description = "PARSEC propulsion test-stand DAQ code from Colin's parsec-daq repository, using LabJack T7-Pro for thermocouples, pressure transducers, and flow meters."
+source_root = "/home/colin/valhalla/parsec"
+default_seat = "gungnir"
+memory_namespaces = ["atlas.code"]
+artifact_policy = "standard"
+review_verdict = "code.review.verdict"

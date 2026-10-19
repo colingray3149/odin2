@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Query the immutable atlas snapshot. The query may narrow the allowed scope and never widen it."
+handler = { id = "odin_atlas_query" }
+input_schema = "schemas/capability/odin.atlas_query.input.json"
+output_schema = "schemas/capability/odin.atlas_query.output.json"
+effect_class = "R0"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_atlas_query_evidence" }

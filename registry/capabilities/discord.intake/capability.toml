@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "R1 Discord correlation ingress (LIFE-001): owner-paired intents become durable Sinmara tasks keyed on Correlation::idempotency_key — replayed intents deduplicate, unpaired authors are typed unauthorized with no echo and no execution, and missing bot credentials are typed unavailable. A consequential leg stops at the ledger approval gate over the recorded intent, driven by the ingress reconciler; denials settle the task terminally with their evidence reference and the receipt variants carry no content fields."
+handler = { id = "discord_intake" }
+input_schema = "schemas/capability/discord.intake.input.json"
+output_schema = "schemas/capability/discord.intake.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_discord_intake_evidence" }

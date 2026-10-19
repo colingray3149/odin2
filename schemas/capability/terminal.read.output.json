@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/terminal.read.output.json",
+  "title": "terminal.read output",
+  "description": "The captured terminal content for the addressed session: the resolved session selector, the bounded UTF-8 screen content, and an explicit truncation flag. An unresolvable session target is a typed host-tool error, never an empty fabricated transcript.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "const": "read"
+    },
+    "session": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "content": {
+      "type": "string",
+      "maxLength": 1048576
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "required": ["status", "session", "content", "truncated"]
+}

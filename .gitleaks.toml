@@ -1,0 +1,33 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic Discord owner in recovery test"
+condition = "AND"
+paths = ['''^crates/odin-hermes/tests/discord/recovery_windows\.rs$''']
+regexTarget = "match"
+regexes = ['''discord-owner:260116911398977548''']
+
+[[allowlists]]
+description = "Effect idempotency key fixture"
+condition = "AND"
+paths = ['''^crates/odin-hermes/tests/integrated_path\.rs$''']
+regexTarget = "secret"
+regexes = ['''^vault-seal-harbor-1$''']
+
+[[allowlists]]
+description = "Screen redaction test's synthetic bearer and truncated private key"
+condition = "AND"
+paths = ['''^crates/odin-omp/src/live/zellij/screen\.rs$''']
+regexTarget = "match"
+regexes = [
+  '''Authorization: Bearer eyJhbGciOiJIUzI1NiJ9''',
+  '''-----BEGIN OPENSSH PRIVATE KEY-----\\n\\\n\s*b3BlbnNzaC1rZXktdjEAAAAA\\n\\\n\s*-----END OPENSSH PRIVATE KEY-----''',
+]
+
+[[allowlists]]
+description = "Delegation test fixture key"
+condition = "AND"
+paths = ['''^crates/odin-omp/src/host_tools/delegation/tests\.rs$''']
+regexTarget = "secret"
+regexes = ['''^abc123def456$''']

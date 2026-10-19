@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/seat.create.input.json",
+  "title": "seat.create input",
+  "description": "Translate Colin's requested kind of work into a helper declaration. Read the published seats and projects with registry_read before asking for information already declared. Choose implementation details yourself from those declarations; ask Colin only about genuinely missing purpose or project scope, not schema fields.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "seat": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,30}$", "description": "Use the requested name, or derive a short name from the requested work. Check existing seats first; reuse an appropriate existing helper rather than creating a duplicate." },
+    "purpose": { "type": "string", "minLength": 1, "maxLength": 300, "description": "Describe the work Colin requested in plain language; derive this from his request and the conversation, not a separate configuration question." },
+    "template": { "type": "string", "minLength": 1, "maxLength": 64, "description": "Read published worker seats and choose the closest enabled builder or judge for the requested work. This is the coordinator's implementation choice, not a field Colin must supply; never copy a conversation seat or widen the template's authority." },
+    "projects": {
+      "description": "Resolve the projects named in the request, established in the conversation, or supplied by an explicit declared default against published project IDs. Do not treat a list of allowed projects as a default. Ask about intended work scope only when those sources do not resolve it.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+    }
+  },
+  "required": ["seat", "purpose", "template", "projects"]
+}

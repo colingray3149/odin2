@@ -1,0 +1,43 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "Acceptance-only stateful counter for the isolated multi-pod sweep; its own state never belongs to a standing state-counter Job."
+# Runner: script, an enabled pod-capable harness (default omp), or the separate claude-code driver.
+harness = "script"
+
+[image]
+# platform uses the deployed image; otherwise require an OCI reference with @sha256:<digest>.
+reference = "docker.io/library/python:3.12-slim@sha256:eeb8088e67610b37583880c7627e3931f087cba55a35810819e34a398f624a47"
+
+[script]
+# Non-empty argv array executed inside the image; required for script workloads.
+command = ["python3", "-u", "-c", """import os,time;p='/state/count';n=int(open(p).read().strip()) if (os.path.exists(p) and open(p).read().strip().isdigit()) else 0;[(time.sleep(15),open(p,'w').write(str(n:=n+1)),print('ODIN-STATUS {\"count\": %d}'%n,flush=True)) for _ in range(240)]"""]
+
+[seat]
+# Enabled seat ID whose permissions apply to this workload.
+seat = "kubert"
+# Enabled project ID within the seat's project_scope.
+project = "odin"
+
+[network]
+# Bare egress hostnames, not URLs; an empty array adds no external hosts.
+allow_hosts = []
+
+[state]
+# Absolute in-pod path where the persistent state volume is mounted.
+path = "/state"
+# State volume capacity: positive integer with Ki/Mi/Gi/Ti/Pi/Ei suffix, e.g. 1Gi.
+storage = "1Gi"
+
+[export]
+# Absolute in-pod directory whose files are exported.
+pod_path = "/export"
+# Absolute host directory receiving exported files.
+host_folder = "/srv/odin/export"
+
+[brief]
+text = "Acceptance sweep's own stateful counter: every 15 seconds increments /state/count and reports it, for at most one hour. No agent, network, watchdog or Odin recovery ladder."
+
+[lifetime]
+# Job wall-clock limit in seconds, 60..86400; omit for services.
+deadline_seconds = 3600

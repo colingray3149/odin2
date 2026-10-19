@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/purchase.submit.output.json",
+  "title": "purchase.submit output",
+  "description": "Exactly one terminal outcome of a purchase.submit command, discriminated by status. gated: the effect stopped at the approval gate and carries the bound approval plus the kernel ApprovalRedirect projection; a denied redirect kind must carry the kernel's durable evidence_ref pointer — recording the denial is the acceptance point. denied: the recorded denial — reason and decider only, never credential material. submitted: the approved vendor submission carried an opaque backend vendor_reference. unavailable: a typed unavailability code (for example no real vendor backend); unavailability is honest, never a fabricated success. Exactly one variant applies and variants share no fields.",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "const": "gated" },
+        "approval_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "redirect": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "needs_approval",
+                "denied",
+                "expired",
+                "already_consumed",
+                "cancelled",
+                "scope_mismatch",
+                "not_found",
+                "stale_revision",
+                "already_approved"
+              ]
+            },
+            "approval_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "command_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "expected_revision": { "type": "integer", "minimum": 0 },
+            "actual_revision": { "type": "integer", "minimum": 0 },
+            "evidence_ref": { "type": "string", "minLength": 1, "maxLength": 256 }
+          },
+          "required": ["kind"],
+          "allOf": [
+            {
+              "if": {
+                "properties": { "kind": { "const": "denied" } },
+                "required": ["kind"]
+              },
+              "then": { "required": ["evidence_ref"] }
+            }
+          ]
+        }
+      },
+      "required": ["status", "approval_id", "redirect"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "const": "denied" },
+        "denial": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "approval_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "reason": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "decided_by": { "type": "string", "minLength": 1, "maxLength": 64 }
+          },
+          "required": ["approval_id", "reason", "decided_by"]
+        }
+      },
+      "required": ["status", "denial"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "const": "submitted" },
+        "receipt": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vendor_reference": { "type": "string", "minLength": 1, "maxLength": 128 }
+          },
+          "required": ["vendor_reference"]
+        }
+      },
+      "required": ["status", "receipt"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "const": "unavailable" },
+        "code": { "type": "string", "minLength": 1, "maxLength": 64 }
+      },
+      "required": ["status", "code"]
+    }
+  ]
+}

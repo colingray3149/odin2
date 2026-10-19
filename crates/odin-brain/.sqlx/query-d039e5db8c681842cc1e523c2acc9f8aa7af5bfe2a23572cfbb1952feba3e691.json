@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH record AS (\n                       SELECT ordinal, tsv, model, embedding FROM brain_chunk\n                       WHERE generation_id = $1 AND ordinal = ANY($2)\n                   ),\n                   lexical AS (\n                       SELECT ordinal, row_number() OVER (ORDER BY ts_rank(tsv, query) DESC, ordinal) AS rank\n                       FROM record, to_tsquery('simple', $3) AS query\n                       WHERE $3::text IS NOT NULL AND tsv @@ query\n                   ),\n                   vector AS (\n                       SELECT ordinal,\n                              row_number() OVER (ORDER BY embedding <=> $4::real[]::halfvec(2048), ordinal) AS rank\n                       FROM record WHERE $4::real[] IS NOT NULL AND model = $5\n                   )\n                   SELECT ordinal AS \"ordinal!\",\n                          (COALESCE(1.0 / ($6::float8 + lexical.rank), 0)\n                           + COALESCE(1.0 / ($6::float8 + vector.rank), 0))::float8 AS \"rrf!\"\n                   FROM lexical FULL OUTER JOIN vector USING (ordinal)\n                   ORDER BY 2 DESC, 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ordinal!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "rrf!",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8Array",
+        "Text",
+        "Float4Array",
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "d039e5db8c681842cc1e523c2acc9f8aa7af5bfe2a23572cfbb1952feba3e691"
+}

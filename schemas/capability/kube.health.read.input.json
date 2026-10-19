@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.health.read.input.json",
+  "title": "kube.health.read input",
+  "description": "One bounded read-only live cluster health observation: node readiness and pressure, pods with observed problems, and recent warning events. No parameters: cluster access comes from the trusted runtime configuration, never from the model. Never mutates cluster state.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {},
+  "required": []
+}

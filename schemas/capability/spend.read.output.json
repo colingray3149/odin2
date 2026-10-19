@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/spend.read.output.json",
+  "title": "spend.read output",
+  "properties": {
+    "from": {
+      "type": "string"
+    },
+    "to": {
+      "type": "string"
+    },
+    "total": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requests": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "usd",
+        "tokens",
+        "requests"
+      ]
+    },
+    "days": {
+      "type": "array",
+      "maxItems": 62,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "usd": {
+            "type": "number",
+            "minimum": 0
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requests": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "usd",
+          "tokens",
+          "requests",
+          "date"
+        ]
+      }
+    },
+    "lanes": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "usd": {
+            "type": "number",
+            "minimum": 0
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requests": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lane": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "usd",
+          "tokens",
+          "requests",
+          "lane"
+        ]
+      }
+    },
+    "note": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "from",
+    "to",
+    "total",
+    "days",
+    "lanes",
+    "note"
+  ]
+}

@@ -1,0 +1,47 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "CUDA vectorAdd GPU smoke test script pod: runs the NVIDIA sample once with 1 GPU on a cfd node, no network."
+# Runner: script, an enabled pod-capable harness (default omp), or the separate claude-code driver.
+harness = "script"
+# NVIDIA GPUs to reserve; integer 0..8, omitted means none.
+gpu_count = 1
+# Required node capability IDs; omitted means any eligible node.
+placement = ["cfd"]
+
+[image]
+# platform uses the deployed image; otherwise require an OCI reference with @sha256:<digest>.
+reference = "nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41"
+
+[script]
+# Non-empty argv array executed inside the image; required for script workloads.
+command = ["/cuda-samples/sample"]
+
+[seat]
+# Enabled seat ID whose permissions apply to this workload.
+seat = "kubert"
+# Enabled project ID within the seat's project_scope.
+project = "odin"
+
+[network]
+# Bare egress hostnames, not URLs; an empty array adds no external hosts.
+allow_hosts = []
+
+[state]
+# Absolute in-pod path where the persistent state volume is mounted.
+path = "/state"
+# State volume capacity: positive integer with Ki/Mi/Gi/Ti/Pi/Ei suffix, e.g. 1Gi.
+storage = "100Mi"
+
+[export]
+# Absolute in-pod directory whose files are exported.
+pod_path = "/export"
+# Absolute host directory receiving exported files.
+host_folder = "/srv/odin/export"
+
+[brief]
+text = "GPU smoke test: runs the CUDA vectorAdd sample once and exits."
+
+[lifetime]
+# Job wall-clock limit in seconds, 60..86400; omit for services.
+deadline_seconds = 600

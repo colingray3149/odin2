@@ -1,0 +1,31 @@
+schema = "odin.registry.v1"
+kind = "capability"
+# Enabled: the compiled operator tuple lives in the runtime-binding library
+# (`ARCHIVE_INGEST_BINDING`) and admitted at registry publication alongside the
+# host-tool tuples, so the strict publication proves the declaration and both
+# schemas before any publish. The capability is an OPERATOR surface, never a
+# model tool: its exact R3 demand binds `archive.source` as the approval target
+# and the (source, declaration, content) digest as the approval arguments,
+# which no run-scoped kernel dispatch can express, so no HostTool owner exists
+# or is invented for it. The one-shot path (`odind archive
+# prepare|ingest|status|backfill`) re-verifies this declaration field-for-field
+# and refuses when it is absent, disabled, or drifted.
+enabled = true
+implementation = "operator"
+version = 1
+description = "Add this archive to your searchable memory. Operator-governed ingest of one declared archive knowledge source into the brain. The first disposition mints a durable exact-scope R3 demand bound to the source, the canonical declaration digest, and the streamed content revision; the decision is the declaration's (archive ingest never asks Colin), the rerun journals the deterministic command, consumes the approval at-most-once through the real gate, and only then streams the bounded ingest. There is no automatic, model-facing, or ungated ingest path."
+handler = { id = "odind_archive_ingest" }
+input_schema = "schemas/capability/archive.ingest.input.json"
+output_schema = "schemas/capability/archive.ingest.output.json"
+effect_class = "R3"
+seat_tags = ["operator"]
+# One bounded ingest of a multi-gigabyte export runs as one finite operator
+# command; the ceiling covers the streamed parse plus staging and index
+# build at the declared batch bounds (30 minutes).
+timeout_seconds = 1800
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+# The pinned declaration decides the standing demand; no owner question.
+approval_decider = "declaration"
+evidence_extractor = { id = "odind_archive_ingest_evidence" }

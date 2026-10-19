@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Ask Forseti to independently review a change: name the review artifactId and diffDigest from code_review_request. Forseti reads the diff and test report and records its verdict; it appears in its own terminal tab."
+handler = { id = "seat_ask" }
+delegate_to = "forseti"
+input_schema = "schemas/capability/seat.ask.input.json"
+output_schema = "schemas/capability/seat.ask.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator", "builder"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_hermes_seat_ask_evidence" }

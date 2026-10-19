@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/archive.ingest.output.json",
+  "title": "archive.ingest output",
+  "description": "status=pending means the demand stands; status=in_progress means the exact approval was consumed but the command is not yet settled (a crashed run — `odind archive ingest` resumes and settles it); status=ingested means the deterministic exact-scope R3 demand was minted (or already stands) and authorizes nothing until the operator decides; the material carries the approval id, its exact revision, both binding digests, and the exact approve command. status=ingested means the approval was consumed at-most-once and the bounded ingest report is durable; status=replayed means this exact command was already executed and the stored outcome is returned unchanged.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "source",
+    "material"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "ingested",
+        "replayed"
+      ]
+    },
+    "source": {
+      "type": "string"
+    },
+    "material": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approvalId",
+        "declarationDigest",
+        "contentRevision"
+      ],
+      "properties": {
+        "approvalId": {
+          "type": "string"
+        },
+        "approvalRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "declarationDigest": {
+          "type": "string"
+        },
+        "contentRevision": {
+          "type": "string"
+        },
+        "records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recordsStaged": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recordsDuplicate": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "chunks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resumed": {
+          "type": "boolean"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "approveCommand": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/browser.consequential.output.json",
+  "title": "browser.consequential output",
+  "description": "Durable disposition for one consequential structural browser command. Evidence and artifacts are referenced only by content digest; page text, field values, URLs, selectors, reasons, and other plaintext content are never returned.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["accepted", "duplicate", "applied", "denied", "failed"]
+    },
+    "commandId": { "$ref": "#/$defs/domainId" },
+    "evidenceRefs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/blake3Digest" },
+      "uniqueItems": true
+    },
+    "artifactRefs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/blake3Digest" },
+      "uniqueItems": true
+    }
+  },
+  "required": ["status", "commandId", "evidenceRefs", "artifactRefs"],
+  "$defs": {
+    "domainId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "blake3Digest": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    }
+  }
+}
