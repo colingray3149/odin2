@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Goat flash model lane"
+description = "The goat-flash lane's account is open in the model book; no completion is requested."
+probes = [
+  "models:goat-flash",
+]

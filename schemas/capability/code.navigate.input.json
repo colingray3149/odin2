@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/code.navigate.input.json",
+  "title": "code.navigate input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "symbol": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "definition",
+        "references",
+        "read",
+        "list",
+        "search",
+        "log",
+        "diff",
+        "show"
+      ]
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^-\\u0000-\\u001f\\u007f][^\\u0000-\\u001f\\u007f]*$"
+    },
+    "startLine": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "definition",
+              "references"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "symbol"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "read",
+              "list",
+              "search",
+              "log",
+              "diff",
+              "show"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "project"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "const": "read"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "path"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "const": "search"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "const": "show"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "revision"
+        ]
+      }
+    }
+  ]
+}

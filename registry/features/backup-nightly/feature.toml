@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Nightly backup"
+description = "pc's replica of mini's nightly backup wrote its completion stamp within the last 26 hours."
+probes = [
+  "file:pc ~/.local/state/odin-backup-mini/completed 26h",
+]

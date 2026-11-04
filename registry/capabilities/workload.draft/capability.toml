@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "odin"
+expose = "on_demand"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Drafts a new pod profile from your answers: a script pod or an agent pod. A script pod pins an image, GPUs and placement, as a job or service. Returns the questions still open, or the complete declaration with the digest workload.publish takes; nothing is published or launched. A browser agent pod, for what web.read can't do: tools browser.observe and browser.interact, gateway_lane astra, allow_hosts just the sites it needs, and a brief saying exactly where it stops; publish it, then ask the seat it runs as to launch it."
+handler = { id = "workload_draft" }
+input_schema = "schemas/capability/workload.draft.input.json"
+output_schema = "schemas/capability/workload.draft.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_workload_draft_evidence" }
+tests = [
+  "odin-cli::bin/odind workload_authoring::tests::complete_draft_returns_the_exact_declaration_digest_and_lane_facts",
+]

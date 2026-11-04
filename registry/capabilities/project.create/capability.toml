@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "odin"
+op = "project"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Create a managed project. Creates a new project the owner asks for: a registry project rooted in its own repository (his existing GitHub repository of that name is cloned; a new empty one is made when none exists), worked on by the builder and judge seats chosen. It is committed and published first; activation waits for running jobs and worker sessions to finish, then Odin reloads at a quiet moment. A project without a flake.nix gets one from its builder first (see check.run)."
+handler = { id = "project_create" }
+input_schema = "schemas/capability/project.create.input.json"
+output_schema = "schemas/capability/project.create.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 600
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_project_create_evidence" }
+tests = [
+  "odin-cli::bin/odind project_authoring::tests::the_coordinator_creates_a_project_on_odin_main",
+]

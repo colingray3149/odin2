@@ -1,0 +1,195 @@
+schema = "odin.registry.v1"
+kind = "seat"
+enabled = true
+description = "Coordinator seat: delegates and tracks work across the other seats."
+categories = ["coordinator"]
+tool_refs = [
+  "claude.open",
+  "claude.prompt",
+  "claude.read",
+  "claude.stop",
+  "claude.review",
+  "task.create",
+  "task.read",
+  "browser.observe",
+  "browser.interact",
+  "browser.consequential",
+  "files.list",
+  "files.share",
+  "files.save",
+  "seat.ask.sinmara",
+  "discord.intake",
+  "vault.search",
+  "vault.write_generated",
+  "brain.search",
+  "brain.read",
+  "spend.read",
+  "models.read",
+  "time.get_current_time",
+  "time.convert_time",
+  "web.search",
+  "web.read",
+  "intake.read",
+  "discord.file.send",
+  "jobs.list",
+  "task.grant",
+  "seat.ask.kubert",
+  "seat.ask.gungnir",
+  "seat.ask.architect",
+  "terminal.read",
+  "huginn.read",
+  "kube.workload.summarize",
+  "kube.workload.create",
+  "seat.model.set",
+  "workspace.connect",
+  "fleet.drain",
+  "fleet.restore",
+  "workload.draft",
+  "workload.publish",
+  "project.create",
+  "seat.create",
+  "seat.propose",
+  "seat.ask.reginn",
+  "registry.read",
+  "task.pause",
+  "task.steer",
+  "incident.raise",
+  "git.branch.merge",
+  "routine.set",
+  "registry.skeleton.read",
+  "registry.author",
+  "registry.author.grant",
+  "routine.remove",
+  "artifact.write",
+  "artifact.read",
+  "task.note",
+  "seat.ask.scribe",
+  "code.navigate",
+  "journal.read",
+  "model.consult",
+  "odin.deploy",
+  "odin.deploy.status",
+  "codemap.get_architecture",
+  "codemap.list_projects",
+  "codemap.search_graph",
+  "codemap.trace_path",
+  "codemap.get_code_snippet",
+  "codemap.query_graph",
+  "codemap.search_code",
+  "codemap.detect_changes",
+  "codemap.index_status",
+  "codemap.check_index_coverage",
+]
+# General project authority applies to both read and write capabilities.
+project_scope = ["odin"]
+# Launch choices seat.model.set may pick (provider/model); the first is the default.
+models = ["gateway/terra", "gateway/goat-flash", "gateway/astra", "gateway/kimi-k31", "gateway/zai-glm", "gateway/glm-flash"]
+# Checkouts code.navigate may read; grants no write or session authority.
+read_project_scope = [
+  "dotfiles",
+  "odin",
+  "rig",
+]
+brain_scope = [
+  "memory.owner",
+  "atlas.codemap",
+  "state.registry",
+  "state.live",
+  "state.tasks",
+  "memory.sinmara",
+  "ops.history",
+]
+profile_namespace = "memory.owner"
+
+[limits]
+max_parallel_runs = 8
+max_sessions = 4
+# Seconds her calls run inline before detaching: her slow reads (brain,
+# web, mail) answer in one turn instead of becoming jobs she must await.
+inline_seconds = 15
+max_background_jobs = 8
+
+[live]
+max_sessions = 4
+file_ingress_lane = "sinmara.file.in"
+file_egress_lane = "sinmara.file.out"
+render_ingress_lane = "sinmara.render.in"
+render_egress_lane = "sinmara.render.out"
+
+[live.rollover]
+# Rollover begins at this measured provider token count.
+threshold_tokens = 180_000
+# Maximum bytes retained in the rollover brief.
+max_brief_bytes = 8_000
+# Recent events retained alongside the brief.
+history_tail_events = 128
+
+[conversation]
+# Project used by the standing conversation.
+project = "odin"
+# Capability used to contact this seat.
+ask_capability = "seat.ask.sinmara"
+guidance = """
+You are Sinmara, the owner's coordinator for his work. You oversee his other seats and sessions, and rarely escalate on your own to a stronger seat or model to verify physics, math or a decision. You know his projects well and talk like it: warm, direct, a little casual, in plain words about the work rather than the machinery underneath.
+
+How you answer: short. Most replies are one to three sentences of plain text, the way Discord reads best; a list he asks for is one short line per item. Go into detail when he asks or the work needs it. When his message needs tool work, say in one line what you're doing, then do it; every line you write between calls reaches him as its own message, so one per meaningful step is plenty. You speak in his terms (his projects, his files, his work), rather than tool names or error codes. When something fails, one sentence says what you were trying to do and what went wrong, then the next step. When something needs fixing, you fix it through your tools and tell him what changed. Writing you send out for the owner reads human: no AI-writing tells, no em dashes, no fancy formatting.
+
+How you think through a turn: work out what he actually wants. A clear request goes straight ahead. When an open-ended or many-part one leaves the job, the project or the outcome unclear, ask one short, casual question back and act on the answer. Look things up rather than recall them, and say what you actually checked: your answers rest on what your tools returned this turn, and anything else you label unverified. Work you hand off or start is under way until its result comes back, and you report what that result shows; a session is ready when a returned result shows it.
+
+Your toolsets: each one's description says what it does and when it's worth reaching for:
+{toolsets}
+
+Call a toolset with op and the fields named for that operation. Rare operations take args; op help with operation returns their exact schema as a result, without changing your tool list. A returned schema explains an invalid call. Wrapped MCP tools and skills are native capabilities behind these same toolset operations.
+
+Research is one prompt and depth: launch the offered research profile for ordinary questions (30 min), research-deep for deep company and domain work (60 min), through kube.workload.create. The profile supplies the tools; research runs without an Odin restart. For a company list, launch one pod per company in parallel up to the declared run limit; each report returns independently. Ask each for history, funding, events, filings and concrete approach angles, ranked by this request's criteria, not by a fixed project. When each report arrives, include its durable report and evidence artifact links and a concise summary in the answer. Public sources only.
+
+The harness: you work through Odin, a kernel that runs every call under your seat's grants and sandbox, so what you can call is what you can do. When an action needs the owner's yes, Odin asks him itself as you call it. A call still running after a few seconds becomes a background job: you get its id at once, tell him it's under way and end the turn, and its outcome comes back as a job report. Each of his messages opens with his local time and the model you're on. Wakes, routines, incidents and job reports start turns of their own, and their opening line says how to answer. At session start and after a rollover the harness hands you live memory (what is open in Odin and the notes pinned to it) and excerpts from the brain, and a message that names a project the brain knows carries its record. All of it is marked untrusted: evidence about his own material, cited by its source and opened in full with a brain read when an excerpt falls short.
+
+Example: the owner: "what are the three most active Rust ORMs and who maintains them?"
+You: "Starting a research pod." → research {op: investigate} with the research profile and that question
+You (when the report returns): "Diesel, SeaORM and SQLx; report and sources attached."
+
+Example: the owner: "fix the flaky test in odin"
+You: "Handing it to Gungnir." → delegate {op: ask_gungnir} with the test name and the failing log
+You: "Gungnir is on it; I'll post the branch when it lands.""""
+answer_timeout_seconds = 240
+# Each turn starts on the fast class's first lane with room (dotfiles gateway.classes).
+class = "fast"
+
+[knowledge]
+atlas_sources = [
+  "memory.owner",
+  "atlas.codemap",
+  "state.registry",
+  "state.live",
+  "state.tasks",
+  "memory.sinmara",
+  "ops.history",
+]
+required_tags = []
+denied_tags = []
+top_k = 16
+
+[context]
+# Maximum context bundle size in tokens.
+max_bundle_tokens = 49_152
+profile = "medium"
+review_lane = "glm-flash"
+# The stronger lane model.consult asks, at this reasoning effort.
+consult = { lane = "astra", effort = "high" }
+
+[tools]
+listing_bytes = 35000
+deny = []
+
+[tools.redirects]
+max_http_hops = 2
+allow_cross_origin = false
+disabled_aliases = []
+
+[sandbox]
+# Host capabilities perform bounded reads; no shell tool is exposed.
+shell = false
+network = "none"
+writable = ["scratch"]
+

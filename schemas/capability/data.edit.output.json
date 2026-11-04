@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/data.edit.output.json",
+  "title": "data.edit output",
+  "type": "object",
+  "properties": {
+    "done": {
+      "type": "string"
+    },
+    "diff": {
+      "type": "string"
+    },
+    "artifacts": {
+      "type": "array"
+    },
+    "failed": {
+      "type": "string"
+    },
+    "capability": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "done",
+    "diff"
+  ]
+}

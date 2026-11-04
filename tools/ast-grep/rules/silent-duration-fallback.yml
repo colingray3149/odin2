@@ -1,0 +1,29 @@
+id: silent-duration-fallback
+language: rust
+severity: error
+message: silent Duration fallback hides the failure; surface the error
+rule:
+  any:
+    - pattern: $R.unwrap_or(Duration::MAX)
+    - pattern: $R.unwrap_or(Duration::ZERO)
+    - pattern: $R.unwrap_or(std::time::Duration::MAX)
+    - pattern: $R.unwrap_or(std::time::Duration::ZERO)
+    - pattern: $R.unwrap_or(time::Duration::MAX)
+    - pattern: $R.unwrap_or(time::Duration::ZERO)
+    - pattern: $R.unwrap_or_else(|| Duration::MAX)
+    - pattern: $R.unwrap_or_else(|_| Duration::MAX)
+    - pattern: $R.unwrap_or_else(|| Duration::ZERO)
+    - pattern: $R.unwrap_or_else(|_| Duration::ZERO)
+    - pattern: $R.unwrap_or_else(|| std::time::Duration::MAX)
+    - pattern: $R.unwrap_or_else(|_| std::time::Duration::MAX)
+    - pattern: $R.unwrap_or_else(|| time::Duration::MAX)
+    - pattern: $R.unwrap_or_else(|_| time::Duration::MAX)
+    - pattern: $R.unwrap_or_else(|| std::time::Duration::ZERO)
+    - pattern: $R.unwrap_or_else(|_| std::time::Duration::ZERO)
+    - pattern: $R.unwrap_or_else(|| time::Duration::ZERO)
+    - pattern: $R.unwrap_or_else(|_| time::Duration::ZERO)
+constraints:
+  # A failed signed-to-unsigned conversion saturating to ZERO or MAX is the intended value, not a hidden failure.
+  R:
+    not:
+      pattern: $T::try_from($$$)

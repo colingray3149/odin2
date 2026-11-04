@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Astra on ChatGPT Pro"
+description = "The astra lane's ChatGPT Pro account is open in the model book; no completion is requested."
+probes = [
+  "models:astra",
+]

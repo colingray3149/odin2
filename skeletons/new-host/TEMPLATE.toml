@@ -1,0 +1,12 @@
+schema = "odin.registry.v1"
+kind = "host"
+enabled = "__enabled__"
+description = "__description__"
+# Hardware summary or evidence handle string.
+hardware = "__hardware__"
+# Deployment role: control, worker, or gateway.
+role = "__role__"
+# Tailnet device name; empty only while unenrolled.
+tailscale = "__tailscale__"
+# true after enrollment completes; otherwise false.
+enrolled = "__enrolled__"

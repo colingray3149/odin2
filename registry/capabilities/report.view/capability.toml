@@ -1,0 +1,25 @@
+schema = "odin.registry.v1"
+toolset = "research"
+kind = "capability"
+enabled = true
+implementation = "pod-exec"
+version = 1
+description = "Shows you one exported page PNG so you can see it. path is one page under /export, such as /export/pages/page-01.png from report.pages. The page arrives as an image block of this result, downscaled to a JPEG of at most 1568 px. A missing file, a non-PNG, or a file that cannot be decoded is a typed refusal, not an empty success. Raster files alone are not viewing; if this call fails, say inspection failed."
+handler = { id = "odin_pod_exec.run" }
+input_schema = "schemas/capability/report.view.input.json"
+output_schema = "schemas/capability/report.view.output.json"
+effect_class = "R0"
+seat_tags = ["operator"]
+timeout_seconds = 60
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_pod_exec.receipt" }
+tests = [
+  "odin-omp host_tools::pod_exec::tests::report_view_returns_the_page_as_an_image_block_not_a_text_tail",
+]
+
+[exec]
+executable = "/bin/odin-view"
+argv = ["{path}"]
+view = "path"

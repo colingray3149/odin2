@@ -1,0 +1,17 @@
+id: duration-literal-ts
+language: typescript
+severity: error
+message: timeout literal; name it as a const
+rule:
+  any:
+    - pattern: setTimeout($F, $N)
+    - pattern: setInterval($F, $N)
+    - pattern: setTimeout($F, $N, $$$)
+    - pattern: Bun.sleep($N)
+constraints:
+  N:
+    any:
+      - kind: number
+      - has:
+          kind: number
+          stopBy: end

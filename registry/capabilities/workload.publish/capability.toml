@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "odin"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Publish a retained workload draft. Publishes one drafted workload profile by its digest: recompiles it, checks every reference against the registry, commits it and publishes. A stale digest or a moved registry asks for a fresh draft. The receipt says when the daemon has picked it up; launching it is kube.workload.create."
+handler = { id = "workload_publish" }
+input_schema = "schemas/capability/workload.publish.input.json"
+output_schema = "schemas/capability/workload.publish.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+# Kernel validation of the draft guards publication, and seats that can create pods do not hold it.
+evidence_extractor = { id = "odin_hermes_workload_publish_evidence" }
+tests = [
+  "odin-cli::bin/odind workload_authoring::tests::publish_consumes_the_draft_target_revision_and_installs_the_exact_digest",
+]

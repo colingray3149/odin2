@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/codemap.query_graph.input.json",
+  "title": "codemap.query_graph input",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Cypher query"
+    },
+    "project": {
+      "type": "string",
+      "enum": [
+        "dotfiles",
+        "odin",
+        "rig"
+      ],
+      "description": "Declared project name; it resolves to this host's indexed graph (codemap.list_projects lists what this host indexed)."
+    },
+    "max_rows": {
+      "type": "integer",
+      "description": "Optional row limit. Default: unlimited up to a 100k row ceiling. No offset support — use search_graph for paginated browsing."
+    }
+  },
+  "required": [
+    "query",
+    "project"
+  ]
+}

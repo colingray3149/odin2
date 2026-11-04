@@ -1,0 +1,23 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "GPT-6 Astra on the ChatGPT Pro Codex account: the strong-class first pick."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/astra"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "openai-codex/gpt-6-astra"
+# frontier, everyday or fast-cheap.
+tier = "frontier"
+# Position in the class try order.
+order = 1
+# Account pin holding this card's credentials.
+account = "chatgpt"
+# One line naming when this card is the right pick.
+strengths = "Deep reasoning, math, physics and engineering design; the strong class's first lane and the default consult."
+# True names a lane seats may run.
+seats = true
+# Strict tool-call validation; a Codex provider fact.
+strict = true
+
+[thinking]
+default = "medium"

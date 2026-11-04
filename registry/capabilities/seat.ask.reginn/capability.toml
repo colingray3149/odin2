@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "delegate"
+op = "ask_reginn"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Ask Reginn to investigate an engineering question. Hands Reginn one CAD and nozzle-geometry scripting job: generating and refining engine and nozzle geometry, STEP handoff, and geometry toolchains in Python. The work shows in its own terminal tab, and a retry continues the same task."
+handler = { id = "seat_ask" }
+delegate_to = "reginn"
+input_schema = "schemas/capability/seat.ask.input.json"
+output_schema = "schemas/capability/seat.ask.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_seat_ask_evidence" }
+tests = [
+  "odin-hermes::it governed_dispatch::arbitrary_declared_targets_reach_the_governed_owner_through_real_dispatch",
+]

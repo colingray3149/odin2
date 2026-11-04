@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/seat.create.output.json",
+  "title": "seat.create output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "seat": { "type": "string" },
+    "lanes": { "type": "array", "items": { "type": "string" } },
+    "askTool": { "type": "string" },
+    "publishedRevision": { "type": "integer", "minimum": 1 },
+    "commit": { "type": "string" },
+    "activation": { "type": "string" }
+  },
+  "required": ["seat", "lanes", "askTool", "publishedRevision", "commit", "activation"]
+}

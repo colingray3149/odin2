@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "PostgreSQL"
+description = "PostgreSQL is active on mini; this proves the service runs, not the contents of any database."
+probes = [
+  "unit:mini system postgresql.service",
+]

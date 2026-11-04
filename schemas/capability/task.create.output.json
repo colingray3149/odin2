@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/task.create.output.json",
+  "title": "task.create output",
+  "description": "Durable receipt of one governed delegation: the real child session identity, the child run carrying the inherited accepted plan, the host-minted open command, and the fixed configuration the worker runs under.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "childSession": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "childRun": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "commandId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "planAccepted": {
+      "type": "boolean"
+    },
+    "promptBytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 262144
+    }
+  },
+  "required": [
+    "childSession",
+    "childRun",
+    "commandId",
+    "project",
+    "provider",
+    "model",
+    "planAccepted",
+    "promptBytes"
+  ]
+}

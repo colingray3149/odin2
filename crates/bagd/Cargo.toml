@@ -1,0 +1,22 @@
+[package]
+name = "bagd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "BagCore Flipper fixed-argv: flash an update package and read a storage file."
+
+[[bin]]
+name = "flipper"
+path = "src/main.rs"
+
+[dependencies]
+rustix = { version = "1.1.4", default-features = false, features = ["fs", "std", "termios"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+rustix = { version = "1.1.4", default-features = false, features = ["fs", "pty", "std", "termios"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

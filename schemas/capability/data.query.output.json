@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/data.query.output.json",
+  "title": "data.query output",
+  "type": "object",
+  "properties": {
+    "done": {
+      "type": "string"
+    },
+    "columns": {
+      "type": "array"
+    },
+    "rows": {
+      "type": "array"
+    },
+    "row_count": {
+      "type": "integer"
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "artifacts": {
+      "type": "array"
+    },
+    "failed": {
+      "type": "string"
+    },
+    "capability": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "done",
+    "rows"
+  ]
+}

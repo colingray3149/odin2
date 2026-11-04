@@ -1,0 +1,9 @@
+id: no-host-literal-ts
+language: typescript
+severity: error
+message: IP, host, or tailnet literal; declare it instead of hardcoding it
+rule:
+  any:
+    - kind: string
+    - kind: template_string
+  regex: '\b(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\b|fd7a:115c:a1e0|\.ts\.net|\b(mini|pc|laptop|workspace)\b'

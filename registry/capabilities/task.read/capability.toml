@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "delegate"
+op = "status"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Read a delegated task. Reads where one delegated worker stands: its delegation record, whether its supervisor is alive, its configuration, its last answer and, with screen true, what its terminal shows now. A worker is reported finished only when that is proven; any session or seat above it in the delegation chain reads its row."
+handler = { id = "odin_task.read" }
+input_schema = "schemas/capability/task.read.input.json"
+output_schema = "schemas/capability/task.read.output.json"
+effect_class = "R0"
+seat_tags = ["builder", "coordinator"]
+timeout_seconds = 5
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_task.read_evidence" }
+tests = [
+  "odin-omp host_tools::delegation::tests::read_is_parent_scoped_and_reports_real_lifecycle",
+  "odin-omp host_tools::delegation::tests::a_task_read_reports_an_unreadable_history_instead_of_a_missing_answer",
+]

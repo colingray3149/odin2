@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/context.read.output.json",
+  "title": "context.read output",
+  "description": "Bounded UTF-8 content and provenance for one file beneath the sealed operator context root.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "content": {
+      "type": "string",
+      "maxLength": 1048576
+    },
+    "byteCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1048576
+    },
+    "totalBytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "contentDigest": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "path",
+    "content",
+    "byteCount",
+    "totalBytes",
+    "truncated",
+    "contentDigest"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/check.run.input.json",
+  "title": "check.run input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {},
+  "required": []
+}

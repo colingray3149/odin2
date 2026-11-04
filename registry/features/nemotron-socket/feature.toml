@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Nemotron Parse socket"
+description = "The Nemotron Parse proxy socket is listening on pc; this proves the socket only, not that the model answers."
+probes = [
+  "unit:pc user nemotron-parse-proxy.socket",
+]

@@ -1,0 +1,108 @@
+const OPERATION_STATE = ["prepared", "effect_started", "committed", "aborted", "in_doubt"] as const;
+const STOP_STATE = ["requested", "stopped", "failed"] as const;
+const CLOSE_MODE = ["drain", "abort"] as const;
+function fail(code: string, detail: string): never { throw new WireV2Error(code, detail); }
+function scalarString(value: unknown, path: string): string {
+	if (typeof value !== "string") fail("protocol.shape", `${path} must be a string`);
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (code >= 0xd800 && code <= 0xdbff) {
+			if (index + 1 >= value.length) fail("protocol.unicode", `${path} contains a lone high surrogate`);
+			const low = value.charCodeAt(index + 1);
+			if (low < 0xdc00 || low > 0xdfff) fail("protocol.unicode", `${path} contains a lone high surrogate`);
+			index += 1;
+		} else if (code >= 0xdc00 && code <= 0xdfff) fail("protocol.unicode", `${path} contains a lone low surrogate`);
+	}
+	return value;
+}
+function stringField(value: unknown, path: string): string { return scalarString(value, path); }
+function codePointLength(value: string): number {
+	let length = 0;
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (code >= 0xd800 && code <= 0xdbff) index += 1;
+		length += 1;
+	}
+	return length;
+}
+function safeId(value: unknown, path: string, maximum: number): string {
+	const text = scalarString(value, path); const length = codePointLength(text);
+	if (length === 0 || length > maximum || !/^[A-Za-z0-9._:-]+(?![\s\S])/u.test(text)) fail("protocol.id", `${path} must be 1..=${maximum} safe ASCII code points`);
+	return text;
+}
+function correlationId(value: unknown, path: string): string {
+	const text = scalarString(value, path);
+	if (!/^[0-9a-f]{32}(?![\s\S])/u.test(text)) fail("protocol.id", `${path} must be exactly 32 lowercase hex characters`);
+	return text;
+}
+function digest(value: unknown, path: string): string {
+	const text = scalarString(value, path);
+	if (!/^[0-9a-f]{64}(?![\s\S])/u.test(text)) fail("protocol.digest", `${path} must be exactly 64 lowercase hex characters`);
+	return text;
+}
+function unitName(value: unknown, path: string): string {
+	const text = scalarString(value, path); const length = codePointLength(text);
+	if (length === 0 || length > 256 || !/^[A-Za-z0-9_.:@-]+(?![\s\S])/u.test(text)) fail("protocol.unit", `${path} is not a bounded unit name`);
+	return text;
+}
+function cgroupPath(value: unknown, path: string): string {
+	const text = scalarString(value, path);
+	if (codePointLength(text) > 4096 || !text.startsWith("/")) fail("protocol.cgroup", `${path} must be an absolute bounded path`);
+	for (const segment of text.slice(1).split("/")) {
+		if (segment.length === 0 || segment === "." || segment === ".." || !/^[A-Za-z0-9_.:@-]+(?![\s\S])/u.test(segment)) fail("protocol.cgroup", `${path} contains an invalid segment`);
+	}
+	return text;
+}
+function rejectionCode(value: unknown, path: string): string {
+	const text = scalarString(value, path);
+	if (codePointLength(text) > 128 || !/^[a-z][a-z0-9._-]*(?![\s\S])/u.test(text)) fail("protocol.code", `${path} is not a rejection code`);
+	return text;
+}
+function detail(value: unknown, path: string): string {
+	const text = scalarString(value, path); const length = codePointLength(text);
+	if (length === 0 || length > 4096) fail("protocol.detail", `${path} must be 1..=4096 Unicode code points`);
+	return text;
+}
+function version(value: unknown, path: string): 2 { if (value !== 2) fail("protocol.version", `${path} must be integer 2`); return 2; }
+function booleanField(value: unknown, path: string): boolean { if (typeof value !== "boolean") fail("protocol.shape", `${path} must be a boolean`); return value; }
+function i32Field(value: unknown, path: string): number {
+	if (typeof value !== "number" || !Number.isInteger(value) || value < -2_147_483_648 || value > 2_147_483_647) fail("protocol.shape", `${path} must be an i32`);
+	return value;
+}
+function nullableOperationId(value: unknown, path: string): string | null { return value === null ? null : safeId(value, path, 128); }
+function enumField<const T extends readonly string[]>(value: unknown, path: string, values: T): T[number] {
+	const text = scalarString(value, path); if (!(values as readonly string[]).includes(text)) fail("protocol.enum", `${path} has unknown value ${JSON.stringify(text)}`); return text as T[number];
+}
+function u64Field(value: unknown, path: string): U64 { if (typeof value !== "string") fail("protocol.u64", `${path} must be a decimal string, never a number`); return u64(value); }
+export function u64(value: string | bigint): U64 {
+	if (typeof value !== "string" && typeof value !== "bigint") fail("protocol.u64", "u64 input must be string or bigint, never number");
+	const text = typeof value === "bigint" ? value.toString() : value;
+	if (!/^(0|[1-9][0-9]*)(?![\s\S])/u.test(text)) fail("protocol.u64", "u64 must be unsigned canonical decimal without leading zeroes");
+	let parsed: bigint; try { parsed = BigInt(text); } catch { fail("protocol.u64", "u64 is not decimal"); }
+	if (parsed < 0n || parsed > U64_MAX) fail("protocol.u64", "u64 exceeds 18446744073709551615");
+	return text as U64;
+}
+function jsonRecord(value: unknown, path: string): Record<string, unknown> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) fail("protocol.shape", `${path} must be a JSON object`);
+	const prototype = Object.getPrototypeOf(value); if (prototype !== Object.prototype && prototype !== null) fail("protocol.shape", `${path} must have a JSON object prototype`);
+	return value as Record<string, unknown>;
+}
+function exactRecord(value: unknown, path: string, expected: readonly string[]): Record<string, unknown> {
+	const record = jsonRecord(value, path); const actual = Object.keys(record).sort(compareScalars); const wanted = [...expected].sort(compareScalars);
+	if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) fail("protocol.unknown_field", `${path} fields ${actual.join(",") || "(none)"} do not match ${wanted.join(",")}`);
+	return record;
+}
+function decodeArgument(value: unknown, path: string, depth: number): Arguments {
+	if (depth > ARGUMENT_MAX_DEPTH) fail("protocol.arguments", `${path} exceeds depth ${ARGUMENT_MAX_DEPTH}`);
+	if (value === null || typeof value === "boolean") return value;
+	if (typeof value === "string") { const text = scalarString(value, path); if (codePointLength(text) > ARGUMENT_MAX_STRING_CODE_POINTS) fail("protocol.arguments", `${path} string is too long`); return text; }
+	if (typeof value === "number") { if (!Number.isSafeInteger(value)) fail("protocol.arguments", `${path} number must be a JavaScript-safe integer`); return value; }
+	if (Array.isArray(value)) { if (depth === ARGUMENT_MAX_DEPTH) fail("protocol.arguments", `${path} exceeds depth ${ARGUMENT_MAX_DEPTH}`); if (value.length > ARGUMENT_MAX_ARRAY_ITEMS) fail("protocol.arguments", `${path} array is too long`); return value.map((item, index) => decodeArgument(item, `${path}[${index}]`, depth + 1)); }
+	const record = jsonRecord(value, path); const keys = Object.keys(record);
+	if (depth === ARGUMENT_MAX_DEPTH) fail("protocol.arguments", `${path} exceeds depth ${ARGUMENT_MAX_DEPTH}`);
+	if (keys.length > ARGUMENT_MAX_OBJECT_PROPERTIES) fail("protocol.arguments", `${path} object has too many properties`);
+	const entries: Array<[string, Arguments]> = [];
+	for (const key of keys) { scalarString(key, `${path} key`); const length = codePointLength(key); if (length === 0 || length > ARGUMENT_MAX_KEY_CODE_POINTS) fail("protocol.arguments", `${path} key must be 1..=256 Unicode code points`); entries.push([key, decodeArgument(record[key], `${path}.${key}`, depth + 1)]); }
+	return Object.fromEntries(entries);
+}
+

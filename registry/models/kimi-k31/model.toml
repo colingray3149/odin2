@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "Kimi K3.1 Pro on the Kimi Code OAuth account."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/kimi-k31"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "kimi-code/k3.1-pro"
+# frontier, everyday or fast-cheap.
+tier = "frontier"
+# Position in the class try order.
+order = 2
+# Account pin holding this card's credentials.
+account = "kimi-code"
+# One line naming when this card is the right pick.
+strengths = "Long-context coding and careful multi-step reasoning at frontier depth."
+# True names a lane seats may run.
+seats = true
+
+[thinking]
+levels = ["low", "high", "max"]

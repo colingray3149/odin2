@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "code"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Screenshots a dev server at phone and desktop width with console errors: start or serve. Runs offline in the capsule: the dev command works from the project's own dependencies, or build the site first and pass serve. Also returns console errors, page errors and failed requests (status 400 and up) for each width."
+handler = { id = "odin_code.look" }
+input_schema = "schemas/capability/code.look.input.json"
+output_schema = "schemas/capability/code.look.output.json"
+effect_class = "R1"
+seat_tags = ["builder"]
+timeout_seconds = 180
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_code.look_evidence" }
+tests = [
+  "odin-sidecar authority::sandbox::look::tests::a_url_off_the_capsule_loopback_is_refused",
+  "odin-cli eval_daemon::look::tests::shots_become_image_blocks_and_done_counts_errors",
+  "odin-cli eval_daemon::look::tests::error_json_becomes_unavailable_with_its_text",
+]

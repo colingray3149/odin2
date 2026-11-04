@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Claude Code sessions: open, prompt, read, stop, review."
+examples = [
+  'claude {op: open, project}',
+  'claude {op: prompt, session, text}',
+]

@@ -1,0 +1,32 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "One-shot read-only Opus reviewer: one bwrapped `claude -p` call per review on mini, prompt on stdin, Read/Grep/Glob only, bundle mounted read-only, no MCP, no session. Budgets come from its own receipts."
+# claude-code selects the Claude driver workload schema.
+harness = "claude-code"
+# Account discovery kind; must be claude-code.
+account_kind = "claude-code"
+# Account source; discovered is the supported value.
+accounts = "discovered"
+# Launch target: review (the daemon-run reviewer; no host, environment or image).
+placement = "review"
+
+[review]
+# Model identity passed to `claude --model`.
+model = "claude-opus-5-5"
+# Absolute claude binary on the authority host (Home Manager installs it per user); resolved inside the sandbox.
+binary = "/etc/profiles/per-user/owner/bin/claude"
+# the owner's main personal login; never another account.
+account = "default"
+# Read-only built-in tools the reviewer may use.
+tools = ["Read", "Grep", "Glob"]
+# Bundle ceiling in bytes across every input file.
+max_bundle_bytes = 1048576
+# Brain folders holding personal data; a bundle entry naming one is refused.
+excluded = ["archive", "private", "records", "media"]
+
+[review.budget]
+# Reviews per UTC day, self-invoked included.
+max_per_day = 10
+# Reviews per UTC day Sinmara may start herself.
+self_per_day = 3

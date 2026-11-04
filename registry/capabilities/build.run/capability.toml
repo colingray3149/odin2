@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "build"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Builds one flake output of the session's capsule (its own clone of the project, with every change staged) with Nix, offline except Nix's own pinned fetchers, inside the Nix build sandbox; returns the store paths or the failure log tail. Bounded to 20 minutes."
+handler = { id = "build_run" }
+input_schema = "schemas/capability/build.run.input.json"
+output_schema = "schemas/capability/build.run.output.json"
+effect_class = "R1"
+seat_tags = ["builder", "judge"]
+timeout_seconds = 1260
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_build_run_evidence" }
+tests = [
+  "odin-cli::bin/odind coding_route::tests::a_cancelled_build_or_diagnostics_run_stops_its_nix",
+  "odin-cli::bin/odind coding_route::confined_nix_tests::a_capsule_build_realizes_through_the_host_daemon",
+]

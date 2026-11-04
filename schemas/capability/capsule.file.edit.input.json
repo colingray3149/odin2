@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/capsule.file.edit.input.json",
+  "title": "capsule.file.edit input",
+  "description": "One exact atomic UTF-8 edit inside the kernel-issued private capsule: old_text and new_text replace the single occurrence of old_text, or content and preimage_sha256 write the whole file. The handler enforces UTF-8 byte ceilings, relative-component confinement, .git denial, symlink denial, a unique old_text, and the declared preimage immediately before replacement.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "description": "Capsule-relative file path. Absolute paths, empty/dot/dot-dot components, NUL, .git, oversized UTF-8 components, and symlink escape are denied by the confined file operation."
+    },
+    "old_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536,
+      "description": "Exact text to replace, whitespace included; it must occur exactly once in the file."
+    },
+    "new_text": {
+      "type": "string",
+      "maxLength": 65536,
+      "description": "Replacement for old_text."
+    },
+    "content": {
+      "type": "string",
+      "maxLength": 65536,
+      "description": "Complete UTF-8 post-image, for a new file or a full rewrite (prefer old_text/new_text for an edit). Empty content is valid; the handler enforces the 65536-byte UTF-8 ceiling."
+    },
+    "preimage_sha256": {
+      "description": "Lowercase SHA-256 of the current file bytes, or null only when the target is required to be absent.",
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      ]
+    }
+  },
+  "required": ["path"],
+  "oneOf": [
+    {
+      "required": ["content", "preimage_sha256"],
+      "not": { "anyOf": [{ "required": ["old_text"] }, { "required": ["new_text"] }] }
+    },
+    {
+      "required": ["old_text", "new_text"],
+      "not": { "anyOf": [{ "required": ["content"] }, { "required": ["preimage_sha256"] }] }
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+schema = "odin.registry.v1"
+toolset = "research"
+op = "export"
+kind = "capability"
+enabled = true
+implementation = "pod-exec"
+version = 1
+handler = { id = "odin_pod_exec.run" }
+input_schema = "schemas/capability/export.read.input.json"
+output_schema = "schemas/capability/pod-exec.output.json"
+effect_class = "R0"
+seat_tags = ["operator"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_pod_exec.receipt" }
+
+tests = [
+  "odin-omp host_tools::pod_exec::tests::every_shipped_pod_exec_capability_runs_its_declared_argv_and_fails_typed",
+]
+
+[exec]
+executable = "/bin/dd"
+argv = ["if={path}", "iflag=skip_bytes,count_bytes", "skip={offset}", "count=16384", "status=none"]

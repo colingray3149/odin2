@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "code"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Rewrites code structurally across files: pattern, rewrite, lang; apply=false previews. Matches by syntax tree with ast-grep metavariables ($A one node, $$$A many); without apply it lists every match and its replacement, with apply it writes them in the capsule and reports the changed files. Build or test after applying."
+handler = { id = "odin_code.rewrite" }
+input_schema = "schemas/capability/code.rewrite.input.json"
+output_schema = "schemas/capability/code.rewrite.output.json"
+effect_class = "R1"
+seat_tags = ["builder"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_code.rewrite_evidence" }
+tests = [
+  "odin-sidecar authority::sandbox::rewrite::tests::apply_without_rewrite_is_refused",
+  "odin-cli eval_daemon::rewrite::tests::projects_stream_json_into_matches_and_total",
+  "odin-cli eval_daemon::rewrite::tests::empty_stdout_with_exit_one_is_zero_matches",
+]

@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Hand work to helpers and seats, steer or pause it, consult a stronger model."
+examples = [
+  'delegate {op: create, project, prompt}',
+  'delegate {op: status, childSession}',
+]

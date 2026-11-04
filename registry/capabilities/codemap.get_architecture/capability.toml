@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "code"
+op = "architecture"
+kind = "capability"
+enabled = true
+implementation = "codemap"
+version = 1
+description = "Read a project's code architecture. Map of one declared project's code from its always-current graph index: languages, packages, which packages call which (boundaries with call counts), entry points, layers and the top-level tree. The fastest way to know what is connected and where before reading files. The project is its declared name, the same one every code op takes."
+handler = { id = "odin_adapter.operation" }
+input_schema = "schemas/capability/codemap.get_architecture.input.json"
+output_schema = "schemas/capability/codemap.get_architecture.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "builder", "judge"]
+timeout_seconds = 60
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_adapter.receipt" }
+tests = [
+  "odin-adapter-mcp::bin/odin-adapter-mcp tests::each_declared_codemap_tool_is_served_and_a_drifted_surface_is_refused",
+]

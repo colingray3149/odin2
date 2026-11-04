@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/brain.search.input.json",
+  "title": "brain.search input",
+  "properties": {
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "source": {
+      "description": "Omit to search every source in your scope. Name one when the question is about it: memory.<your seat> (what you remembered with memory_remember, found by its title), memory.project.<project> (that project's memory), memory.owner (the owner's profile), atlas.personal (the owner's vault notes), atlas.code (Odin's code), atlas.codemap (each project's code-map overview), state.registry (Odin's registry), state.live (what each seat and session is doing now), state.tasks (delegated tasks and workload runs), state.repos (project repositories), ops.history (Odin's operations, decisions and the notes of closed tasks), archive.chats (Discord, Instagram, iMessage/SMS, Snapchat and Google Chat conversations and Discord servers), archive.gmail (mail), archive.chatgpt, archive.claude-personal, archive.claude-owner, archive.gemini, archive.grok, archive.notebooklm (AI chats and notebooks), archive.text (document text, OCR of scans and handwriting, voice and video transcripts, photo pages, life records), archive.curated (topic, year and project pages merged across sources). A source outside your scope is refused with your own list.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "query"
+  ]
+}

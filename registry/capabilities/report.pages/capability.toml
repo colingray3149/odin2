@@ -1,0 +1,25 @@
+schema = "odin.registry.v1"
+toolset = "research"
+kind = "capability"
+enabled = true
+implementation = "pod-exec"
+version = 1
+description = "Rasterizes every page of one PDF under /export to dir/page-N.png at 144 dpi with poppler pdftoppm; N is padded to the total page count's digit width (page-1.png for short PDFs, page-01.png for 10–99 pages). Writes dir/pages.json naming each page, path, byte size and pixel size. A missing PDF or a failed raster is a nonzero exit; it does not show the pages to the model. Call report.view on each exact PNG path to see it."
+handler = { id = "odin_pod_exec.run" }
+input_schema = "schemas/capability/report.pages.input.json"
+output_schema = "schemas/capability/pod-exec.output.json"
+effect_class = "R1"
+seat_tags = ["operator"]
+timeout_seconds = 180
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_pod_exec.receipt" }
+
+tests = [
+  "odin-omp host_tools::pod_exec::tests::every_shipped_pod_exec_capability_runs_its_declared_argv_and_fails_typed",
+]
+
+[exec]
+executable = "/bin/odin-pages"
+argv = ["{pdf}", "{dir}"]

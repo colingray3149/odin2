@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "delegate"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Steer a delegated worker, or raise one declared lane budget with limits. Working tasks receive the message mid-turn; idle tasks continue. Authority follows the delegating parent or ancestor, the escalation target, or an active sibling with the same parent and project. A supervisor receiving new coordinator information opens fresh instead of injecting into its old session."
+handler = { id = "odin_task.steer" }
+input_schema = "schemas/capability/task.steer.input.json"
+output_schema = "schemas/capability/task.steer.output.json"
+effect_class = "R1"
+seat_tags = ["builder", "coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_task.steer_evidence" }
+tests = [
+  "odin-omp host_tools::delegation::tests::a_parent_pauses_steers_and_resumes_its_worker",
+  "odin-omp host_tools::delegation::tests::a_steer_raise_lifts_the_lane_wall_and_a_value_below_it_is_refused_by_name",
+  "odin-omp host_tools::delegation::tests::a_lane_budget_raise_on_an_undeclared_wall_is_refused_by_name",
+]

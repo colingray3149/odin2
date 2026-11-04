@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Kimi K3.1 model lane"
+description = "The kimi-k31 lane's account is open in the model book; no completion is requested."
+probes = [
+  "models:kimi-k31",
+]

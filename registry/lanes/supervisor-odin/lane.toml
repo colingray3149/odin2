@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "lane"
+enabled = true
+description = "Supervisor observation and steering lane for odin."
+project = "odin"
+family = "supervision"
+default_seat = "supervisor"
+queue = "interactive"
+requires_independent_review = false

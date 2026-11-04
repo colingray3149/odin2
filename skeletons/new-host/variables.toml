@@ -1,0 +1,43 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-host"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "hosts"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "enabled"
+type = "bool"
+required = true
+meaning = "Whether this physical deployment target is enabled."
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Physical/deployment purpose."
+
+[[variable]]
+name = "hardware"
+type = "string"
+required = true
+meaning = "Physical hardware summary or evidence handle."
+
+[[variable]]
+name = "role"
+type = "enum:control|worker|gateway"
+required = true
+meaning = "Deployment role admitted on the host."
+
+[[variable]]
+name = "tailscale"
+type = "string-or-empty"
+required = true
+meaning = "Tailnet device name, empty only while unenrolled."
+
+[[variable]]
+name = "enrolled"
+type = "bool"
+required = true
+meaning = "Whether enrollment has completed."

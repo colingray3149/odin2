@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "k3s server"
+description = "The k3s server is active on mini."
+probes = [
+  "unit:mini system k3s.service",
+]

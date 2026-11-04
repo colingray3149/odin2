@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+toolset = "data"
+kind = "capability"
+enabled = true
+implementation = "workflow"
+version = 1
+description = "Query tables with SQL. CSV, JSON and Parquet file stems name views; pasted CSV goes in tables by name. save_as returns the whole result using the requested name. DuckDB has no network and reads only staged files."
+handler = { id = "odin_workflow.run" }
+input_schema = "schemas/capability/data.query.input.json"
+output_schema = "schemas/capability/data.query.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 300
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_workflow.receipt" }
+tests = [
+  "odin-workflows data::tests::query_files_and_pasted_csv_become_tables",
+]

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/codemap.index_status.input.json",
+  "title": "codemap.index_status input",
+  "properties": {
+    "project": {
+      "type": "string",
+      "enum": [
+        "dotfiles",
+        "odin",
+        "rig"
+      ],
+      "description": "Declared project name; it resolves to this host's indexed graph (codemap.list_projects lists what this host indexed)."
+    },
+    "verbose": {
+      "type": "boolean",
+      "default": false,
+      "description": "Add worktree/shadow Git paths for index-location debugging."
+    },
+    "diagnostics": {
+      "type": "string",
+      "enum": [
+        "none",
+        "summary",
+        "full"
+      ],
+      "default": "none",
+      "description": "Coverage rows: counts, five samples, or up to 500."
+    },
+    "format": {
+      "type": "string",
+      "enum": [
+        "tree",
+        "json"
+      ],
+      "default": "tree"
+    }
+  },
+  "required": [
+    "project"
+  ]
+}

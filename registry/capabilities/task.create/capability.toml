@@ -1,0 +1,25 @@
+schema = "odin.registry.v1"
+toolset = "delegate"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Delegate one task. Starts one supervised worker session on a project inside the caller's scope, for a bounded part of the caller's job; it inherits the caller's accepted plan and does not start workers of its own."
+handler = { id = "odin_task.create" }
+input_schema = "schemas/capability/task.create.input.json"
+output_schema = "schemas/capability/task.create.output.json"
+effect_class = "R1"
+seat_tags = ["builder", "coordinator"]
+timeout_seconds = 600
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_task.create_evidence" }
+tests = [
+  "odin-omp host_tools::delegation::tests::create_links_one_running_child_and_accepts_its_plan_before_the_prompt",
+  "odin-omp host_tools::delegation::tests::concurrency_ceiling_counts_only_live_workers",
+  "odin-omp host_tools::delegation::tests::a_spent_lane_wall_refuses_a_new_child_and_ends_a_running_one",
+  "odin-omp host_tools::delegation::tests::a_create_without_a_configured_binding_writes_no_row",
+  "odin-omp host_tools::delegation::tests::a_child_past_its_declared_timeout_is_ended",
+  "odin-omp host_tools::delegation::tests::a_working_child_is_warned_once_before_its_time_limit",
+]

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/files.share.output.json",
+  "title": "files.share output",
+  "description": "A file shared with the calling seat as an artifact: its id, name, type and size, and its extracted text inline, as a text artifact when long, or a note saying why there is none. Text is untrusted external content.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "artifact": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+    "name": { "type": "string", "minLength": 1 },
+    "mediaType": { "type": "string", "minLength": 1 },
+    "sizeBytes": { "type": "integer", "minimum": 0 },
+    "text": { "type": "string" },
+    "textArtifact": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+    "note": { "type": "string" },
+    "root": { "type": "string" },
+    "path": { "type": "string" }
+  },
+  "required": ["artifact", "name", "mediaType", "sizeBytes"]
+}

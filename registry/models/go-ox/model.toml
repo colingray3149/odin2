@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "Ox Alpha Free through the OpenCode Go plan's Zen endpoint."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/go-ox"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "opencode-go/ox-alpha-free"
+# frontier, everyday or fast-cheap.
+tier = "fast-cheap"
+# Position in the class try order.
+order = 5
+# Account pin holding this card's credentials.
+account = "opencode-go"
+# One line naming when this card is the right pick.
+strengths = "Free Ox Alpha turns on the Go subscription."

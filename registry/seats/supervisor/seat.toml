@@ -1,0 +1,91 @@
+schema = "odin.registry.v1"
+kind = "seat"
+enabled = true
+description = "Supervises project lanes, reports to Sinmara, and steers delegated work without building or merging."
+categories = ["coordinator", "operator"]
+tool_refs = [
+  "task.read",
+  "task.steer",
+  "task.note",
+  "task.pause",
+  "seat.ask.sinmara",
+  "seat.ask.gungnir",
+  "seat.ask.kubert",
+  "kube.workload.summarize",
+  "kube.health.read",
+  "artifact.read",
+  "export.read",
+  "model.consult",
+]
+project_scope = [
+  "odin",
+  "rig",
+]
+slice = "supervisor-watch"
+models = ["gateway/terra", "gateway/glm-flash", "gateway/astra", "gateway/zai-glm"]
+brain_scope = [
+  "state.repos",
+  "state.tasks",
+  "memory.project.odin",
+  "memory.project.rig",
+]
+guidance = """
+Supervise the delegated project lanes. Read their task state and notes, steer or pause them when appropriate, and report material results and decisions to Sinmara. Ask Gungnir for engineering work and Kubert for operations; inspect pod health, summaries, and artifacts when useful. Build, merge, and push stay with the lanes and the code; your granted capabilities name what you hold.
+"""
+
+[limits]
+max_parallel_runs = 4
+max_sessions = 4
+
+[live]
+max_sessions = 4
+file_ingress_lane = "sinmara.file.in"
+file_egress_lane = "sinmara.file.out"
+render_ingress_lane = "sinmara.render.in"
+render_egress_lane = "sinmara.render.out"
+# Event wakes, besides the conversation seat. Each names a declared watcher.
+watches = ["child_report", "stall", "repo_watch", "workload_watch"]
+
+[live.rollover]
+# Exactly half the selected model card's window. A 1_000_000-token card
+# fires at 500_000; threshold_tokens does not cap the fraction.
+threshold_tokens = 180_000
+max_brief_bytes = 8_000
+history_tail_events = 64
+window_fraction = 50
+# Two same-session rollovers, then a fresh session from task notes,
+# memory.project, and state.repos. New information also opens fresh.
+fresh_after_rollovers = 2
+# Event wakes are the path; this is only the slow backstop.
+heartbeat_minutes = 30
+# A prompt is new information: retire and open fresh, do not inject.
+fresh_on_new_information = true
+
+[knowledge]
+atlas_sources = [
+  "state.repos",
+  "state.tasks",
+  "memory.project.odin",
+  "memory.project.rig",
+]
+required_tags = []
+denied_tags = []
+top_k = 16
+
+[context]
+max_bundle_tokens = 24_576
+profile = "medium"
+review_lane = "glm-flash"
+consult = { lane = "astra", effort = "high" }
+
+[tools]
+deny = ["Bash"]
+
+[tools.redirects]
+max_http_hops = 2
+allow_cross_origin = false
+disabled_aliases = []
+
+[sandbox]
+shell = false
+network = "none"

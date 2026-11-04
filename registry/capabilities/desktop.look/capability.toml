@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "desktop"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Sees the owner's desktop: its monitors, workspaces and windows, and a screenshot. Available while answering his own ask (or the report of a job started for it), within 15 minutes of it. A locked screen or no desktop session is reported as such."
+handler = { id = "desktop_look" }
+input_schema = "schemas/capability/desktop.look.input.json"
+output_schema = "schemas/capability/desktop.look.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_desktop_look_evidence" }
+tests = [
+  "odin-desk shot::tests::capture_reads_the_ppm_grim_writes_keeps_a_copy_and_names_a_grim_failure",
+  "odin-desk niri::tests::the_desktop_is_read_from_niris_three_queries_and_an_action_reaches_its_socket",
+]

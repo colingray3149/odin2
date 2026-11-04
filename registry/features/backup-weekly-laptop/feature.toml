@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Weekly home backup (laptop)"
+description = "The restic home backup unit on laptop ran within the last 8 days."
+probes = [
+  "unit:laptop system restic-backups-home.service 8d",
+]

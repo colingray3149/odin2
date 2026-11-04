@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "delegate"
+op = "new_seat"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Create an ephemeral helper seat. Creates a new worker seat when no existing helper fits what the owner wants: a named helper that may do what an existing builder or judge seat does, on existing projects. registry.read shows the published seats and projects to pick the closest template and scope from. It is committed and published, and takes jobs after Odin's next idle reload."
+handler = { id = "seat_create" }
+input_schema = "schemas/capability/seat.create.input.json"
+output_schema = "schemas/capability/seat.create.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_seat_create_evidence" }
+tests = [
+  "odin-cli::bin/odind project_authoring::tests::the_coordinator_creates_a_seat_bounded_by_its_template",
+]

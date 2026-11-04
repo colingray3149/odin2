@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "GPT-OSS 120B on the Cerebras API key."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/cerebras"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "cerebras/gpt-oss-120b"
+# frontier, everyday or fast-cheap.
+tier = "fast-cheap"
+# Position in the class try order.
+order = 7
+# Account pin holding this card's credentials.
+account = "cerebras"
+# One line naming when this card is the right pick.
+strengths = "GPT-OSS 120B on Cerebras; the same model as free-fast on other hardware."

@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "Kimi K3 through the OpenCode Go plan's Zen endpoint."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/go-kimi"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "opencode-go/kimi-k3"
+# frontier, everyday or fast-cheap.
+tier = "everyday"
+# Position in the class try order.
+order = 6
+# Account pin holding this card's credentials.
+account = "opencode-go"
+# One line naming when this card is the right pick.
+strengths = "Kimi coding on the Go subscription."

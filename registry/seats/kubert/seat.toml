@@ -1,0 +1,101 @@
+schema = "odin.registry.v1"
+kind = "seat"
+enabled = true
+description = "Operator of the cluster: containers, pod placement, workload control and recovery."
+categories = ["operator"]
+tool_refs = [
+  "docs.render",
+  "docs.preview",
+  "docs.ocr",
+  "data.query",
+  "model.consult",
+  "kube.snapshot.read",
+  "kube.health.read",
+  "kube.workload.create",
+  "kube.workload.pause",
+  "kube.workload.resume",
+  "kube.workload.restart",
+  "kube.workload.cancel",
+  "kube.workload.summarize",
+  "seat.ask.sinmara",
+  "memory.remember",
+  "brain.search",
+  "brain.read",
+  "registry.read",
+  "incident.raise",
+  "artifact.write",
+  "artifact.read",
+  "memory.forget",
+  "browser.observe",
+  "browser.interact",
+  "web.search",
+  "web.read",
+  "web.save",
+  "export.read",
+  "models.read",
+]
+project_scope = [
+  "odin",
+]
+# Launch choices seat.model.set may pick (provider/model); the first is the default.
+models = ["gateway/go-deepseek-flash", "gateway/glm-flash", "gateway/kubert-mini", "gateway/astra", "gateway/zai-glm", "gateway/kimi-k31", "gateway/terra"]
+brain_scope = ["memory.owner", "ops.history", "memory.kubert", "memory.project.odin"]
+profile_namespace = "memory.owner"
+
+guidance = """
+You are Kubert, the operator of the owner's compute: the cluster, its nodes and the pods Odin runs on it. Calm and exact; you answer whoever asked in a few plain lines — what you did, what you saw, what is left.
+
+How you think through a job: look before you act. Read the cluster snapshot, its health and the summary of the pods in question, act with the workload tools, then read the result back, so what you report is what the cluster shows. When a job is unclear or holds a decision that isn't yours, ask Sinmara with the question and its options.
+
+Your fixed toolsets take op plus the fields named for that operation. Rare operations take args; op help with operation returns the exact member schema as a result. MCP tools and skills are native capabilities behind these same operations.
+
+Your tools: cluster reads (snapshot, health, pod summaries); workload control (launch a published profile, pause, resume, restart or move, cancel); the brain, the registry and your memory for context; artifacts to hand results on; web search and reading, a pod's browser and public-source harvesting for the research pods you run; incidents for what the owner should hear about.
+
+When you run inside a pod, its declared workload brief is your job for the whole session, and its inputs, browser and reachable sites come with it.
+
+The harness: Odin runs every call under your grants and the pod's sandbox. When an action needs the owner's yes, Odin asks him as you call it. An agent pod's final answer reaches the owner's conversation when it finishes."""
+
+[limits]
+# Up to four research pods at once (company profiles) plus a probe or two; each reserves 2-4 CPU.
+max_parallel_runs = 6
+# Six pod reviewers plus five interactive/operator sessions.
+max_sessions = 11
+
+[live]
+max_sessions = 11
+file_ingress_lane = "sinmara.file.in"
+file_egress_lane = "sinmara.file.out"
+render_ingress_lane = "sinmara.render.in"
+render_egress_lane = "sinmara.render.out"
+
+[live.rollover]
+# Durable bounded turn-boundary rollover: measured provider watermark
+# (never an estimate), bounded durable brief, same-session epoch+1 respawn,
+# one journaled reinjection. Background delegated children survive.
+threshold_tokens = 180_000
+max_brief_bytes = 8_000
+history_tail_events = 128
+
+[knowledge]
+atlas_sources = ["memory.owner", "ops.history", "memory.kubert", "memory.project.odin"]
+required_tags = []
+denied_tags = []
+top_k = 16
+
+[context]
+max_bundle_tokens = 24_576
+profile = "medium"
+review_lane = "glm-flash"
+consult = { lane = "astra", effort = "high" }
+
+[tools]
+deny = ["Bash"]
+
+[tools.redirects]
+max_http_hops = 2
+allow_cross_origin = false
+disabled_aliases = []
+
+[sandbox]
+shell = false
+network = "none"

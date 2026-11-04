@@ -1,0 +1,647 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/desktop.scene.input.json",
+  "title": "desktop.scene input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "shot": {
+      "type": "string",
+      "enum": [
+        "screen",
+        "all",
+        "window",
+        "zoom",
+        "none"
+      ]
+    },
+    "output": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "window": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "zoom": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ]
+    },
+    "layout": {
+      "type": "boolean"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 30,
+      "items": {
+        "$ref": "#/$defs/sceneStep"
+      },
+      "description": "Ordered typed actions; the helper enforces fields for each do/op and stops on failure or physical input."
+    },
+    "device": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Desktop friendly name; omitted uses the declared local conversation desktop."
+    }
+  },
+  "required": [
+    "steps"
+  ],
+  "description": "Used on the desktop only when the owner asks. Structural actions support fill and paste; drag supports a multi-point path.",
+  "$defs": {
+    "desktopStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "do": {
+          "type": "string",
+          "enum": [
+            "focus",
+            "workspace",
+            "move",
+            "size",
+            "fullscreen",
+            "launch",
+            "click",
+            "point",
+            "drag",
+            "scroll",
+            "wait",
+            "waitFor",
+            "structure",
+            "audio",
+            "media",
+            "device",
+            "headless",
+            "scene",
+            "save",
+            "type",
+            "key",
+            "close"
+          ]
+        },
+        "window": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 99
+        },
+        "workspace": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 99
+        },
+        "output": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "width": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "height": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "app": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "game": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "toX": {
+          "type": "number"
+        },
+        "toY": {
+          "type": "number"
+        },
+        "button": {
+          "type": "string",
+          "enum": [
+            "left",
+            "right",
+            "middle"
+          ]
+        },
+        "double": {
+          "type": "boolean"
+        },
+        "down": {
+          "type": "integer",
+          "minimum": -50,
+          "maximum": 50
+        },
+        "right": {
+          "type": "integer",
+          "minimum": -50,
+          "maximum": 50
+        },
+        "ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "gone": {
+          "type": "boolean"
+        },
+        "seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "options": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 4096,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ]
+              }
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "headless": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "items": {
+            "$ref": "#/$defs/desktopStep"
+          }
+        },
+        "expected": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "encoding": {
+          "type": "string",
+          "enum": [
+            "utf8",
+            "base64"
+          ]
+        },
+        "action": {
+          "$ref": "#/$defs/action"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "keys": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "do"
+      ]
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "enum": [
+            "outline",
+            "press",
+            "fill",
+            "paste",
+            "readChat",
+            "postChat",
+            "uploadFile",
+            "notifications",
+            "clipboardRead",
+            "clipboardWrite",
+            "status",
+            "defaultOutput",
+            "volume",
+            "mute",
+            "route",
+            "appVolume",
+            "play",
+            "pause",
+            "next",
+            "previous",
+            "map",
+            "bluetoothDevices",
+            "bluetoothConnect",
+            "bluetoothDisconnect",
+            "drives",
+            "mount",
+            "unmount",
+            "lights",
+            "setLight",
+            "speakerChannels",
+            "setSpeakerChannels",
+            "power",
+            "start",
+            "stop",
+            "launch"
+          ],
+          "description": "Audio: defaultOutput sink; volume percent, sink?; mute muted; route application, sink; appVolume application, percent (one app's own volume). Media: status, pause, next, previous; play resumes, or with uri (a player URI or link, found by web search) and optional title opens it, checked against the link's own title."
+        },
+        "app": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "window": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limits": {
+          "$ref": "#/$defs/limits"
+        },
+        "target": {
+          "$ref": "#/$defs/selector"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            {
+              "enum": [
+                "powerOff",
+                "reboot",
+                "suspend",
+                "hibernate",
+                "hybridSleep",
+                "suspendThenHibernate"
+              ]
+            }
+          ]
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "position": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "editor": {
+          "$ref": "#/$defs/selector"
+        },
+        "send": {
+          "$ref": "#/$defs/press"
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "open": {
+          "$ref": "#/$defs/press"
+        },
+        "prepare": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/press"
+          }
+        },
+        "pathField": {
+          "$ref": "#/$defs/selector"
+        },
+        "confirm": {
+          "$ref": "#/$defs/press"
+        },
+        "sink": {
+          "anyOf": [
+            {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            }
+          ]
+        },
+        "port": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "muted": {
+          "type": "boolean"
+        },
+        "application": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "device": {
+          "type": "string",
+          "minLength": 1
+        },
+        "drive": {
+          "type": "string",
+          "minLength": 1
+        },
+        "readOnly": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "color": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9A-Fa-f]{6}$"
+        },
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "brightness": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "levels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "channel": {
+                "type": "string",
+                "minLength": 1
+              },
+              "percent": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 150
+              }
+            },
+            "required": [
+              "channel",
+              "percent"
+            ]
+          }
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16384
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16384
+        },
+        "uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ]
+    },
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "window",
+        "name"
+      ],
+      "properties": {
+        "app": {
+          "type": "string",
+          "minLength": 1
+        },
+        "window": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "bus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 64,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "maxNodes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "maxDepth": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 64
+        },
+        "textChars": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 16384
+        }
+      }
+    },
+    "press": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target"
+      ],
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/selector"
+        },
+        "action": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "sceneStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "do": {
+          "enum": [
+            "scene"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "items": {
+            "$ref": "#/$defs/desktopStep"
+          }
+        }
+      },
+      "required": [
+        "do",
+        "name",
+        "steps"
+      ]
+    }
+  }
+}

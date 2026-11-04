@@ -1,0 +1,25 @@
+schema = "odin.registry.v1"
+# Keep authored schemas behind operation help to preserve the lean fixed listing.
+expose = "on_demand"
+# Compiler derives op from the final ID segment, normalizing hyphens to underscores.
+kind = "capability"
+enabled = true
+implementation = "pod-exec"
+version = 1
+description = "__description__"
+handler = { id = "odin_pod_exec.run" }
+# Compiler replaces inputs with a dedicated JSON schema path in the same transaction.
+inputs = "__inputs__"
+output_schema = "schemas/capability/pod-exec.output.json"
+effect_class = "R1"
+seat_tags = ["operator"]
+timeout_seconds = "__timeout_seconds__"
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_pod_exec.receipt" }
+
+[exec]
+executable = "__executable__"
+argv = "__argv__"
+options = "__options__"

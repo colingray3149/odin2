@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/docs.preview.input.json",
+  "title": "docs.preview input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "artifact": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$",
+      "description": "The document as an artifact. Give one of source, artifact or intake."
+    },
+    "intake": {
+      "type": "string",
+      "pattern": "^[0-9]+/[0-9]+$",
+      "description": "A file he sent. Its intake id, like 1234/1; give one of source, artifact or intake."
+    },
+    "pages": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "description": "Pages to show; [1] by default. At most four, each drawn as an image."
+    }
+  }
+}

@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Claude Remote Control works when Odin is down"
+description = "The break-glass unit is running on pc; reachability with odind stopped is a manual check."
+probes = [
+  "unit:pc user claude-break-glass.service",
+]

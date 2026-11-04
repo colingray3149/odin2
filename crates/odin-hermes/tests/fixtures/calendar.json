@@ -1,0 +1,23 @@
+{
+  "events": [
+    {
+      "id": "cal-001",
+      "title": "Fixture cancellation call prep",
+      "date": "2026-08-21",
+      "time": "10:00",
+      "reminder": true
+    },
+    {
+      "id": "cal-002",
+      "title": "Fixture budget review",
+      "date": "2026-08-28",
+      "reminder": false
+    },
+    {
+      "id": "cal-003",
+      "title": "Fixture archive day",
+      "date": "2026-07-17",
+      "reminder": false
+    }
+  ]
+}

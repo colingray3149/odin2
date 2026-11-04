@@ -1,0 +1,19 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Queries the atlas snapshot, optionally narrowed to part of the allowed scope."
+handler = { id = "odin_atlas_query" }
+input_schema = "schemas/capability/odin.atlas_query.input.json"
+output_schema = "schemas/capability/odin.atlas_query.output.json"
+effect_class = "R0"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_atlas_query_evidence" }
+tests = [
+  "odin-omp host_tools::atlas_query::tests::narrowing_refinements_are_accepted_and_strictly_smaller",
+]

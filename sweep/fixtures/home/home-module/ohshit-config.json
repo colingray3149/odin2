@@ -1,0 +1,1 @@
+{"state_root": "/tmp/odin-fixture/state", "worker_bus": "unix:path=/tmp/odin-fixture/worker-bus.sock"}

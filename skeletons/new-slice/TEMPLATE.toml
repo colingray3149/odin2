@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+kind = "slice"
+enabled = "__enabled__"
+description = "__description__"
+# Non-empty array of existing capability IDs.
+capabilities = "__capabilities__"
+# Runtime variable declarations; an empty table declares none.
+variables = "__variables__"
+# Out-of-scope redirect table.
+redirects = "__redirects__"
+# Optional USD-micros amount and accounting-window table.
+budget = "__budget__"
+# Optional knowledge-access policy table.
+knowledge = "__knowledge__"
+# Optional context limits table.
+context = "__context__"
+# Optional tool-access policy table.
+tools = "__tools__"
+# Optional live-plane policy table.
+live = "__live__"

@@ -1,0 +1,39 @@
+--- a/crates/obscura-cli/src/main.rs
++++ b/crates/obscura-cli/src/main.rs
+@@ -904,13 +904,16 @@ async fn run_fetch(
+     // body through the DOM/JS layer would corrupt or discard data.
+     if dump == DumpFormat::Original {
+-        let bytes = fetch_original_bytes(
++        let response = fetch_original_response(
+             url_str,
+             proxy,
+             user_agent.clone(),
+             timeout_secs,
+             stealth,
+         )
+         .await?;
+-        write_or_print_bytes(&bytes, output.as_ref()).await?;
++        // The status belongs to these bytes. A caller that splits stdout
++        // keeps both from this one answer instead of fetching again.
++        eprintln!("obscura-status {}", response.status);
++        write_or_print_bytes(&response.body, output.as_ref()).await?;
+         return Ok(());
+     }
+@@ -1113,6 +1116,9 @@ async fn run_fetch(
+     // Requires the render feature; without it, page.screenshot is absent and
+     // we report clearly.
+     if let Some(ref path) = screenshot {
++        if let Some(document) = page.network_events.iter().rev().find(|event| event.resource_type == "Document") {
++            eprintln!("obscura-status {}", document.status);
++        }
+         #[cfg(feature = "render")]
+         {
+             let resource_deadline_ms = std::env::var("OBSCURA_RENDER_RESOURCE_DEADLINE_MS")
+@@ -1343,6 +1349,7 @@ async fn fetch_original_response(
+     }
+ }
+ 
++#[cfg(test)]
+ async fn fetch_original_bytes(
+     url_str: &str,
+     proxy: Option<String>,

@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/workload.draft.output.json",
+  "title": "workload.draft output",
+  "description": "Terminal result of one draft compilation. An incomplete answer set carries `missing` \u2014 the declared skeleton variables still needed, each with its contract meaning \u2014 and no declaration. A complete answer set carries the canonical declaration: its registry destination, its blake3 declaration digest (the exact selector the publish approval binds), the rendered profile TOML, the registry revision it was validated against, the exact NEW registry revision its publication installs (publishRevision \u2014 pass it verbatim as workload.publish's expectedRegistryRevision), the bound lane's real provider availability with the declared alternatives (never an automatic swap), and the bound seat's declared session/run limits. The draft is a private artifact: nothing is published, nothing is launched, and no provider or model is changed by this operation.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "profileId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "baseRevision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Registry revision the draft was validated against."
+    },
+    "publishRevision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Exact NEW registry revision the publication installs: baseRevision + 1. Pass this value verbatim as expectedRegistryRevision on workload.publish."
+    },
+    "declaration": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "destination": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "description": "Registry path the profile publishes to, e.g. registry/workloads/<id>/profile.toml."
+            },
+            "declarationDigest": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "description": "blake3:<hex> over the exact canonical declaration bytes."
+            },
+            "renderedToml": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            }
+          },
+          "required": [
+            "destination",
+            "declarationDigest",
+            "renderedToml"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "missing": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "variable": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "meaning": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "variable",
+          "meaning"
+        ]
+      }
+    },
+    "lane": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "lane": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "available": {
+              "type": "boolean"
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "declaredAlternatives": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          },
+          "required": [
+            "lane",
+            "available",
+            "provider",
+            "model",
+            "declaredAlternatives"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "seatLimits": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "seat": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "maxSessions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxParallelRuns": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "seat",
+            "maxSessions",
+            "maxParallelRuns"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "memoryNamespaces": {
+      "description": "Once seat and project are answered: the memory namespaces that pair admits, the only lawful memoryNamespace answers.",
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "profileId",
+    "baseRevision",
+    "publishRevision",
+    "declaration",
+    "missing",
+    "lane",
+    "seatLimits",
+    "memoryNamespaces"
+  ]
+}

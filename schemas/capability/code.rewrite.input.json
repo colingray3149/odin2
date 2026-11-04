@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/code.rewrite.input.json",
+  "title": "code.rewrite input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pattern", "lang"],
+  "properties": {
+    "pattern": { "type": "string", "minLength": 1, "maxLength": 4000, "description": "ast-grep pattern, e.g. foo($A, $$$REST); one node per $NAME, a list per $$$NAME." },
+    "rewrite": { "type": "string", "maxLength": 4000, "description": "Replacement using the pattern's metavariables; omit to only search." },
+    "lang": { "type": "string", "enum": ["rust", "typescript", "tsx", "javascript", "python", "nix", "go", "c", "cpp", "java", "bash", "toml", "yaml", "json"], "description": "Language of the files to match." },
+    "paths": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 400 }, "maxItems": 32, "description": "Capsule-relative files or directories; default the whole capsule." },
+    "apply": { "type": "boolean", "description": "true writes every replacement; false (default) previews them." },
+    "max_matches": { "type": "integer", "minimum": 1, "maximum": 500, "description": "Matches listed in the result (default 100); the total is always counted." }
+  }
+}

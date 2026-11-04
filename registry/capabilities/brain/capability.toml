@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+toolset = "brain"
+description = "Reads the owner's curated brain records as one map: people (contacts, handles, last contact), conversation units, facts with their evidence messages (Discord, Snapchat, Instagram, Google Chat, mail), the photo, video and document index, projects and Discord servers and channels, linked to each other. op=records ranks units, facts, people and assets by query and optional filters. op=person accepts an id, name, handle, email or phone; op=project accepts an id or name and includes its topics; op=place reads a Discord server or channel. Each returns that node with its latest units and the people, projects, places (and for a person, photos) around it. op=fact reads one fact with its evidence lines. op=asset finds photos and documents by name, person, date range or place; filters.person lists every photo of someone. op=photo reads one photo's record by its exact path; files with op=view opens the picture with the result id as asset. Photo and video search uses filters.kind=photo and caption words describing what is visible, the place, the people or a source such as discord or snapchat; clips also carry what is said once transcribed. Records carry a citation title and date (from/to or the evidence ts), e.g. \"Discord: <channel>, <date>\". Local-only and secret-bearing records are refused with the reason. op=status reports, per archive source, when its raw data last changed and was published, how much is embedded, summaries pending or failed, and the last failure with its cause."
+handler = { id = "odin_brain.records" }
+input_schema = "schemas/capability/brain.input.json"
+output_schema = "schemas/capability/brain.output.json"
+effect_class = "R0"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_brain.records_evidence" }
+tests = [
+  "odin-omp host_tools::operations::production_operation_dispatch::dispatch_brain::code_only_seat_is_refused_curated_record_operations",
+]

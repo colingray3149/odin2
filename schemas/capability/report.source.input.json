@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/report.source.input.json",
+  "title": "report.source input",
+  "description": "One report document and the export path it is written to.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "description": "Destination under /export, /export/report.typ or /export/report.md.",
+      "type": "string",
+      "minLength": 12,
+      "maxLength": 180,
+      "pattern": "^/export/[A-Za-z0-9][A-Za-z0-9 ._()+,-]{0,159}\\.(typ|md)$"
+    },
+    "source": {
+      "description": "The complete document, UTF-8, at most 256 KiB.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 262144
+    }
+  },
+  "required": ["path", "source"]
+}

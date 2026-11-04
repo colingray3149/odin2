@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/device.run.output.json",
+  "title": "device.run output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["device", "action", "argv", "stdout", "stderr", "timedOut", "timeoutSeconds"],
+  "properties": {
+    "device": { "type": "string" },
+    "action": { "type": "string" },
+    "argv": { "type": "array", "items": { "type": "string" } },
+    "exitCode": { "type": ["integer", "null"] },
+    "stdout": { "type": "string" },
+    "stderr": { "type": "string" },
+    "timedOut": { "type": "boolean" },
+    "timeoutSeconds": { "type": "integer", "minimum": 1 }
+  }
+}

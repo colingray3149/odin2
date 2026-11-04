@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "code"
+op = "trace"
+kind = "capability"
+enabled = true
+implementation = "codemap"
+version = 1
+description = "Trace a code path. Follows a function's callers, callees or both to a chosen depth, including data flow and cross-service paths, to see what a change would touch."
+handler = { id = "odin_adapter.operation" }
+input_schema = "schemas/capability/codemap.trace_path.input.json"
+output_schema = "schemas/capability/codemap.trace_path.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "builder", "judge"]
+timeout_seconds = 60
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_adapter.receipt" }
+tests = [
+  "odin-adapter-mcp::bin/odin-adapter-mcp tests::each_declared_codemap_tool_is_served_and_a_drifted_surface_is_refused",
+]

@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+toolset = "claude"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "One read-only Opus review of a plan, research state or substantial work. It reads brain-relative paths. Worth it as a second read before a big step. initiated_by is owner when he asked for it, otherwise self. The full review comes back as an artifact: for one he asked for, three to six short lines and the artifact answer him; a self-initiated one is worth mentioning only when it found something material. Daily caps count today's reviews."
+handler = { id = "claude_review" }
+input_schema = "schemas/capability/claude.review.input.json"
+output_schema = "schemas/capability/claude.review.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 900
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_claude_review_evidence" }
+tests = [
+  "odin-cli::bin/odind claude_review::tests::real_bwrap_keeps_bundle_readonly_and_secrets_off_argv_and_env",
+]

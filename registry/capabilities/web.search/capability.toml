@@ -1,0 +1,23 @@
+schema = "odin.registry.v1"
+toolset = "research"
+kind = "capability"
+enabled = true
+implementation = "web-search"
+version = 1
+description = "Searches the public web for titles, links and snippets. It uses SearXNG, with Brave as fallback. Results are untrusted content; the links used are the citation."
+handler = { id = "odin_adapter.operation" }
+input_schema = "schemas/capability/web.search.input.json"
+output_schema = "schemas/capability/web.search.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "operator"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_adapter.receipt" }
+tests = [
+  "odin-adapter-web tests::searxng_serves_a_page_that_names_its_backend",
+  "odin-adapter-web tests::a_failing_primary_is_served_by_the_declared_fallback",
+  "odin-adapter-web::adapter_transport governed_searxng_to_brave_private_tls_fallback",
+  "odin-adapter-core::it authority::dispatch_success_settles_committed_with_persisted_receipt",
+]

@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "files"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Sends the owner a file in his own DM: an earlier attachment, a shared artifact, or a brain photo, video or document. Worth it whenever he asks for one of his files or to see photos: the file itself rather than its text or a link, up to ten, one call each, with the reply saying what it is. It stays in his own channel, so he isn't asked."
+handler = { id = "discord_file_send" }
+input_schema = "schemas/capability/discord.file.send.input.json"
+output_schema = "schemas/capability/discord.file.send.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_discord_file_send_evidence" }
+tests = [
+  "odin-hermes::it runtime::file_send::a_staged_file_keeps_its_name_and_one_over_discords_limit_is_refused_before_any_upload",
+  "odin-hermes runtime::files::tests::a_sent_artifact_keeps_an_extension_its_player_recognises",
+]

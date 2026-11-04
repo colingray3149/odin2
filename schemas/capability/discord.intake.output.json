@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/discord.intake.output.json",
+  "title": "discord.intake output",
+  "description": "Exactly one terminal outcome of an admitted intent, discriminated by status — the runtime's actual projection shapes, with no extra fields on any variant. unauthorized: the author is not owner-paired — the receipt carries ONLY the status, with no author, channel, or content echo (anti-enumeration; nothing is recorded or executed). governance_rejected: the durable record is kept but settled terminally Rejected by kernel capability governance — execution never happens and replays return the same shape with no task key. recorded: exactly one durable task was created, carrying the command id (command:discord-intent:<32 lowercase hex>); the receipt carries no content fields — the 2000-char content lives solely in the durable ledger arguments. duplicate: a replayed intent — the SAME task id as the original is returned, nothing re-executes. gated: the durable task's consequential leg stopped at the ledger approval gate and carries the bound kernel-minted approval id (approval:discord-intent:<32 lowercase hex>); the approval is consumed exactly once through the ingress gate, never twice. A denial is recorded durably with its evidence reference and never produces a sent effect.",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "const": "unauthorized" }
+      },
+      "required": ["status"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "const": "governance_rejected" },
+        "capability": { "const": "discord.intake" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 256 }
+      },
+      "required": ["status", "capability", "reason"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "const": "recorded" },
+        "task": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "required": ["status", "task"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "const": "duplicate" },
+        "task": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "required": ["status", "task"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "const": "gated" },
+        "task": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "approval": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "required": ["status", "task", "approval"]
+    }
+  ]
+}

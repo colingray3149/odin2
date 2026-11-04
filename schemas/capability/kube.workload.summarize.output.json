@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.workload.summarize.output.json",
+  "title": "kube.workload.summarize output",
+  "description": "Pure lifecycle summary of Odin-owned pod Jobs (finite jobs and long-lived services) visible to the bound seat. status ok carries one bounded row per run; unavailable carries a typed reason. Never mutates cluster state.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "unavailable"
+      ]
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "jobName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          },
+          "state": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "resourceVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "profile": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "The declared pod profile this run runs."
+          },
+          "node": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253,
+            "description": "The node the pod ran or runs on, when known."
+          },
+          "seat": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "The seat that launched it."
+          },
+          "startedAt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "When it started (RFC 3339 UTC); rows are newest first."
+          },
+          "finishedAt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "When it finished (RFC 3339 UTC)."
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "description": "A running pod's status delta: each field of its newest ODIN-STATUS report, with the previous value when it changed, and how long ago it was reported."
+          }
+        },
+        "required": [
+          "runId",
+          "jobName",
+          "state",
+          "resourceVersion"
+        ]
+      }
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ok"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "runs"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "unavailable"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "reason"
+        ]
+      }
+    }
+  ]
+}

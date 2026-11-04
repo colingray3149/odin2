@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "calendar"
+op = "convert"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Converts a wall-clock time (HH:MM) between two IANA time zones."
+handler = { id = "time_convert_time" }
+input_schema = "schemas/capability/time.convert_time.input.json"
+output_schema = "schemas/capability/time.convert_time.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_time_convert_time_evidence" }
+tests = [
+  "odin-hermes runtime::time_ops::tests::convert_time_moves_a_wall_clock_across_zones",
+  "odin-hermes runtime::time_ops::tests::convert_time_refuses_a_skipped_time_and_takes_the_earlier_of_an_ambiguous_one",
+]

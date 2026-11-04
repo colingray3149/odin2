@@ -1,0 +1,67 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-slice"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "slices"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "enabled"
+type = "bool"
+required = true
+meaning = "Enable only after every reference validates in combined state."
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Slice purpose."
+
+[[variable]]
+name = "capabilities"
+type = "array<id>"
+required = true
+meaning = "One or more admitted capability IDs without CSV encoding."
+
+[[variable]]
+name = "variables"
+type = "table"
+required = true
+meaning = "Typed runtime variable map; an empty table declares no variables."
+
+[[variable]]
+name = "redirects"
+type = "table"
+required = true
+meaning = "Typed out-of-scope redirect policy."
+
+[[variable]]
+name = "budget"
+type = "optional<table>"
+required = false
+meaning = "Optional integer USD-micros accounting-window policy."
+
+[[variable]]
+name = "knowledge"
+type = "optional<table>"
+required = false
+meaning = "Optional knowledge policy independent of every other block."
+
+[[variable]]
+name = "context"
+type = "optional<table>"
+required = false
+meaning = "Optional context policy independent of every other block."
+
+[[variable]]
+name = "tools"
+type = "optional<table>"
+required = false
+meaning = "Optional tool policy independent of every other block."
+
+[[variable]]
+name = "live"
+type = "optional<table>"
+required = false
+meaning = "Optional live-plane policy independent of every other block."

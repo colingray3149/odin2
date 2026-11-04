@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/odin.atlas_query.output.json",
+  "title": "odin.atlas_query output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "nodes": { "type": "array" }
+  }
+}

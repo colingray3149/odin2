@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "Fleet WeMM embedding for brain retrieval through the shared gateway."
+# The card id providers and pods reference.
+id = "gateway/wemm-embedding"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "openai/WeMM-Embedding-2B"
+# chat or embedding; embedding cards declare no tier.
+capability = "embedding"
+# Account pin holding this card's credentials.
+account = "local"
+# One line naming when this card is the right pick.
+strengths = "The brain's served embedding leg for vector and hybrid retrieval."
+# Fallback lanes, in order.
+fallbacks = ["wemm-embedding-local"]

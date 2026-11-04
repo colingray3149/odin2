@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Z.ai GLM model lane"
+description = "The zai-glm lane's account is open in the model book; no completion is requested."
+probes = [
+  "models:zai-glm",
+]

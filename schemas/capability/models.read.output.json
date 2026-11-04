@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/models.read.output.json",
+  "title": "models.read output",
+  "properties": {
+    "usages": { "type": "array", "items": { "$ref": "#/$defs/usage" } },
+    "source_errors": { "type": "array", "items": { "$ref": "#/$defs/sourceError" } },
+    "attribution": { "anyOf": [ { "$ref": "#/$defs/attribution" }, { "type": "null" } ] },
+    "accounts": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "usages": { "type": "array", "items": { "$ref": "#/$defs/usage" } },
+          "source_errors": { "type": "array", "items": { "$ref": "#/$defs/sourceError" } },
+          "account": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "billing": {
+            "type": "string"
+          },
+          "monthly_usd": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "renews": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lanes": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string"
+            }
+          },
+          "windows": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "source": { "type": "string" },
+                "estimate": { "type": "boolean" },
+                "requests_estimate": { "type": "boolean", "description": "Provider throughput guidance only, not an enforced request cap." },
+                "span": {
+                  "type": "string"
+                },
+                "usd_limit": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "usd_used": {
+                  "type": ["number", "null"]
+                },
+                "requests_limit": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "requests_used": {
+                  "type": ["integer", "null"]
+                }
+              },
+              "required": [
+                "span",
+                "usd_limit",
+                "usd_used",
+                "requests_limit",
+                "requests_used"
+              ]
+            }
+          },
+          "held": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "account",
+          "provider",
+          "billing",
+          "monthly_usd",
+          "renews",
+          "lanes",
+          "windows",
+          "held"
+        ]
+      }
+    },
+    "classes": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "class": {
+            "type": "string"
+          },
+          "order": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "lane": {
+                  "type": "string"
+                },
+                "vision": {
+                  "type": "boolean"
+                },
+                "context_window": {
+                  "type": "integer"
+                },
+                "held": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "lane",
+                "vision",
+                "context_window",
+                "held"
+              ]
+            }
+          },
+          "serving": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "class",
+          "order",
+          "serving"
+        ]
+      }
+    },
+    "note": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "sourceError": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "account": { "type": ["string", "null"] },
+        "source": { "type": "string" },
+        "host": { "type": ["string", "null"] },
+        "message": { "type": "string" }
+      },
+      "required": ["account", "source", "host", "message"]
+    },
+    "usage": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "account": { "type": "string" },
+        "provider": { "type": "string" },
+        "billing": { "type": "string" },
+        "source": { "type": "string" },
+        "host": { "type": ["string", "null"] },
+        "source_account": { "type": ["string", "null"] },
+        "label": { "type": "string" },
+        "span": { "type": ["string", "null"] },
+        "unit": { "type": "string" },
+        "used": { "type": ["number", "null"] },
+        "limit": { "type": ["number", "null"] },
+        "remaining": { "type": ["number", "null"] },
+        "used_fraction": { "type": ["number", "null"] },
+        "resets_at": { "type": ["integer", "null"], "description": "Provider reset time in epoch milliseconds, null when not supplied." },
+        "fetched_at": { "type": ["integer", "null"], "description": "Source collection time in epoch milliseconds." },
+        "included": { "type": "boolean" },
+        "estimate": { "type": "boolean" },
+        "billed_usd": { "type": ["number", "null"] },
+        "estimated_usd": { "type": ["number", "null"] },
+        "tokens": { "type": ["integer", "null"] },
+        "requests": { "type": ["integer", "null"] },
+        "seat": { "type": ["string", "null"] },
+        "workload": { "type": ["string", "null"] },
+        "session": { "type": ["string", "null"] },
+        "routing": { "type": "boolean", "description": "Whether this authoritative quota can hold its account; estimates and tool-only quotas do not." }
+      },
+      "required": ["account", "provider", "billing", "source", "host", "source_account", "label", "span", "unit", "used", "limit", "remaining", "used_fraction", "resets_at", "fetched_at", "included", "estimate", "billed_usd", "estimated_usd", "tokens", "requests", "seat", "workload", "session", "routing"]
+    },
+    "costRow": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "usd": { "type": "number", "minimum": 0 },
+        "included_usd": { "type": "number", "minimum": 0 },
+        "tokens": { "type": "integer", "minimum": 0 },
+        "requests": { "type": "integer", "minimum": 0 },
+        "date": { "type": ["string", "null"] },
+        "lane": { "type": "string" },
+        "seat": { "type": "string" },
+        "workload": { "type": "string" },
+        "session": { "type": "string" }
+      },
+      "required": ["usd", "included_usd", "tokens", "requests"]
+    },
+    "attribution": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "total": { "$ref": "#/$defs/costRow" },
+        "days": { "type": "array", "items": { "allOf": [ { "$ref": "#/$defs/costRow" }, { "required": ["date"] } ] } },
+        "lanes": { "type": "array", "items": { "allOf": [ { "$ref": "#/$defs/costRow" }, { "required": ["lane"] } ] } },
+        "seats": { "type": "array", "items": { "allOf": [ { "$ref": "#/$defs/costRow" }, { "required": ["seat"] } ] } },
+        "workloads": { "type": "array", "items": { "allOf": [ { "$ref": "#/$defs/costRow" }, { "required": ["workload"] } ] } },
+        "sessions": { "type": "array", "items": { "allOf": [ { "$ref": "#/$defs/costRow" }, { "required": ["session"] } ] } },
+        "untagged_usd": { "type": "number", "minimum": 0 },
+        "attribution_error": { "type": "string" },
+        "note": { "type": "string" }
+      },
+      "required": ["from", "to", "total", "days", "lanes", "note"]
+    }
+  },
+  "required": [
+    "accounts",
+    "classes",
+    "note"
+  ]
+}

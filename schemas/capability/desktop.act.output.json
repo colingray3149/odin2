@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/desktop.act.output.json",
+  "title": "desktop.act output",
+  "description": "What was done, and the screen after.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "device": { "type": "string" },
+    "devices": { "type": "object" },
+    "did": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stepsMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "layout": {
+      "type": "object"
+    },
+    "layoutError": {
+      "type": "string"
+    },
+    "shotError": {
+      "type": "string"
+    },
+    "shot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "type": "string"
+        },
+        "ms": {
+          "type": "integer"
+        },
+        "pointer": {
+          "type": "string"
+        },
+        "savedOnDesktopHost": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "size",
+        "savedOnDesktopHost",
+        "pointer"
+      ]
+    },
+    "images": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "image"
+          },
+          "mimeType": {
+            "const": "image/jpeg"
+          },
+          "data": {
+            "type": "string",
+            "maxLength": 655360,
+            "description": "Base64 JPEG; the side channel sends it as the result's image block."
+          }
+        },
+        "required": [
+          "type",
+          "mimeType",
+          "data"
+        ]
+      }
+    }
+  },
+  "required": [
+    "did"
+  ]
+}

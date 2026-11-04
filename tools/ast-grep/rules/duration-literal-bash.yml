@@ -1,0 +1,15 @@
+id: duration-literal-bash
+language: bash
+severity: error
+message: timeout literal; name it and pass the name
+rule:
+  any:
+    - all:
+        - kind: command
+        - regex: '^sleep [0-9]+(\.[0-9]+)?$'
+    - all:
+        - kind: command
+        - regex: '^timeout [0-9]+(\.[0-9]+)?( |$)'
+    - all:
+        - kind: word
+        - regex: '^ConnectTimeout=[0-9]+$'

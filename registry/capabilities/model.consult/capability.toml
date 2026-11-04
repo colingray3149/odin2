@@ -1,0 +1,24 @@
+schema = "odin.registry.v1"
+toolset = "delegate"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Consult a stronger model. One question to a stronger model: the calling seat's declared [context] consult lane (one of its own models) at its declared reasoning effort, with no tools; the optional model names any consultable frontier model instead — a frontier gateway card, or an official client (Opus 5.5 through Claude Code, an Antigravity model through agy), which never serve ordinary seat turns. Returns the answer with the deployment that served it, seconds, tokens and the gateway's cost; the request is spend-tagged seat:<seat>,consult and odind logs one model.consult line per call. Worth calling for hard multi-step math, physics or engineering, and anything the caller would otherwise hedge on for lack of a checked number."
+handler = { id = "model_consult" }
+input_schema = "schemas/capability/model.consult.input.json"
+output_schema = "schemas/capability/model.consult.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "builder", "operator"]
+timeout_seconds = 300
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_model_consult_evidence" }
+tests = [
+  "odin-hermes runtime::consult::tests::the_declared_lane_answers_with_its_model_tokens_and_cost",
+  "odin-hermes runtime::consult::tests::naming_an_official_model_returns_the_drivers_answer",
+]
+probes = [
+  "models:astra",
+]

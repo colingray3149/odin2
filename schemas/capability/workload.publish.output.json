@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/workload.publish.output.json",
+  "title": "workload.publish output",
+  "description": "Terminal receipt of one approved workload-profile publication through the existing committed-worktree chain: the published registry revision, the exact commit the snapshot was derived from, the immutable declaration digest, the registry destination, the publication outcome (published or unchanged for an identical republish), and the daemon's pinned revision at publish time. pinnedRevision < publishedRevision means the new profile is NOT dispatchable through kube.workload.create until the daemon re-pins — an honest integration fact, never a hidden retry. Failures are typed refusals (digest mismatch, stale revision, worktree or store refusal) that preserve the operation identity and invalidate the old scope; no partial publication exists.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "profileId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "destination": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "declarationDigest": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "publishedRevision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "pinnedRevision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "commit": {
+      "type": "string",
+      "minLength": 40,
+      "maxLength": 64,
+      "description": "Full lowercase hex commit the published snapshot was derived from."
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["published", "unchanged"]
+    }
+  },
+  "required": [
+    "profileId",
+    "destination",
+    "declarationDigest",
+    "publishedRevision",
+    "pinnedRevision",
+    "commit",
+    "outcome"
+  ]
+}

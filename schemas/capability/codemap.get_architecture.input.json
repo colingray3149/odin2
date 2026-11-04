@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/codemap.get_architecture.input.json",
+  "title": "codemap.get_architecture input",
+  "properties": {
+    "project": {
+      "type": "string",
+      "enum": [
+        "dotfiles",
+        "odin",
+        "rig"
+      ],
+      "description": "Declared project name; it resolves to this host's indexed graph (codemap.list_projects lists what this host indexed)."
+    },
+    "aspects": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "project"
+  ]
+}

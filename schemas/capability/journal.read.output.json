@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/journal.read.output.json",
+  "title": "journal.read output",
+  "properties": {
+    "lines": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "lines"
+  ]
+}

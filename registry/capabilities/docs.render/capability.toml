@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+toolset = "docs"
+kind = "capability"
+enabled = true
+implementation = "workflow"
+version = 1
+description = "Render PDFs. Accepts Markdown or Typst as source, artifact or intake; explicit format overrides inference; name selects the output file. Returns the PDF and page images; compile errors name the line. Templates: report, research, slides, letter, plain. Uses offline pandoc and Typst packages/fonts."
+handler = { id = "odin_workflow.run" }
+input_schema = "schemas/capability/docs.render.input.json"
+output_schema = "schemas/capability/docs.render.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 300
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_workflow.receipt" }
+tests = [
+  "odin-workflows docs::tests::render_markdown_runs_pandoc_then_typst",
+]

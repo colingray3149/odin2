@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/report.view.output.json",
+  "title": "report.view output",
+  "description": "One viewed page. images is removed before the text result and attached as the tool result's image block, so the model sees the page. The remaining fields are the pod-exec receipt.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "capability": { "type": "string" },
+    "argv": { "type": "array", "items": { "type": "string" } },
+    "exitCode": { "type": "integer" },
+    "timedOut": { "type": "boolean" },
+    "stdout": { "type": "string", "maxLength": 0 },
+    "stderr": { "type": "string" },
+    "stdoutBytes": { "type": "integer", "minimum": 0 },
+    "stderrBytes": { "type": "integer", "minimum": 0 },
+    "exportDir": { "type": "string" },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" },
+          "bytes": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["path", "bytes"]
+      }
+    },
+    "filesUnreadable": { "type": "string" },
+    "viewed": { "type": "string", "minLength": 1 },
+    "images": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": { "const": "image" },
+          "mimeType": { "const": "image/jpeg" },
+          "data": {
+            "type": "string",
+            "maxLength": 655360,
+            "description": "Base64 JPEG. The side channel sends it as the result's image block; it is not text."
+          }
+        },
+        "required": ["type", "mimeType", "data"]
+      }
+    }
+  },
+  "required": [
+    "capability",
+    "argv",
+    "exitCode",
+    "timedOut",
+    "stdout",
+    "stderr",
+    "stdoutBytes",
+    "stderrBytes",
+    "exportDir",
+    "files",
+    "viewed",
+    "images"
+  ]
+}

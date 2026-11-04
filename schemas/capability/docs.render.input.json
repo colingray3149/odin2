@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/docs.render.input.json",
+  "title": "docs.render input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "source": {
+      "type": "string",
+      "maxLength": 409600,
+      "description": "Markdown or Typst text. Give one of source, artifact or intake."
+    },
+    "artifact": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$",
+      "description": "The document as an artifact. Give one of source, artifact or intake."
+    },
+    "intake": {
+      "type": "string",
+      "pattern": "^[0-9]+/[0-9]+$",
+      "description": "A file he sent. Its intake id, like 1234/1; give one of source, artifact or intake."
+    },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "pattern": "^blake3:[0-9a-f]{64}$"
+      },
+      "description": "Files the source names by artifact id. Images or data the source uses; each id in the source becomes that file's name."
+    },
+    "template": {
+      "type": "string",
+      "enum": [
+        "report",
+        "research",
+        "slides",
+        "letter",
+        "plain"
+      ],
+      "description": "Report by default. The look of the document; slides start a slide at each level-2 heading."
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Title on page one and in the PDF; it also names the file."
+    },
+    "phone": {
+      "type": "boolean",
+      "description": "Small pages for a phone. Single column and large type."
+    },
+    "cite": {
+      "type": "boolean",
+      "description": "Cite his library as [@key]. Makes his reference library available as refs.bib."
+    },
+    "meta": {
+      "type": "object",
+      "maxProperties": 16,
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 300
+      },
+      "description": "Run facts for research. The research template prints model, wall_time, tool_calls, sites and cost."
+    },
+    "format": {
+      "type": "string",
+      "enum": ["markdown", "typst"],
+      "description": "Source language. Omitted means typst when a line starts with #set, #import, #let or #show, else markdown."
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 80,
+      "description": "Output file name without extension. Omitted uses the title, then the source file name."
+    },
+    "pages": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "description": "Pages to show; [1] by default. At most four, each drawn as an image."
+    }
+  }
+}

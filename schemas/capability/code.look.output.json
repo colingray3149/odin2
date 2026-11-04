@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/code.look.output.json",
+  "title": "code.look result",
+  "type": "object",
+  "required": ["done", "shots"],
+  "properties": {
+    "done": { "type": "string" },
+    "url": { "type": "string" },
+    "shots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "width": { "type": "integer" },
+          "title": { "type": "string" },
+          "path": { "type": "string" }
+        }
+      }
+    },
+    "console": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "width": { "type": "integer" },
+          "type": { "type": "string" },
+          "text": { "type": "string" }
+        }
+      }
+    },
+    "failed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "width": { "type": "integer" },
+          "url": { "type": "string" },
+          "status": { "type": "integer" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    "images": { "type": "array", "items": { "type": "object" } }
+  }
+}

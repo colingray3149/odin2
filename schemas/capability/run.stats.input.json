@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/run.stats.input.json",
+  "title": "run.stats input",
+  "description": "No arguments. The calling session is the only run measured, and the result is written to /export/run-stats.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}

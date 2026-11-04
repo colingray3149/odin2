@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+toolset = "files"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Lists the readable file roots (the owner's Downloads and Documents), one directory, or files below it whose name contains a text. Worth it when he asks for one of his files; files.share then fetches it. Paths outside the roots are refused."
+handler = { id = "files_list" }
+input_schema = "schemas/capability/files.list.input.json"
+output_schema = "schemas/capability/files.list.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "pure"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_files_list_evidence" }
+tests = [
+  "odin-hermes::it runtime::shared_files::a_seat_lists_the_declared_folders_and_shares_one_file_with_its_text",
+]

@@ -1,0 +1,23 @@
+schema = "odin.registry.v1"
+toolset = "calendar"
+op = "routine"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Set a recurring routine. Declares or replaces a routine of the calling seat, so something happens on its own: on a schedule (\"every weekday at 7:30\") or when something happens (a pod finishes or fails, a watchdog fires, an incident, mail from someone arrives, minutes before a calendar event via lead_minutes, the owner sends a file, a project gets a push). An action brief starts a turn with that brief; dm sends the owner a text. A routine acts with the seat's own tools and approvals. Pods chain this way: one routine per stage, following that stage's profile finishing, whose brief asks the pod's seat to launch the next stage with the finished pod's output artifact as input; the last stage reports to the owner, and one-off chain routines are removed once it has."
+handler = { id = "routine_set" }
+input_schema = "schemas/capability/routine.set.input.json"
+output_schema = "schemas/capability/routine.set.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_routine_set_evidence" }
+tests = [
+  "odin-hermes::it runtime::schedule::a_pod_that_finishes_during_the_declaring_turn_fires_its_routine",
+  "odin-hermes runtime::routines::tests::a_calendar_routine_follows_only_the_events_its_match_names",
+  "odin-cli::bin/odind project_authoring::tests::a_seat_declares_replaces_and_removes_its_own_routine_and_no_one_elses",
+]

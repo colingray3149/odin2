@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "status"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Drain a fleet node. Drains one fleet host for maintenance: Odin's pods on it move to another node that fits (or pause until fleet.restore), its nodes are cordoned, and the other pods are evicted within a deadline; the report lists what was evicted and what remained. On the host holding Odin's authority, its pods move and its node is only cordoned. Worth it before taking a machine offline."
+handler = { id = "odin_hermes.fleet_drain" }
+input_schema = "schemas/capability/fleet.drain.input.json"
+output_schema = "schemas/capability/fleet.drain.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 300
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes.fleet_drain_evidence" }
+tests = [
+  "odin-hermes runtime::dispatch_handler_tests::fleet_drain_non_authority_host_settles_once_without_asking",
+  "odin-hermes runtime::dispatch_handler_tests::fleet_drain_authority_host_names_standby_candidates_without_touching_the_cluster",
+]

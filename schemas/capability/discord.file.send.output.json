@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/discord.file.send.output.json",
+  "title": "discord.file.send output",
+  "description": "The staged file that was sent and the DM message that carries it.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sent": {
+      "type": ["string", "null"]
+    },
+    "messageId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "note": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "sent",
+    "messageId"
+  ]
+}

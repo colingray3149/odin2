@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/artifact.analyze.output.json",
+  "title": "artifact.analyze output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "mediaType": {
+      "type": "string"
+    },
+    "stdout": {
+      "type": "string"
+    },
+    "stderr": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "ok",
+    "mediaType",
+    "stdout",
+    "stderr"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/archive.ingest.input.json",
+  "title": "archive.ingest input",
+  "description": "Names exactly one operator-declared archive knowledge source (its `brain.sources` id). Every selection rule, the export path, and the dedupe strategy are the declaration's fields — this input names the source only, so the approval binds the declaration, not caller-supplied arguments. The source id is registry configuration data and is deliberately not enumerated here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source"],
+  "properties": {
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "The declared `brain.sources` key of one archive knowledge source."
+    }
+  }
+}

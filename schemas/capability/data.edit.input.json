@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/data.edit.input.json",
+  "title": "data.edit input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "artifact": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$",
+      "description": "The file to edit, as an artifact."
+    },
+    "intake": {
+      "type": "string",
+      "pattern": "^[0-9]+/[0-9]+$",
+      "description": "The file he sent in chat, by intake id."
+    },
+    "text": {
+      "type": "string",
+      "maxLength": 204800,
+      "description": "The file's text, when it was pasted."
+    },
+    "format": {
+      "type": "string",
+      "enum": [
+        "yaml",
+        "json",
+        "xml",
+        "toml"
+      ],
+      "description": "The file's format; by default from its name, else from its text."
+    },
+    "expr": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "One yq expression, e.g. .a.b = \"x\" or del(.c)."
+    }
+  },
+  "required": [
+    "expr"
+  ]
+}

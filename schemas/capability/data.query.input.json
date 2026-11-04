@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/data.query.input.json",
+  "title": "data.query input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "artifacts": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "pattern": "^blake3:[0-9a-f]{64}$"
+      },
+      "description": "CSV, JSON or Parquet files. Each becomes a view named from its file: sales.csv is sales, artifact-aa.csv is artifact_aa."
+    },
+    "intake": {
+      "type": "string",
+      "pattern": "^[0-9]+/[0-9]+$",
+      "description": "A file he sent. Its view is named from the file, so sales.csv is sales."
+    },
+    "tables": {
+      "type": "object",
+      "maxProperties": 8,
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 204800
+      },
+      "description": "Pasted CSV by table name. For small data given in chat."
+    },
+    "sql": {
+      "type": "string",
+      "maxLength": 20000,
+      "description": "DuckDB SQL over those tables. One query; its rows come back, the first 200 inline."
+    },
+    "save_as": {
+      "type": "string",
+      "enum": [
+        "csv",
+        "parquet",
+        "json"
+      ],
+      "description": "Also returns the whole result as a file in this format. name sets the file stem; otherwise result."
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 80,
+      "description": "Saved file name without extension, when save_as is set. Letters and digits are kept; other characters become underscores."
+    }
+  },
+  "required": [
+    "sql"
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/code.navigate.output.json",
+  "title": "code.navigate output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": [
+        "definition",
+        "references",
+        "read",
+        "list",
+        "search",
+        "log",
+        "diff",
+        "show"
+      ]
+    },
+    "symbol": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "startLine": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "text": {
+      "type": "string"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "maxBytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "scannedBytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "line",
+          "text"
+        ]
+      }
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "mode",
+    "truncated"
+  ],
+  "oneOf": [
+    {
+      "required": ["symbol", "matches"],
+      "properties": { "mode": { "enum": ["definition", "references"] } }
+    },
+    {
+      "required": ["matches"],
+      "properties": { "mode": { "const": "search" } }
+    },
+    {
+      "required": ["path", "startLine", "text", "maxBytes", "scannedBytes"],
+      "properties": { "mode": { "const": "read" } }
+    },
+    {
+      "required": ["path", "entries"],
+      "properties": { "mode": { "const": "list" } }
+    },
+    {
+      "required": ["text", "maxBytes"],
+      "properties": { "mode": { "enum": ["log", "diff", "show"] } }
+    }
+  ]
+}

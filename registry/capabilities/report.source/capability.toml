@@ -1,0 +1,26 @@
+schema = "odin.registry.v1"
+toolset = "research"
+kind = "capability"
+enabled = true
+implementation = "pod-exec"
+version = 1
+description = "Writes one report source to path under /export. source is the complete UTF-8 document, at most 256 KiB; it is written as bytes and never evaluated or passed to a shell. path ends in .typ for the Typst source or .md for the companion markdown. Replaces the file if it already exists. The authority compiles the saved source with docs.render."
+handler = { id = "odin_pod_exec.run" }
+input_schema = "schemas/capability/report.source.input.json"
+output_schema = "schemas/capability/pod-exec.output.json"
+effect_class = "R1"
+seat_tags = ["operator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_pod_exec.receipt" }
+
+tests = [
+  "odin-omp host_tools::pod_exec::tests::every_shipped_pod_exec_capability_runs_its_declared_argv_and_fails_typed",
+]
+
+[exec]
+executable = "/bin/odin-source"
+argv = ["{path}"]
+stdin = { source = "source" }

@@ -1,0 +1,30 @@
+schema = "odin.registry.v1"
+kind = "container"
+enabled = "__enabled__"
+description = "__description__"
+# Container purpose identifier.
+purpose = "__purpose__"
+# Image reference or local runtime profile string.
+base = "__base__"
+# Seat IDs offered by the container; empty seat input means none.
+seats_offered = ["__seat__"]
+# Declared executable paths relative to the container.
+scripts = ["__script__"]
+# Watcher paths relative to the container; empty input means none.
+watchdogs = ["__watchdog__"]
+# Dotted field paths whose values define the container identity.
+identity_fields = ["purpose", "base", "scripts", "contents.kind", "monitoring.slice"]
+# Named scalar defaults that may change without changing identity.
+tunables = { __tunable_name__ = "__tunable_value__" }
+# Existing surface ID to expose.
+surface = ["__surface__"]
+
+[contents]
+# Content profile: odin_env, scripts, or adapter.
+kind = "__contents_kind__"
+
+[monitoring]
+# Existing slice ID used for monitoring.
+slice = "__slice__"
+# Monitoring interval in seconds; integer 1..86400.
+cadence_seconds = "__cadence_seconds__"

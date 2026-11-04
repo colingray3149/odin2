@@ -1,0 +1,14 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "Local WeMM embedding for brain retrieval on this fleet's hardware."
+# The card id providers and pods reference.
+id = "gateway/wemm-embedding-local"
+# Local-account cards are served by this fleet's own hardware and are exempt
+# from the AVAILABLE check.
+# chat or embedding; embedding cards declare no tier.
+capability = "embedding"
+# Account pin holding this card's credentials.
+account = "local"
+# One line naming when this card is the right pick.
+strengths = "The brain's local embedding leg; no upstream spend."

@@ -1,0 +1,14 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "Opus 5.5 through the Claude Code official client; consult-only, never seat turns."
+# The card id; consult names it.
+id = "claude/claude-opus-5-5"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "claude-code/claude-opus-5-5"
+# How the card is served: the Claude Code official client, not the gateway.
+route = "claude-code"
+# frontier, everyday or fast-cheap.
+tier = "frontier"
+# One line naming when this card is the right pick.
+strengths = "The deepest second opinion: one no-tools consult at high effort."

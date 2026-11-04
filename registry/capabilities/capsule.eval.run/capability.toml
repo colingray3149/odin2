@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "code"
+op = "eval"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Runs a short Python or Bun program inside the session's capsule (its own clone of the project) and returns its output. Worth it for computing, transforming files or checking an idea quickly; builds and tests have their own tools."
+handler = { id = "odin_eval.run" }
+input_schema = "schemas/capability/capsule.eval.run.input.json"
+output_schema = "schemas/capability/capsule.eval.run.output.json"
+effect_class = "R1"
+seat_tags = ["builder", "judge"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_eval.run_evidence" }
+tests = [
+  "odin-effector::operation_dispatch effector_operation_dispatch::eval_returns_program_output_and_refuses_a_source_that_does_not_match_its_hash",
+]

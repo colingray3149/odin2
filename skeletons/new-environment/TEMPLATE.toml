@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "environment"
+enabled = "__enabled__"
+description = "__description__"
+# Connection mode: k3s-pod, fleet-host, ssh-host, or remote-session.
+transport = "__transport__"
+# Fleet host ID, SSH user@host, or transcript host; omit for k3s-pod.
+host = "__host__"
+# Optional secret handle, never the credential value.
+credential = "__credential__"
+# Existing seat IDs allowed to run or observe here.
+seats = "__seats__"
+# Channel table: events, or transcript with path and format.
+observation = "__observation__"
+# Optional fleet-host confinement table: confine_writes and hidden paths.
+sandbox = "__sandbox__"
+# Optional detector tables: name plus match or silent_seconds.
+watchdog = "__watchdog__"

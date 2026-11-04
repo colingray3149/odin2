@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/codemap.check_index_coverage.input.json",
+  "title": "codemap.check_index_coverage input",
+  "properties": {
+    "project": {
+      "type": "string",
+      "enum": [
+        "dotfiles",
+        "odin",
+        "rig"
+      ],
+      "description": "Declared project name; it resolves to this host's indexed graph (codemap.list_projects lists what this host indexed)."
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 128
+    },
+    "path_limit": {
+      "type": "integer",
+      "default": 20,
+      "minimum": 1,
+      "maximum": 128
+    },
+    "path_offset": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32
+    },
+    "scope_limit": {
+      "type": "integer",
+      "default": 20,
+      "minimum": 1,
+      "maximum": 1000
+    },
+    "scope_offset": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0
+    },
+    "diagnostics": {
+      "type": "string",
+      "enum": [
+        "none",
+        "full"
+      ],
+      "default": "none"
+    },
+    "format": {
+      "type": "string",
+      "enum": [
+        "tree",
+        "json"
+      ],
+      "default": "tree"
+    }
+  },
+  "required": [
+    "project"
+  ]
+}

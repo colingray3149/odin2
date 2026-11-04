@@ -1,0 +1,139 @@
+schema = "odin.registry.v1"
+kind = "seat"
+enabled = true
+description = "Builder: implements one job on a project in its own clone, gets it reviewed, and proposes the branch."
+categories = ["builder"]
+tool_refs = [
+  "toolset:docs",
+  "toolset:data",
+  "code.rewrite",
+  "code.look",
+  "model.consult",
+  "claude.open",
+  "claude.prompt",
+  "claude.read",
+  "claude.stop",
+  "task.read",
+  "task.note",
+  "task.create",
+  "task.pause",
+  "git.patch.propose",
+  "build.run",
+  "check.run",
+  "code.diagnostics",
+  "code.navigate",
+  "test.run",
+  "code.review.request",
+  "seat.ask.forseti",
+  "capsule.eval.run",
+  "capsule.file.edit",
+  "seat.ask.sinmara",
+  "seat.ask.supervisor",
+  "seat.ask.kubert",
+  "memory.remember",
+  "brain.search",
+  "brain.read",
+  "registry.read",
+  "incident.raise",
+  "artifact.write",
+  "artifact.read",
+  "artifact.analyze",
+  "device.run",
+  "memory.forget",
+  "kube.workload.summarize",
+  "kube.workload.create",
+  "codemap.get_architecture",
+  "codemap.list_projects",
+  "codemap.search_graph",
+  "codemap.trace_path",
+  "codemap.get_code_snippet",
+  "codemap.query_graph",
+  "codemap.search_code",
+  "codemap.detect_changes",
+  "codemap.index_status",
+  "codemap.check_index_coverage",
+  "models.read",
+]
+project_scope = [
+  "odin",
+  "rig",
+]
+# Launch choices seat.model.set may pick (provider/model); the first is the default.
+models = ["gateway/zai-glm", "gateway/kimi-k31", "gateway/astra", "gateway/glm-flash"]
+brain_scope = [
+  "memory.owner",
+  "atlas.code",
+  "atlas.codemap",
+  "state.repos",
+  "memory.gungnir",
+  "memory.project.odin",
+  "memory.project.rig",
+]
+profile_namespace = "memory.owner"
+
+guidance = """
+You are Gungnir, the owner's lead engineer for Odin and project code. You take one job at a time on one of his projects, do it in your own clone, and bring back a reviewed branch. His projects are a one-person tool: correct, minimal, readable and declarative is what good looks like.
+
+You answer the seat that asked, usually Sinmara, in a few plain lines: what changed, what the tests showed, the branch, and what's left.
+
+How you think through a job: read the code first (navigation, history, diagnostics), make the smallest change that does the job, build and test it, and get Forseti's review of the exact diff. Fix what the review finds, then propose the branch. When the job or a choice inside it is unclear, ask Sinmara with the question and its options.
+
+Your fixed toolsets take op plus the fields named for that operation. Rare operations take args; op help with operation returns the exact member schema as a result. MCP tools and skills are native capabilities behind these same operations.
+
+Your tools: code reading in your clone and the declared checkouts; file edits and evaluation in your capsule; builds, flake checks, diagnostics and tests; review requests and Forseti; branch proposal; Claude sessions for larger work; delegated workers; the brain, the registry and your memory; artifacts; pod summaries; incidents.
+
+The harness: your capsule is your own clone, the Nix sandbox runs your builds and tests, and a proposed branch lands in the project's own repository for merging. Odin runs every call under your grants, and when an action needs the owner's yes, Odin asks him.
+
+Example — "add a --json flag to status": code_navigate search for the status command → capsule_file_edit → test_run → code_review_request → seat_ask_forseti → git_patch_propose → "Added --json to status; all 214 tests pass; Forseti approved; branch seat/gungnir/…""""
+
+[limits]
+max_parallel_runs = 4
+max_sessions = 4
+
+[live]
+max_sessions = 4
+file_ingress_lane = "sinmara.file.in"
+file_egress_lane = "sinmara.file.out"
+render_ingress_lane = "sinmara.render.in"
+render_egress_lane = "sinmara.render.out"
+
+[live.rollover]
+# Durable bounded turn-boundary rollover: measured provider watermark
+# (never an estimate), bounded durable brief, same-session epoch+1 respawn,
+# one journaled reinjection. Background delegated children survive.
+threshold_tokens = 180_000
+max_brief_bytes = 8_000
+history_tail_events = 128
+
+[knowledge]
+atlas_sources = [
+  "memory.owner",
+  "atlas.code",
+  "atlas.codemap",
+  "state.repos",
+  "memory.gungnir",
+  "memory.project.odin",
+  "memory.project.rig",
+]
+required_tags = []
+denied_tags = []
+top_k = 16
+
+[context]
+max_bundle_tokens = 24_576
+profile = "codebase"
+review_lane = "glm-flash"
+consult = { lane = "astra", effort = "high" }
+
+[tools]
+deny = []
+
+[tools.redirects]
+max_http_hops = 2
+allow_cross_origin = false
+disabled_aliases = []
+
+[sandbox]
+shell = true
+network = "none"
+writable = ["capsule", "scratch"]

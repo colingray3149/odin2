@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "calendar"
+op = "zone"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Records the time zone the owner is in now, optionally until a local end time. Clocks and reminders follow it. Worth it whenever he says he is somewhere for a while: a vague end gets a sensible time (evening is 18:00 there, a weekend ends Sunday 20:00), named in the confirmation."
+handler = { id = "time_zone_set" }
+input_schema = "schemas/capability/time.zone.set.input.json"
+output_schema = "schemas/capability/time.zone.set.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_time_zone_set_evidence" }
+tests = [
+  "odin-hermes::it runtime::schedule::reminders_are_set_listed_and_cancelled_in_the_owner_zone",
+]

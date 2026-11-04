@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/codemap.get_code_snippet.input.json",
+  "title": "codemap.get_code_snippet input",
+  "properties": {
+    "qualified_name": {
+      "type": "string",
+      "description": "Full qualified_name from search_graph, or short function name"
+    },
+    "project": {
+      "type": "string",
+      "enum": [
+        "dotfiles",
+        "odin",
+        "rig"
+      ],
+      "description": "Declared project name; it resolves to this host's indexed graph (codemap.list_projects lists what this host indexed)."
+    },
+    "include_neighbors": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "qualified_name",
+    "project"
+  ]
+}

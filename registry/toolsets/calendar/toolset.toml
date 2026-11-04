@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Calendar, reminders, routines on a schedule or an event, the time and time zones."
+examples = [
+  'calendar {op: events, account, start, end}',
+  'calendar {op: remind, text, at}',
+]

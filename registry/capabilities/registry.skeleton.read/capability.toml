@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "odin"
+op = "skeleton"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Reads the variables one registry skeleton takes: name, type, required, meaning. Fill them with registry.author or registry.author.grant."
+handler = { id = "registry_skeleton_read" }
+input_schema = "schemas/capability/registry.skeleton.read.input.json"
+output_schema = "schemas/capability/registry.skeleton.read.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_registry_skeleton_read_evidence" }
+tests = [
+  "odin-hermes::it runtime::registry_author::a_skeleton_read_returns_the_routes_variables_and_names_an_unknown_skeleton",
+]

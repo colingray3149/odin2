@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "delegate"
+op = "helper"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Propose a helper seat. Spins up a temporary helper for one piece of work the owner asks for (\"spin up a temporary helper to …\"): a copy of the closest builder or judge seat on existing projects, with only the template tools named, retired on its own when its delegated work is done or at its expiry (1 to 24 hours, a few hours suits most jobs). The job is delegated to it after Odin's next idle reload."
+handler = { id = "seat_propose" }
+input_schema = "schemas/capability/seat.propose.input.json"
+output_schema = "schemas/capability/seat.propose.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_seat_propose_evidence" }
+tests = [
+  "odin-cli::bin/odind project_authoring::tests::a_proposed_seat_is_a_narrowed_copy_and_its_retirement_is_the_exact_inverse",
+]

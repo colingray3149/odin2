@@ -1,0 +1,191 @@
+struct CanonicalComparator<'a> {
+    expected: &'a [u8],
+    written: usize,
+    mismatch: bool,
+}
+impl<'a> CanonicalComparator<'a> {
+    const fn new(expected: &'a [u8]) -> Self {
+        Self {
+            expected,
+            written: 0,
+            mismatch: false,
+        }
+    }
+    const fn matches(&self) -> bool {
+        !self.mismatch && self.written == self.expected.len()
+    }
+}
+impl Write for CanonicalComparator<'_> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.write_all(buffer)?;
+        Ok(buffer.len())
+    }
+    fn write_all(&mut self, buffer: &[u8]) -> std::io::Result<()> {
+        let end = self.written.saturating_add(buffer.len());
+        if self.expected.get(self.written..end) != Some(buffer) {
+            self.mismatch = true;
+        }
+        self.written = end;
+        Ok(())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+struct BoundedPayloadWriter {
+    payload: Vec<u8>,
+    written: usize,
+    ceiling: usize,
+}
+impl BoundedPayloadWriter {
+    const fn new(ceiling: usize) -> Self {
+        Self {
+            payload: Vec::new(),
+            written: 0,
+            ceiling,
+        }
+    }
+    fn finish(self) -> Result<Vec<u8>, ProtocolError> {
+        if self.written == 0 {
+            return Err(ProtocolError::EmptyFrame);
+        }
+        if self.written > self.ceiling {
+            return Err(ProtocolError::FrameTooLarge {
+                declared: self.written,
+                ceiling: self.ceiling,
+            });
+        }
+        debug_assert_eq!(self.payload.len(), self.written);
+        Ok(self.payload)
+    }
+}
+impl Write for BoundedPayloadWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.write_all(buffer)?;
+        Ok(buffer.len())
+    }
+    fn write_all(&mut self, buffer: &[u8]) -> std::io::Result<()> {
+        self.written = self
+            .written
+            .checked_add(buffer.len())
+            .ok_or_else(|| std::io::Error::other("canonical payload length overflow"))?;
+        let retained = self.ceiling.saturating_sub(self.payload.len());
+        self.payload
+            .extend_from_slice(&buffer[..retained.min(buffer.len())]);
+        Ok(())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn decode_payload<T>(payload: &[u8], ceiling: usize) -> Result<T, ProtocolError>
+where
+    T: DeserializeOwned + Serialize,
+{
+    if payload.is_empty() {
+        return Err(ProtocolError::EmptyFrame);
+    }
+    if payload.len() > ceiling {
+        return Err(ProtocolError::FrameTooLarge {
+            declared: payload.len(),
+            ceiling,
+        });
+    }
+    let value: T = odin_strict_json::decode(payload, ceiling)
+        .map_err(|error| ProtocolError::Decode(error.to_string()))?;
+    let mut comparator = CanonicalComparator::new(payload);
+    odin_strict_json::canonicalize_to_writer(&value, &mut comparator)
+        .map_err(|error| ProtocolError::Decode(error.to_string()))?;
+    if !comparator.matches() {
+        return Err(ProtocolError::Decode(
+            "v2 payload is not canonical JSON".to_string(),
+        ));
+    }
+    Ok(value)
+}
+pub fn decode_request_payload(payload: &[u8], ceiling: usize) -> Result<Request, ProtocolError> {
+    decode_payload(payload, ceiling)
+}
+pub fn encode_request_payload(request: &Request, ceiling: usize) -> Result<Vec<u8>, ProtocolError> {
+    let counted = canonical_size_request(request)?;
+    if counted > ceiling {
+        return Err(ProtocolError::FrameTooLarge {
+            declared: counted,
+            ceiling,
+        });
+    }
+    let mut writer = BoundedPayloadWriter::new(ceiling);
+    odin_strict_json::canonicalize_to_writer(request, &mut writer)
+        .map_err(|error| ProtocolError::Encode(error.to_string()))?;
+    let payload = writer.finish()?;
+    if payload.len() != counted {
+        return Err(ProtocolError::Encode(format!(
+            "canonical size preflight drifted: counted {counted}, encoded {}",
+            payload.len()
+        )));
+    }
+    Ok(payload)
+}
+pub fn decode_response_payload(payload: &[u8], ceiling: usize) -> Result<Response, ProtocolError> {
+    decode_payload(payload, ceiling)
+}
+pub fn encode_response_payload(
+    response: &Response,
+    ceiling: usize,
+) -> Result<Vec<u8>, ProtocolError> {
+    let counted = canonical_size_response(response)?;
+    if counted > ceiling {
+        return Err(ProtocolError::FrameTooLarge {
+            declared: counted,
+            ceiling,
+        });
+    }
+    let mut writer = BoundedPayloadWriter::new(ceiling);
+    odin_strict_json::canonicalize_to_writer(response, &mut writer)
+        .map_err(|error| ProtocolError::Encode(error.to_string()))?;
+    let payload = writer.finish()?;
+    if payload.len() != counted {
+        return Err(ProtocolError::Encode(format!(
+            "canonical size preflight drifted: counted {counted}, encoded {}",
+            payload.len()
+        )));
+    }
+    Ok(payload)
+}
+pub fn read_request(
+    reader: &mut impl Read,
+    limits: WireLimits,
+) -> Result<Option<Request>, ProtocolError> {
+    let Some(payload) = crate::read_payload(reader, limits.max_request_bytes())? else {
+        return Ok(None);
+    };
+    decode_request_payload(&payload, limits.max_request_bytes()).map(Some)
+}
+pub fn write_request(
+    writer: &mut impl Write,
+    request: &Request,
+    limits: WireLimits,
+) -> Result<(), ProtocolError> {
+    let payload = encode_request_payload(request, limits.max_request_bytes())?;
+    crate::write_payload(writer, &payload, limits.max_request_bytes())
+}
+pub fn read_response(
+    reader: &mut impl Read,
+    limits: WireLimits,
+) -> Result<Option<Response>, ProtocolError> {
+    let Some(payload) = crate::read_payload(reader, limits.max_frame_bytes())? else {
+        return Ok(None);
+    };
+    decode_response_payload(&payload, limits.max_frame_bytes()).map(Some)
+}
+pub fn write_response(
+    writer: &mut impl Write,
+    response: &Response,
+    limits: WireLimits,
+) -> Result<(), ProtocolError> {
+    let payload = encode_response_payload(response, limits.max_frame_bytes())?;
+    crate::write_payload(writer, &payload, limits.max_frame_bytes())
+}
+

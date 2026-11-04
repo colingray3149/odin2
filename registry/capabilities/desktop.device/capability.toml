@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "desktop"
+expose = "on_demand"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Used on the desktop only when the owner asks."
+handler = { id = "desktop_device" }
+input_schema = "schemas/capability/desktop.device.input.json"
+output_schema = "schemas/capability/desktop.act.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 180
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_desktop_act_evidence" }
+tests = [
+  "odin-desk devices::fleet_tests::an_alias_resolves_one_hop_and_refuses_a_name_that_names_two_things",
+]

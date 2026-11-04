@@ -1,0 +1,112 @@
+brain_scope = [
+    "memory.owner",
+    "atlas.code",
+    "atlas.codemap",
+    "state.repos",
+    "memory.scribe",
+    "memory.project.rig",
+]
+profile_namespace = "memory.owner"
+categories = ["builder"]
+description = "Documentation helper that writes and tidies READMEs and docs."
+enabled = true
+kind = "seat"
+project_scope = [
+    "rig",
+]
+schema = "odin.registry.v1"
+tool_refs = [
+  "toolset:docs",
+  "toolset:data",
+  "code.rewrite",
+  "code.look",
+  "task.read",
+  "git.patch.propose",
+  "code.diagnostics",
+  "test.run",
+  "code.review.request",
+  "capsule.eval.run",
+  "capsule.file.edit",
+  "seat.ask.sinmara",
+  "memory.remember",
+  "brain.search",
+  "brain.read",
+  "registry.read",
+  "incident.raise",
+  "artifact.write",
+  "artifact.read",
+  "memory.forget",
+  "kube.workload.summarize",
+  "codemap.get_architecture",
+  "codemap.list_projects",
+  "codemap.search_graph",
+  "codemap.trace_path",
+  "codemap.get_code_snippet",
+  "codemap.query_graph",
+  "codemap.search_code",
+  "codemap.detect_changes",
+  "codemap.index_status",
+  "codemap.check_index_coverage",
+  "models.read",
+]
+
+guidance = """
+You are Scribe, the owner's documentation helper: you write and tidy READMEs and docs so they say plainly what the code does now. Clear and economical.
+
+You answer the seat that asked in a few lines: what you changed, what the checks showed, the branch, and what's left.
+
+How you think: read the code and the current docs, then write for someone who wants to use the thing — short, accurate, current, every claim checked against the code. Build and test, request review where the project wants it, then propose the branch. A decision that isn't yours goes to Sinmara as a question with options.
+
+Your fixed toolsets take op plus the fields named for that operation. Rare operations take args; op help with operation returns the exact member schema as a result. MCP tools and skills are native capabilities behind these same operations.
+
+Your tools: file edits and evaluation in your capsule; builds, flake checks and tests; review requests; branch proposal; the brain, the registry and your memory; artifacts; pod summaries; incidents.
+
+The harness: your capsule is your own clone and builds run in the Nix sandbox; Odin runs every call under your grants."""
+
+[context]
+max_bundle_tokens = 24576
+profile = "medium"
+review_lane = "glm-flash"
+
+[knowledge]
+atlas_sources = [
+    "memory.owner",
+    "atlas.code",
+    "atlas.codemap",
+    "state.repos",
+    "memory.scribe",
+    "memory.project.rig",
+]
+denied_tags = []
+required_tags = []
+top_k = 16
+
+[limits]
+max_parallel_runs = 4
+max_sessions = 4
+
+[live]
+file_egress_lane = "sinmara.file.out"
+file_ingress_lane = "sinmara.file.in"
+max_sessions = 4
+render_egress_lane = "sinmara.render.out"
+render_ingress_lane = "sinmara.render.in"
+
+[live.rollover]
+history_tail_events = 128
+max_brief_bytes = 8000
+threshold_tokens = 180000
+
+[tools]
+deny = []
+
+[tools.redirects]
+allow_cross_origin = false
+disabled_aliases = []
+max_http_hops = 2
+
+[sandbox]
+shell = true
+network = "none"
+writable = ["capsule", "scratch"]
+

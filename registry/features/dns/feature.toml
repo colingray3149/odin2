@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Host DNS resolver"
+description = "dnscrypt-proxy is active on mini, the resolver the VPN and library DNS depend on."
+probes = [
+  "unit:mini system dnscrypt-proxy.service",
+]

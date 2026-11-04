@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "models"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Run one prompt through one local model on the local list, as a single user message with a required max_tokens cap. Meant for rewrites that keep the caller's wording decisions - a humanizing pass over a draft section - not questions (ask those yourself or consult a stronger model). Returns the text with the lane that served it, seconds, tokens and cost; the request is spend-tagged seat:<seat>,complete and odind logs one model.complete line per call."
+handler = { id = "model_complete" }
+input_schema = "schemas/capability/model.complete.input.json"
+output_schema = "schemas/capability/model.complete.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "builder"]
+timeout_seconds = 600
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_model_complete_evidence" }
+tests = [
+  "odin-hermes runtime::model_complete::tests::one_prompt_reaches_the_local_lane_with_its_cap",
+  "odin-hermes runtime::model_complete::tests::a_refusing_lane_names_its_status_and_message",
+]

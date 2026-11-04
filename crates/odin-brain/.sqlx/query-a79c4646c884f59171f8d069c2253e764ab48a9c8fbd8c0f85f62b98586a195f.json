@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT generation_id, ordinal, text FROM brain_chunk\n                 WHERE generation_id = ANY($1) AND embedding IS NULL\n                 ORDER BY generation_id, ordinal LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "generation_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "ordinal",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "text",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "a79c4646c884f59171f8d069c2253e764ab48a9c8fbd8c0f85f62b98586a195f"
+}

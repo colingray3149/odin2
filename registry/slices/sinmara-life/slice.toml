@@ -1,0 +1,52 @@
+schema = "odin.registry.v1"
+kind = "slice"
+inherit_seat_grants = true
+enabled = true
+description = "Sinmara coordinator slice: exactly the currently enabled governed capabilities the coordinator seat admits (cross-seat asks, vault knowledge, task/context/browser reads, conversational workload authoring via R2 draft and operator-approved R3 publish) over compiled host-tool handlers bound to the odin-hermes runtime."
+variables = {}
+[redirects]
+out_of_scope = "NeedsPlan"
+
+[knowledge]
+required = false
+atlas_sources = [
+  "memory.owner", "atlas.codemap", "state.registry", "state.live", "state.tasks",
+  "memory.sinmara", "ops.history",
+]
+retrieval_mode = "hybrid"
+candidate_limit = 128
+top_k = 16
+min_score_micros = 1
+chunk_tokens = 512
+chunk_overlap_tokens = 64
+embedding_backend = "local"
+
+[context]
+# Budgets count UTF-8 bytes (the pinned default counter; ~4 bytes per token);
+# sized for bounded conversational sessions that roll over well below the window.
+max_bundle_tokens = 196608
+reserve_output_tokens = 16384
+control_tokens = 8192
+history_tokens = 139264
+core_tokens = 2_048
+prefetch_tokens = 2_048
+tool_result_tokens = 6144
+tool_schema_tokens = 16384
+max_item_tokens = 16384
+
+[tools]
+deny = []
+
+[tools.redirects]
+max_http_hops = 2
+allow_cross_origin = false
+allow_https_downgrade = false
+
+[live]
+max_sessions_per_seat = 4
+max_prompt_bytes = 262144
+transfer_chunk_bytes = 1048576
+max_file_bytes = 268435456
+max_render_bytes = 67108864
+allowed_file_media_types = ["application/pdf", "text/plain", "image/png"]
+allowed_render_media_types = ["image/png", "image/jpeg", "image/svg+xml", "application/pdf"]

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/model.consult.input.json",
+  "title": "model.consult input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "question": {
+      "description": "The whole question; the consulted model sees nothing else of the conversation.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "material": {
+      "description": "Material the question needs: excerpts, figures, a paper's text.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120000
+    },
+    "model": {
+      "description": "The model to ask: one of the frontier models this host serves. Omit it to ask your seat's declared consult lane.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "question"
+  ]
+}

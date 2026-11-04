@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "calendar"
+op = "now"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Current time in any IANA time zone, the owner's current zone when none is named."
+handler = { id = "time_get_current_time" }
+input_schema = "schemas/capability/time.get_current_time.input.json"
+output_schema = "schemas/capability/time.get_current_time.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_time_get_current_time_evidence" }
+tests = [
+  "odin-hermes runtime::time_ops::tests::current_time_reports_the_named_zone_at_the_instant",
+]

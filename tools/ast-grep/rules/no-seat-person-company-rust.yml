@@ -1,0 +1,9 @@
+id: no-seat-person-company-rust
+language: rust
+severity: error
+message: seat or person name hardcoded; routing identities belong in the registry
+rule:
+  any:
+    - kind: string_literal
+    - kind: raw_string_literal
+  regex: '(?i)\b(sinmara|gungnir|kubert|forseti|reginn|colin)\b'

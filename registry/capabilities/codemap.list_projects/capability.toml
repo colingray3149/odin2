@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "code"
+op = "projects"
+kind = "capability"
+enabled = true
+implementation = "codemap"
+version = 1
+description = "List indexed projects. The projects the code graph indexes on this host, with checkout paths, node and edge counts and when each was last indexed. Each id ends with the declared project name, the one every code op takes."
+handler = { id = "odin_adapter.operation" }
+input_schema = "schemas/capability/codemap.list_projects.input.json"
+output_schema = "schemas/capability/codemap.list_projects.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "builder", "judge"]
+timeout_seconds = 60
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_adapter.receipt" }
+tests = [
+  "odin-adapter-mcp::bin/odin-adapter-mcp tests::each_declared_codemap_tool_is_served_and_a_drifted_surface_is_refused",
+]

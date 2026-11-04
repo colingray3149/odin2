@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/files.list.input.json",
+  "title": "files.list input",
+  "description": "No root: the declared roots the seat may read. A root: its top directory, or path's directory, or with find the files below whose name contains find.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "root": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "path": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "find": { "type": "string", "minLength": 1, "maxLength": 128 }
+  }
+}

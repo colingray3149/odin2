@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/jobs.list.output.json",
+  "title": "jobs.list output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "jobs": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "job": { "type": "string", "minLength": 2, "maxLength": 24 },
+          "tool": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "about": { "type": "string", "maxLength": 400 },
+          "state": { "enum": ["running", "done", "failed"] },
+          "elapsedSeconds": { "type": "integer", "minimum": 0 },
+          "deadlineSeconds": { "type": "integer", "minimum": 0 },
+          "outcome": { "type": "string", "maxLength": 1200 }
+        },
+        "required": ["job", "tool", "about", "state", "elapsedSeconds", "deadlineSeconds"]
+      }
+    }
+  },
+  "required": ["jobs"]
+}

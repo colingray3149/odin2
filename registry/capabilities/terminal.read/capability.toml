@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "status"
+op = "terminal"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Read a terminal session. Reads the screen of one of the owner's terminal sessions, read-only. An unknown session is reported as unavailable."
+handler = { id = "terminal_read" }
+input_schema = "schemas/capability/terminal.read.input.json"
+output_schema = "schemas/capability/terminal.read.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_terminal_read_evidence" }
+tests = [
+  "odin-hermes runtime::dispatch_handler_tests::a_terminal_read_serves_the_bound_screen_within_its_declared_limit",
+  "odin-omp live::zellij::cli::session_tests::the_operator_terminal_screen_is_read_bounded_from_the_registered_session_only",
+]

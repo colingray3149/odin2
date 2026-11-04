@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "session": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "discard_unpushed": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "session"
+  ],
+  "additionalProperties": false
+}

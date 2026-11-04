@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "desktop"
+expose = "on_demand"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Used on the desktop only when the owner asks."
+handler = { id = "desktop_headless" }
+input_schema = "schemas/capability/desktop.headless.input.json"
+output_schema = "schemas/capability/desktop.act.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 180
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_desktop_act_evidence" }
+tests = [
+  "odin-desk devices::fleet_tests::an_app_on_the_private_display_sees_its_own_bus_and_profile_never_the_physical_session",
+]

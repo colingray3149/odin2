@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/control/adapter-status.schema.json",
+  "title": "Odin adapter health and status",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "odin.adapter.status.v1" },
+    "adapter": { "$ref": "#/$defs/adapter_identity" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "health": {
+      "type": "string",
+      "enum": ["starting", "ready", "degraded", "unavailable", "recovering", "stopped"]
+    },
+    "taint": { "type": "string", "enum": ["clean", "credential_tainted"] },
+    "active_operations": { "type": "integer", "minimum": 0 },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "last_failure": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": { "$ref": "#/$defs/id" },
+            "retryable": { "type": "boolean" },
+            "operation_id": {
+              "oneOf": [
+                { "$ref": "#/$defs/id" },
+                { "type": "null" }
+              ]
+            }
+          },
+          "required": ["code", "retryable", "operation_id"]
+        }
+      ]
+    },
+    "evidence_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    }
+  },
+  "required": [
+    "schema",
+    "adapter",
+    "revision",
+    "health",
+    "taint",
+    "active_operations",
+    "observed_at",
+    "last_failure",
+    "evidence_refs"
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,191}$"
+    },
+    "adapter_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "adapter_id": { "$ref": "#/$defs/id" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "binding_digest": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" }
+      },
+      "required": ["adapter_id", "version", "binding_digest"]
+    }
+  }
+}

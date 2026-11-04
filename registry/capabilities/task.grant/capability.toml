@@ -1,0 +1,23 @@
+schema = "odin.registry.v1"
+toolset = "delegate"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Request approval for an exact batch of effects. Records the owner's yes once for a delegated plan that acts for him over time, such as a pod working on his accounts: the exact batch of email sends or consequential browser steps, with a use cap and a lifetime. Each listed effect may then run once without another question, for this session and its workers; anything outside it is asked as usual, and purchases are asked one by one. Worth it before running such a plan end to end: set a wake as your own watchdog, close everything when done, and send him the results."
+handler = { id = "task_grant" }
+input_schema = "schemas/capability/task.grant.input.json"
+output_schema = "schemas/capability/task.grant.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "owner"
+preview = "batch"
+batch = { max_effects = 16, max_minutes = 1440, max_uses = 500 }
+evidence_extractor = { id = "odin_hermes_task_grant_evidence" }
+tests = [
+  "odin-cli::browser_batch owner_decided_browser_batch_runs_each_entry_once_through_the_real_coordinator",
+]

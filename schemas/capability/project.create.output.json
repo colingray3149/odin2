@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/project.create.output.json",
+  "title": "project.create output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "project": { "type": "string" },
+    "root": { "type": "string" },
+    "lanes": { "type": "array", "items": { "type": "string" } },
+    "publishedRevision": { "type": "integer", "minimum": 1 },
+    "commit": { "type": "string" },
+    "activation": { "type": "string" }
+  },
+  "required": ["project", "root", "lanes", "publishedRevision", "commit", "activation"]
+}

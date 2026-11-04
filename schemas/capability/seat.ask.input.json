@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/seat.ask.input.json",
+  "title": "seat.ask input",
+  "description": "Structured cross-seat delegation through the one generic seat_ask primitive. The model never names a seat: the dispatch target is the capability's published delegate_to, and _delegate_to repeats it as host-only canonical metadata — the host normalizes it from the same published contract before journaling and approval, the model can neither select nor omit it, and any routing change therefore changes the approved arguments digest, so an old approval for one target can never authorize another. R3: the ask dispatches a governed worker with enough mandate to act, so the kernel approval gate (ApprovalRequirement::Operator) must approve the exact dispatch scope first, and a denial is recorded durably with no dispatch. approvalId is a model-supplied selector naming the exact approval on the phase-two dispatch — never itself authority: the kernel consumes that exact approval server-side, and the host executor passes the unforgeable authorized-operation proof onward. The caller's identity is scope-derived: there is no caller_seat field, and the caller seat, lane, session, and run stay the actual invocation scope. Options carry opaque action references only — never credentials, account data, or secret material. The durable ask command is keyed by the kernel's idempotency authority, so exactly one recorded ask exists per idempotency key (CORE-004).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "_delegate_to": {
+      "readOnly": true,
+      "description": "Host-only canonical metadata: the dispatch target seat, normalized by the host from the capability's published delegate_to before journaling and approval. Never model-selected and never defaulted; it must appear verbatim so a routing change invalidates prior approvals.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "project": {
+      "description": "Registry project id for the delegated worker.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "question": {
+      "description": "The work or question to delegate.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "options": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "action_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "label",
+          "action_ref"
+        ]
+      }
+    },
+    "urgency": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "wait_seconds": {
+      "description": "Wait up to this many seconds, limited by the operation deadline; omitted waits the seat's inline_seconds, so a short ask answers in this turn and a long one reports by wake. Returns the child's status and last answer, or null if no answer is available. task_read refreshes these fields.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 600
+    },
+    "provider": {
+      "description": "With model: one of the target seat's declared launch options for this ask only. Steer the child with task_steer, read it with task_read and end it with task_pause action stop. The seat's chosen lane is never changed by it.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    }
+  },
+  "required": [
+    "_delegate_to",
+    "subject",
+    "question",
+    "urgency"
+  ],
+  "dependentRequired": {
+    "provider": [
+      "model"
+    ],
+    "model": [
+      "provider"
+    ]
+  }
+}

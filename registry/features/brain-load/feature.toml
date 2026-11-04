@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Brain record load"
+description = "The brain-load service ran on mini within the last 70 minutes, matching its hourly timer."
+probes = [
+  "unit:mini user brain-load.service 70m",
+]

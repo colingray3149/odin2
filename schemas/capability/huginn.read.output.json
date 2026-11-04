@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/huginn.read.output.json",
+  "title": "huginn.read output",
+  "description": "The daemon's read-only answer for one Huginn query: the echo of the requested kind and the real projection object exactly as the loopback daemon served it. An unreachable daemon or unpaired surface is a typed host-tool error, never a synthesized snapshot.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "const": "ok"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["status", "session"]
+    },
+    "projection": {
+      "type": "object"
+    }
+  },
+  "required": ["status", "kind", "projection"]
+}

@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+toolset = "research"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Clicks, types and scrolls in the browser of the pod this session runs in. The session's declared action policy decides what is allowed; page content and field values come back through browser.observe."
+handler = { id = "odin_browser.interact" }
+input_schema = "schemas/capability/browser.interact.input.json"
+output_schema = "schemas/capability/browser.interact.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator", "operator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_browser.interact_evidence" }
+tests = [
+  "odin-cli browser_runtime::coordinator::host::tests::an_ordinary_interaction_without_a_binding_is_bound_by_the_host",
+]

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/code.rewrite.output.json",
+  "title": "code.rewrite result",
+  "type": "object",
+  "required": ["done", "total"],
+  "properties": {
+    "done": { "type": "string" },
+    "total": { "type": "integer", "minimum": 0 },
+    "applied": { "type": "boolean" },
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "text": { "type": "string" },
+          "replacement": { "type": "string" }
+        }
+      }
+    },
+    "changed_files": { "type": "array", "items": { "type": "string" } }
+  }
+}

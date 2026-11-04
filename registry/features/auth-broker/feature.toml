@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "OMP auth broker"
+description = "The OMP auth broker and its loopback auth gateway are active on mini; this proves the units run, not that a sign-in is valid."
+probes = [
+  "unit:mini user omp-auth-broker.service",
+  "unit:mini user omp-auth-gateway.service",
+]

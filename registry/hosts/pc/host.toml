@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "host"
+enabled = true
+description = "Enrolled CUDA, rendering, and simulation worker host on the tailnet."
+hardware = "x86_64 desktop; NVIDIA GPU"
+role = "worker"
+tailscale = "pc"
+enrolled = true

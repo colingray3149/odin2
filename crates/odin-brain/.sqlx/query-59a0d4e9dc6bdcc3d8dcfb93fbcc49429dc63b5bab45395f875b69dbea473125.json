@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE brain_chunk SET model = $3, embedding = $4::real[]::halfvec\n                     WHERE generation_id = $1 AND ordinal = $2 AND embedding IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Text",
+        "Float4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "59a0d4e9dc6bdcc3d8dcfb93fbcc49429dc63b5bab45395f875b69dbea473125"
+}

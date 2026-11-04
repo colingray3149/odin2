@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "odin"
+op = "model"
+expose = "on_demand"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Chooses one of a seat's allowed provider/model launch choices and switches its live session when possible. It applies to future sessions; it is journaled. A lane's thinking level comes with the lane (astra runs at medium thinking), so \"astra, medium thinking\" is simply the astra switch."
+handler = { id = "seat_model_set" }
+input_schema = "schemas/capability/seat.model.set.input.json"
+output_schema = "schemas/capability/seat.model.set.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_seat_model_set_evidence" }
+tests = [
+]

@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "Gemini Flash on the Google AI Studio free key."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/gemini-free"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "google/gemini-flash-latest"
+# frontier, everyday or fast-cheap.
+tier = "fast-cheap"
+# Position in the class try order.
+order = 8
+# Account pin holding this card's credentials.
+account = "google-ai-studio"
+# One line naming when this card is the right pick.
+strengths = "Gemini Flash on AI Studio's free tier; the alias tracks the current Flash."

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/memory.remember.output.json",
+  "title": "memory.remember output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "remembered": {
+      "type": "boolean"
+    },
+    "page": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "commit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "knowledgeRefreshUnavailable": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "remembered"
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/git.branch.merge.output.json",
+  "title": "git.branch.merge output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "mergeCommit": {
+      "type": "string"
+    },
+    "remote": {
+      "type": "string"
+    },
+    "rootFastForwarded": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "project",
+    "branch",
+    "mergeCommit",
+    "remote",
+    "rootFastForwarded"
+  ]
+}

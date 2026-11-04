@@ -1,0 +1,41 @@
+{
+  "sessionId": "00000000-0000-4000-8000-000000000701",
+  "rules": {
+    "activate": {
+      "approvalRequired": true,
+      "capabilityId": "browser.consequential",
+      "capabilityVersion": 1,
+      "effectClass": "R2"
+    },
+    "fill": {
+      "approvalRequired": false,
+      "capabilityId": "browser.interact",
+      "capabilityVersion": 1,
+      "effectClass": "R2"
+    },
+    "navigate": {
+      "approvalRequired": false,
+      "capabilityId": "browser.interact",
+      "capabilityVersion": 1,
+      "effectClass": "R0"
+    },
+    "pressKey": {
+      "approvalRequired": true,
+      "capabilityId": "browser.consequential",
+      "capabilityVersion": 1,
+      "effectClass": "R3"
+    },
+    "screenshot": {
+      "approvalRequired": false,
+      "capabilityId": "browser.observe",
+      "capabilityVersion": 1,
+      "effectClass": "R0"
+    },
+    "submitForm": {
+      "approvalRequired": true,
+      "capabilityId": "browser.consequential",
+      "capabilityVersion": 1,
+      "effectClass": "R3"
+    }
+  }
+}

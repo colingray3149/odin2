@@ -1,0 +1,24 @@
+schema = "odin.registry.v1"
+toolset = "kube"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Restarts one pod Job by run id, given the resourceVersion observed at admission, recreating it from its published profile. With targetNode it moves the pod to that node, within its declared placement, carrying its per-pod state across as a checkpoint artifact."
+handler = { id = "odin_kube.workload.restart" }
+input_schema = "schemas/capability/kube.workload.restart.input.json"
+output_schema = "schemas/capability/kube.workload.restart.output.json"
+effect_class = "R3"
+seat_tags = ["operator"]
+# Covers the runtime's actuation bound: the declared 120s teardown window
+# plus 2 bounded 30s request phases and 10s slack (190s), plus the 320s a
+# rehome may take to carry node-bound state to its target (520s).
+timeout_seconds = 520
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_kube.workload.restart_evidence" }
+tests = [
+  "odin-cli::bin/odind kube_runtime::execution::job_verbs::restart_recreates_the_job_from_its_launch",
+  "odin-kube reconciler::create::launch_shape_tests::initial_target_mini_rehomes_to_pc_preserving_shared_state_and_profile",
+]

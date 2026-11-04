@@ -1,0 +1,14 @@
+schema = "odin.registry.v1"
+kind = "context-profile"
+enabled = true
+description = "Conversation and review seats: core memory, live memory and brain context at session start and after compaction; every turn carries cards for the people, projects and places it names."
+# Core memory token budget in the system prompt; integer 1..4294967295.
+core_tokens = 2_048
+# Retrieval token budget at session start and after compaction; integer 1..4294967295.
+inject_tokens = 2_048
+# Maximum retrieved items per context injection; integer 1..65535.
+inject_k = 8
+# Record cards per turn for the people, projects and places it names; integer 0..inject_tokens.
+per_turn_tokens = 512
+# Live working memory (open tasks, jobs, sessions, their notes) at session start and after compaction; integer.
+live_tokens = 3_072

@@ -1,0 +1,28 @@
+id: duration-literal-rust
+language: rust
+severity: error
+message: duration literal; name it as a const
+rule:
+  all:
+    - any:
+        - pattern: Duration::from_secs($N)
+        - pattern: Duration::from_millis($N)
+        - pattern: Duration::from_micros($N)
+        - pattern: Duration::from_nanos($N)
+        - pattern: Duration::from_secs_f64($N)
+        - pattern: Duration::from_secs_f32($N)
+        - pattern: std::time::Duration::from_secs($N)
+        - pattern: std::time::Duration::from_millis($N)
+        - pattern: std::time::Duration::from_micros($N)
+        - pattern: std::time::Duration::from_nanos($N)
+    - not:
+        inside:
+          any:
+            - kind: const_item
+            - kind: static_item
+          stopBy: end
+constraints:
+  N:
+    any:
+      - kind: integer_literal
+      - kind: float_literal

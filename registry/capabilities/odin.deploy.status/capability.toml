@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "odin"
+op = "deploy_status"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Reads where one Odin deploy stands, optionally following it for up to 15 minutes."
+handler = { id = "odin_deploy_status" }
+input_schema = "schemas/capability/odin.deploy.status.input.json"
+output_schema = "schemas/capability/odin.deploy.status.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 960
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_odin_deploy_status_evidence" }
+tests = [
+  "odin-hermes runtime::coding::deploy::tests::a_vanished_ship_is_failed_and_a_live_one_still_running",
+]

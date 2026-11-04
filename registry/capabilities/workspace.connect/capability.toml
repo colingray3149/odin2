@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "status"
+op = "workspace"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Connect a project's workspace. Opens a workspace for the owner: a live zellij session on the fleet, or a declared project's source tree on a fleet host. With openOn (the device he is at) it opens on that device's desktop, a terminal attached to the session or Zed on the project over ssh, and says what opened where; without it, it returns the command. Worth it whenever he asks to open or hand him a workspace, editor or terminal. An unknown target, an offline host or device, or a locked screen is refused and nothing opens."
+handler = { id = "odin_hermes.workspace_connect" }
+input_schema = "schemas/capability/workspace.connect.input.json"
+output_schema = "schemas/capability/workspace.connect.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 15
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes.workspace_connect_evidence" }
+tests = [
+  "odin-cli::bin/odind hermes::workspace_launch::workspace_open_tests::owned_launch_preserves_shell_expansion_through_systemd_arguments",
+  "odin-cli::bin/odind hermes::workspace_launch::workspace_open_tests::an_unknown_desktop_session_is_locked",
+]

@@ -1,0 +1,19 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "GLM 5.3 on the Z.ai Coding account."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/zai-glm"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "zai/glm-5.3"
+# frontier, everyday or fast-cheap.
+tier = "everyday"
+# Position in the class try order.
+order = 2
+# Account pin holding this card's credentials.
+account = "zai-coding"
+# One line naming when this card is the right pick.
+strengths = "Solid everyday coding and analysis on a generous coding plan."
+# True names a lane seats may run.
+seats = true
+brain_serving = true

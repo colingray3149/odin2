@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Run one cargo command in the current worktree, holding one of $SLOTS shared build slots.
+# Usage: tools/cargo-slot <cargo subcommand and args>    e.g. tools/cargo-slot check -p odin-kube
+# Each worktree keeps its own target dir under ~/.cache/odin-target/<worktree-name> unless ODIN_TARGET_DIR names a
+# shared one; sccache is shared.
+set -euo pipefail
+root=$(git rev-parse --show-toplevel)
+# Outside the dev shell, re-enter through it (it provides cargo, sccache and the linker flags).
+if [ -z "${IN_NIX_SHELL:-}" ]; then
+  exec nix develop "$root" -c "$0" "$@"
+fi
+SLOTS=${SLOTS:-3}
+worktree_name=$(basename "$root")
+export CARGO_TARGET_DIR=${ODIN_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/odin-target/$worktree_name}
+export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-5}
+export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0  # incremental dirs grew to 42G and sccache cannot cache them
+# The dev shell points TMPDIR at /tmp/nix-shell.*; with 7-digit PIDs the test worker gate sockets then pass the 108-byte Unix limit.
+export TMPDIR=/tmp
+cd "$root"
+mkdir -p /tmp/odin-coord
+# A lane that declares [limits].build_slots may hold only that many builds,
+# including one waiting on a shared slot. ODIN_LANE names the lane; the cap
+# itself never comes from the environment, so a shell cannot lift it by
+# exporting a bigger number. The daemon publishes the declared floor beside
+# the slot marks and links the raise store task.steer writes; a typed raise
+# can only lift the floor. A named lane with no published floor is refused:
+# the daemon publishes the floor before it sets ODIN_LANE, so a missing
+# file is not "no budget". An unset lane admits. At the exact cap the next
+# build is refused by name; below it, a busy shared pool queues.
+lane=${ODIN_LANE:-}
+if [ -n "$lane" ] && [ ! -f "/tmp/odin-coord/lane-$lane.cap" ]; then
+  echo "cargo-slot: lane $lane declares a build-slot budget but the published floor is missing" >&2
+  exit 1
+fi
+if [ -n "$lane" ] && [ -f "/tmp/odin-coord/lane-$lane.cap" ]; then
+  exec 7>"/tmp/odin-coord/lane-$lane.lock"
+  flock 7
+  lane_cap=$(<"/tmp/odin-coord/lane-$lane.cap")
+  if ! [[ $lane_cap =~ ^[1-9][0-9]*$ ]]; then
+    echo "cargo-slot: limits.build_slots of $lane is not a positive integer" >&2
+    exit 1
+  fi
+  if [ -f "/tmp/odin-coord/lane-$lane.budgets" ]; then
+    raised=$(jq -r --arg lane "$lane" '.lanes[$lane].buildSlots // empty | if type == "number" and . > 0 and floor == . then . else error("invalid limits.build_slots") end' "/tmp/odin-coord/lane-$lane.budgets")
+    if [ -n "$raised" ] && [ "$raised" -gt "$lane_cap" ]; then
+      lane_cap=$raised
+    fi
+  fi
+  held=0
+  # A slot mark is lane-<lane>.<pid>.<counter>: digits only after the lane
+  # prefix. The admission lock, the published floor and the raise-store
+  # link share the prefix and are never marks.
+  for mark in /tmp/odin-coord/lane-"$lane".*; do
+    [ -e "$mark" ] || continue
+    suffix=${mark##*lane-"$lane".}
+    [[ $suffix =~ ^[0-9]+\.[0-9]+$ ]] || continue
+    if flock -n "$mark" true 2>/dev/null; then
+      rm -f "$mark"
+    else
+      held=$((held + 1))
+    fi
+  done
+  if [ "$held" -ge "$lane_cap" ]; then
+    echo "cargo-slot: lane $lane already holds $held build slot(s); limits.build_slots is $lane_cap" >&2
+    exit 1
+  fi
+  mark=/tmp/odin-coord/lane-"$lane".$$.$RANDOM
+  exec 8>"$mark"
+  flock -n 8 || { echo "cargo-slot: lane $lane mark could not be held" >&2; exit 1; }
+  flock -u 7
+fi
+queued=0
+while :; do
+  for i in $(seq 1 "$SLOTS"); do
+    exec 9>"/tmp/odin-coord/slot.$i"
+    if flock -n 9; then
+      read -r free_blocks block_size < <(stat -f -c '%a %S' "$root")
+      if (( free_blocks * block_size < 25 * 1024 * 1024 * 1024 )); then
+        echo "cargo-slot: less than 25 GiB free; free merged worker targets before retrying" >&2
+        exit 1
+      fi
+      echo "[cargo-slot $i/$SLOTS] $worktree_name: cargo $*" >&2
+      # Keep the locks here; compiler daemons must not inherit them.
+      # Each slot is capped so three slots cannot exhaust pc's 32 GB and freeze it (2026-10-15 crash).
+      systemd-run --user --scope --quiet -p MemoryMax="${SLOT_MEM:-9G}" -p MemorySwapMax=1G -- cargo "$@" 9>&- 8>&- 7>&-
+      exit
+    fi
+    exec 9>&-
+  done
+  if [ "$queued" -eq 0 ]; then
+    echo "cargo-slot: queued $worktree_name; all $SLOTS shared build slots are busy" >&2
+    queued=1
+  fi
+  sleep 5
+done

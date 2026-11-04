@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/artifact.write.output.json",
+  "title": "artifact.write output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "artifactId": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "sizeBytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "mediaType": {
+      "type": "string"
+    },
+    "readableBy": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "artifactId",
+    "sizeBytes",
+    "mediaType",
+    "readableBy"
+  ]
+}

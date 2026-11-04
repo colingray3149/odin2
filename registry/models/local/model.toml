@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "Every chat and vision model on mini's local model list, served by the local router."
+# The card id; everything else names the bare lane (this folder). Members are `local/<id>`.
+id = "gateway/local"
+# frontier, everyday or fast-cheap.
+tier = "fast-cheap"
+# Account pin holding this card's credentials; local cards are exempt from the AVAILABLE check.
+account = "local"
+# Each chat or vision model on the local list is a member lane, sharing this card's facts.
+family = true
+# One line naming when this card is the right pick.
+strengths = "Free, private turns on mini; a small model, so keep asks simple."
+# True names a lane seats may run.
+seats = true

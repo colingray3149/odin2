@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "session": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "request": {
+          "type": "object",
+          "properties": {
+            "preset": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "dir": { "type": "string", "minLength": 1, "maxLength": 4096 },
+            "account": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "project": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "placement": {
+              "type": "string",
+              "enum": [
+                "pod",
+                "host-tab"
+              ],
+              "default": "pod"
+            },
+            "mcp": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "maxItems": 32,
+              "uniqueItems": true
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "skip_permissions": { "type": "boolean" },
+            "host": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "if": { "required": ["preset"] },
+          "else": { "required": ["account", "project"] },
+          "additionalProperties": false
+        },
+        "owner_run": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "opening",
+            "running",
+            "prompting",
+            "stopping",
+            "stopped",
+            "in_doubt"
+          ]
+        },
+        "resource": {
+          "type": "object"
+        },
+        "claude_session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "remote_control": {},
+        "cursor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_driver_cursor": { "type": "integer", "minimum": 0 },
+        "last_publication_cursor": { "type": "integer", "minimum": 0 },
+        "last_error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "request",
+        "owner_run",
+        "state",
+        "cursor"
+      ],
+      "additionalProperties": false
+    },
+    "next_cursor": { "type": "integer", "minimum": 0 },
+    "has_more": { "type": "boolean" },
+    "error": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "event_too_large" },
+        "cursor": { "type": "integer", "minimum": 0 },
+        "max_bytes": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["kind", "cursor", "max_bytes"],
+      "additionalProperties": false
+    },
+    "events": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "payload": {}
+        },
+        "required": [
+          "cursor",
+          "kind",
+          "payload"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "session",
+    "events",
+    "next_cursor",
+    "has_more"
+  ],
+  "additionalProperties": false
+}

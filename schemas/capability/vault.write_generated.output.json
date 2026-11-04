@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/vault.write_generated.output.json",
+  "title": "vault.write_generated output",
+  "description": "Terminal receipt of one confined generated-namespace write: the exact page name, the BLAKE3 digest of the exact written bytes in the odin-domain Digest wire form, and the byte count. A receipt repair instead returns the receiptPublication of the original effect it names: each derived page's outcome (written, identical, conflict, failed), and published only when every page holds exactly its receipt bytes. Page content never appears in the envelope. A refused (escape, bound violation) or unavailable write, or a repair that wrote nothing, never produces this receipt — the typed refusal or unavailability is the recorded outcome.",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "knowledgeRefreshUnavailable": { "type": "string" },
+        "page_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "content_digest": {
+          "type": "string",
+          "pattern": "^blake3:[0-9a-f]{64}$"
+        },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["page_name", "content_digest", "byte_count"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "receiptPublication": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": { "enum": ["published", "failed"] },
+            "correlationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "pages": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "pageName": { "type": "string", "minLength": 1, "maxLength": 512 },
+                  "outcome": { "enum": ["written", "identical", "conflict", "failed"] },
+                  "contentDigest": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+                  "detail": { "type": "string", "minLength": 1, "maxLength": 1024 }
+                },
+                "required": ["pageName", "outcome"]
+              }
+            }
+          },
+          "required": ["status", "correlationId", "pages"]
+        }
+      },
+      "required": ["receiptPublication"]
+    }
+  ]
+}

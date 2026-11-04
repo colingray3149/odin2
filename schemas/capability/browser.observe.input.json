@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/browser.observe.input.json",
+  "title": "browser.observe input",
+  "description": "Bounded typed read request for one odin-browser session. Reads are pure structural observations of the live page; returned content is always untrusted and never policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["text", "links", "tables", "accessibility", "sanitizedDom"]
+    },
+    "maxBytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1048576
+    }
+  },
+  "required": ["sessionId", "kind", "maxBytes"]
+}

@@ -1,0 +1,12 @@
+schema = "odin.registry.v1"
+kind = "provider"
+enabled = "__enabled__"
+description = "__description__"
+# Compiled provider adapter ID, not an endpoint.
+adapter = "__adapter__"
+# routes is an array of gateway_lane_id/gateway_model_id string pairs.
+policy = { routes = "__routes__" }
+# Optional table with usd_micros and window.duration_seconds; not a gateway spend cap.
+budget = "__budget__"
+# Table of allowed_rungs, max_attempts, cooldown_seconds, and blocked_missing_decision.
+recovery = "__recovery__"

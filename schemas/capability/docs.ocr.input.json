@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/docs.ocr.input.json",
+  "title": "docs.ocr input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "artifact": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$",
+      "description": "The document as an artifact. Give one of source, artifact or intake."
+    },
+    "intake": {
+      "type": "string",
+      "pattern": "^[0-9]+/[0-9]+$",
+      "description": "A file he sent. Its intake id, like 1234/1; give one of source, artifact or intake."
+    },
+    "languages": {
+      "type": "string",
+      "pattern": "^[a-z_]{3,8}(\\+[a-z_]{3,8})*$",
+      "description": "Tesseract language codes joined by +; eng by default."
+    },
+    "redo": {
+      "type": "boolean",
+      "description": "Replaces an existing text layer; by default pages with text are kept as they are."
+    }
+  }
+}

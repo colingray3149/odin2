@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Code of his projects: navigate and search the code graph; in a lane, edit, rewrite and look at the dev server."
+examples = [
+  'code {op: navigate, project, symbol}',
+  'code {op: grep, project, pattern}',
+  'code {op: device, device, action, args}',
+]

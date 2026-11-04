@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/codemap.detect_changes.input.json",
+  "title": "codemap.detect_changes input",
+  "properties": {
+    "project": {
+      "type": "string",
+      "enum": [
+        "dotfiles",
+        "odin",
+        "rig"
+      ],
+      "description": "Declared project name; it resolves to this host's indexed graph (codemap.list_projects lists what this host indexed)."
+    },
+    "scope": {
+      "type": "string"
+    },
+    "depth": {
+      "type": "integer",
+      "default": 2
+    },
+    "base_branch": {
+      "type": "string",
+      "default": "main"
+    },
+    "since": {
+      "type": "string",
+      "description": "Git ref or date to compare from (e.g. HEAD~5, v0.5.0, 2026-01-01)"
+    }
+  },
+  "required": [
+    "project"
+  ]
+}

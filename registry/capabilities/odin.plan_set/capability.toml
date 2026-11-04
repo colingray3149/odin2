@@ -1,0 +1,19 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Replaces the plan of the run this session belongs to."
+handler = { id = "odin_plan_set" }
+input_schema = "schemas/capability/odin.plan_set.input.json"
+output_schema = "schemas/capability/odin.plan_set.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_plan_set_evidence" }
+tests = [
+  "odin-omp host_tools::plan_set::tests::replacement_returns_the_durable_aggregate",
+]

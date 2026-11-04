@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Make and check documents: PDFs from text, Word and slide conversions, searchable scans, page previews."
+examples = [
+  'docs {op: "render", source: "# Notes"}',
+  'docs {op: "convert", source: "# Notes", to: "docx"}',
+]

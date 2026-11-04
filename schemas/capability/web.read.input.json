@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/web.read.input.json",
+  "title": "web.read input",
+  "description": "One public web page to read through the declared obscura adapter. R0: the page is loaded and read, nothing on it is clicked or submitted.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "url": {
+      "type": "string",
+      "pattern": "^https?://\\S+$",
+      "maxLength": 2048
+    },
+    "max_chars": {
+      "description": "Characters to return from offset (default 4000).",
+      "type": "integer",
+      "minimum": 500,
+      "maximum": 40000
+    },
+    "offset": {
+      "description": "Character of the page text to start from (default 0); a page longer than max_chars names the next offset at its end. Converted PDF text is capped at 8388608 bytes — at most one character per byte — so every position a window can name fits.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8388607
+    }
+  },
+  "required": ["url"]
+}

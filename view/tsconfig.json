@@ -1,0 +1,23 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "Preserve",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"resolveJsonModule": true,
+		"allowImportingTsExtensions": true,
+		"paths": {
+			"@oh-my-pi/pi-natives": ["./shim/pi-natives.ts"],
+			"@oh-my-pi/pi-natives/path": ["./shim/pi-natives/path.ts"],
+			"@oh-my-pi/pi-ai": ["./shim/pi-ai.ts"],
+			"@oh-my-pi/pi-agent-core": ["./shim/pi-agent-core.ts"],
+			"@oh-my-pi/pi-utils": ["./shim/pi-utils/index.ts"],
+			"@oh-my-pi/pi-utils/*": ["./shim/pi-utils/*"],
+			"@oh-my-pi/pi-wire": ["./shim/pi-wire.ts"]
+		}
+	},
+	"include": ["main.ts", "src/**/*.ts", "test/**/*.ts", "dev/**/*.ts"],
+	"exclude": ["node_modules", "omp", "shim"]
+}

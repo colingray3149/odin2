@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "delegate"
+op = "ask_supervisor"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Ask the supervisor to oversee or steer work, or report lane information. The accepted task and its eventual report remain available through the usual delegation record."
+handler = { id = "seat_ask" }
+delegate_to = "supervisor"
+input_schema = "schemas/capability/seat.ask.input.json"
+output_schema = "schemas/capability/seat.ask.output.json"
+effect_class = "R3"
+seat_tags = ["builder", "coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_seat_ask_evidence" }
+tests = [
+  "odin-hermes::it governed_dispatch::arbitrary_declared_targets_reach_the_governed_owner_through_real_dispatch",
+]

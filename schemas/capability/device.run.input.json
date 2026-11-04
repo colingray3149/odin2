@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/device.run.input.json",
+  "title": "device.run input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["device", "action"],
+  "properties": {
+    "device": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Declared device name in the calling project's sphere."
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Declared action name on that device."
+    },
+    "params": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Declared action parameters. Path values must stay inside the sphere; text values are one static token."
+    }
+  }
+}

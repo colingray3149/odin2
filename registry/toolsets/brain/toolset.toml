@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Long-term memory: notes, records and past conversations; search by meaning, read by citation."
+examples = [
+  'brain {op: search, query: "beach trip"}',
+  'brain {op: read, url}',
+]

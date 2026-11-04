@@ -1,0 +1,24 @@
+schema = "odin.registry.v1"
+toolset = "brain"
+op = "write"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Saves a note in the generated section of the owner's vault. Notes outside it stay untouched, and a missing vault is reported. Worth it for work he wants kept: a job application's web-form answers in one page under generated/applications/, written from what he told you or his own records; a research chronology under generated/research/, ordered by event date, each claim with its source (title, author, date, and the URL or archive item it came from), the quotation it rests on and the event date, inferred points marked as such."
+handler = { id = "vault_write_generated" }
+input_schema = "schemas/capability/vault.write_generated.input.json"
+output_schema = "schemas/capability/vault.write_generated.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_vault_write_generated_evidence" }
+tests = [
+  "odin-hermes::it vault::generated_writes_land_only_beneath_the_generated_namespace",
+  "odin-hermes::it vault::generated_writes_never_traverse_symlinks",
+  "odin-hermes::it vault::an_identical_rewrite_leaves_the_page_untouched_and_a_changed_one_replaces_it",
+  "odin-cli::bin/odind learning::tests::the_vault_write_gate_and_memory_tools_write_only_where_declared",
+]

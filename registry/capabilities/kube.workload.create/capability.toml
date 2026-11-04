@@ -1,0 +1,25 @@
+schema = "odin.registry.v1"
+seat_ops = { kubert = { toolset = "kube", op = "launch" } }
+toolset = "research"
+op = "investigate"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Launches one Job from a published workload profile; name the profile and, for a research report, the company. An optional label (up to 60 printable characters) names the run in views. targetNode picks a starting node among the profile's allowed_nodes (for an agent pod, its serving node), and is usually left out. Returns once the pod is admitted; an agent pod's final answer reaches the owner's conversation when it finishes, so the turn can end right after launch. The report copy waits until the PDF, its review and both destination copies are done."
+handler = { id = "odin_kube.workload.create" }
+input_schema = "schemas/capability/kube.workload.create.input.json"
+output_schema = "schemas/capability/kube.workload.create.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator", "operator", "builder"]
+# Covers the runtime's actuation bound: 4 bounded request phases at the
+# declared 30s request window plus 10s scheduling slack (130s).
+timeout_seconds = 130
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_kube.workload.create_evidence" }
+tests = [
+  "odin-cli::bin/odind kube_runtime::launch::profile_launch_tests::one_session_launches_one_profile_once_per_input",
+  "odin-kube reconciler::create::launch_shape_tests::a_profile_reservation_is_requested_and_fits_placement",
+]

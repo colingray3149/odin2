@@ -1,0 +1,29 @@
+[package]
+name = "odin-browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+odin-confined-fs.workspace = true
+odin-domain.workspace = true
+odin-kernel.workspace = true
+odin-ledger.workspace = true
+odin-process = { version = "0.0.0", path = "../odin-process" }
+aho-corasick = "1"
+base64.workspace = true
+blake3.workspace = true
+rustix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["signal", "process"] }
+uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

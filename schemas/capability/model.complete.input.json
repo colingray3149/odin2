@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/model.complete.input.json",
+  "title": "model.complete input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The local model to run: its id from the local list (lfm2.5-8b-a1b), with or without the local/ lane or gateway/local/ card prefix.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "prompt": {
+      "description": "The whole prompt, sent as one user message: instructions and the text to rewrite together.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120000
+    },
+    "max_tokens": {
+      "description": "The hard cap on the answer's tokens; the call refuses without one.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16384
+    }
+  },
+  "required": [
+    "id",
+    "prompt",
+    "max_tokens"
+  ]
+}

@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Pods and the cluster: snapshot, health, launch, pause, resume, restart, cancel."
+examples = [
+  'kube {op: health}',
+  'kube {op: launch, profile, prompt}',
+]

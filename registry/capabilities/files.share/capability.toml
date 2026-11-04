@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "files"
+op = "read"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Shares one file from a declared file root as a read-only artifact and returns its text. Up to 25 MiB; discord.file.send sends it. Paths outside the declared roots are refused."
+handler = { id = "files_share" }
+input_schema = "schemas/capability/files.share.input.json"
+output_schema = "schemas/capability/files.share.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_files_share_evidence" }
+tests = [
+  "odin-hermes::it runtime::shared_files::a_seat_lists_the_declared_folders_and_shares_one_file_with_its_text",
+]

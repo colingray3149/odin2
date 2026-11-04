@@ -1,0 +1,18 @@
+schema = "odin.registry.v1"
+kind = "lane"
+enabled = "__enabled__"
+description = "__description__"
+# Existing project ID whose scope this lane belongs to.
+project = "__project__"
+# Descriptive lane-family label; any non-empty string, not a dispatch enum.
+family = "__family__"
+# Existing seat ID used when no seat is selected explicitly.
+default_seat = "__default_seat__"
+# Descriptive queue label; any non-empty string, not a scheduling guarantee.
+queue = "__queue__"
+# true requires a separate reviewer before publishing code; false does not.
+requires_independent_review = "__independent_review__"
+# Transfer direction: internal, ingress, or egress; declare with payload_kind.
+direction = "__direction__"
+# Transfer payload: command, event, file, render, or scientific; declare with direction.
+payload_kind = "__payload_kind__"

@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+toolset = "odin"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Publish registry declarations. Fills one registry skeleton that adds no authority (a lane for a project, an alert or a status surface on a container, a watchdog on a pod profile), validates the whole registry with it, commits it and publishes; live after Odin's next idle reload. Worth it when the owner wants something declared that has no tool of its own; registry.skeleton.read shows what each skeleton takes."
+handler = { id = "registry_author" }
+input_schema = "schemas/capability/registry.author.input.json"
+output_schema = "schemas/capability/registry.author.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_registry_author_evidence" }
+tests = [
+  "odin-cli::bin/odind project_authoring::tests::the_coordinator_authors_a_lane_a_pod_watchdog_and_an_environment",
+]

@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Terminals reachable from the phone through tailnet Zellij web"
+description = "The zellij-web user service is running on mini, serving the tailnet attach point."
+probes = [
+  "unit:mini user zellij-web.service",
+]

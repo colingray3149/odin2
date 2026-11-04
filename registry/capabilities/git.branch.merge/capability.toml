@@ -1,0 +1,23 @@
+schema = "odin.registry.v1"
+toolset = "odin"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Merge a reviewed seat branch. Merges a reviewed work branch into main, given the exact expectedBase (main as observed) and expectedHead (the reviewed commit). The merged tree runs its declared checks and is pushed without force; if main moved, it stops and says so rather than rebasing. The declaration decides the approval, which is journaled. Worth it once a builder's branch has its review; a project with a deploy then takes odin.deploy."
+handler = { id = "git_branch_merge" }
+input_schema = "schemas/capability/git.branch.merge.input.json"
+output_schema = "schemas/capability/git.branch.merge.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 1200
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "declaration"
+evidence_extractor = { id = "odin_hermes_git_branch_merge_evidence" }
+tests = [
+  "odin-cli::bin/odind coding_route::tests::a_reviewed_seat_branch_merges_into_main_after_the_declared_check",
+  "odin-cli::bin/odind coding_route::tests::a_merge_that_fails_its_declared_check_never_pushes_main",
+  "odin-cli::bin/odind coding_route::review::tests::the_merge_gate_accepts_only_an_independent_review_of_the_exact_head",
+]

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/code.review.request.output.json",
+  "title": "code.review.request output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "diffDigest": {
+      "type": "string"
+    },
+    "artifactId": {
+      "type": "string"
+    },
+    "reviewer": {
+      "type": "string"
+    },
+    "verdict": {
+      "description": "The recorded independent verdict on this exact diff, when available.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "reviewer": {"type": "string"},
+        "approve": {"type": "boolean"},
+        "notes": {"type": "string"}
+      },
+      "required": ["reviewer", "approve", "notes"]
+    },
+    "tests": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "diffDigest",
+    "artifactId",
+    "reviewer",
+    "tests"
+  ]
+}

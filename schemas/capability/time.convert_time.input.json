@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/time.convert_time.input.json",
+  "title": "time.convert_time input",
+  "properties": {
+    "source_timezone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "IANA time zone name, e.g. Asia/Tokyo"
+    },
+    "time": {
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+      "description": "Wall-clock time HH:MM (24-hour) in the source zone"
+    },
+    "target_timezone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "IANA time zone name, e.g. Asia/Tokyo"
+    }
+  },
+  "required": [
+    "source_timezone",
+    "time",
+    "target_timezone"
+  ]
+}

@@ -1,0 +1,17 @@
+impl Request {
+    pub const fn capsule_id(&self) -> &CapsuleId {
+        match self {
+$CAPSULE_ID_ARMS        }
+    }
+
+    pub const fn correlation_id(&self) -> &CorrelationId {
+        match self {
+$CORRELATION_ID_ARMS        }
+    }
+
+    pub const fn operation_id(&self) -> Option<&OperationId> {
+        match self {
+$OPERATION_ID_ARMS        }
+    }
+}
+

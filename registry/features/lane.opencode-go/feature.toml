@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Six Go-plan lanes on OpenCode Go"
+description = "The go-deepseek-flash lane's OpenCode Go account is open in the model book; account balances are not checked."
+probes = [
+  "models:go-deepseek-flash",
+]

@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "code"
+op = "search"
+kind = "capability"
+enabled = true
+implementation = "codemap"
+version = 1
+description = "Search the code graph. Finds functions, methods, types, modules and routes in a project's code graph by name or qualified-name pattern, label, text or meaning, and returns their qualified names, files and lines."
+handler = { id = "odin_adapter.operation" }
+input_schema = "schemas/capability/codemap.search_graph.input.json"
+output_schema = "schemas/capability/codemap.search_graph.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "builder", "judge"]
+timeout_seconds = 60
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_adapter.receipt" }
+tests = [
+  "odin-adapter-mcp::bin/odin-adapter-mcp tests::each_declared_codemap_tool_is_served_and_a_drifted_surface_is_refused",
+]

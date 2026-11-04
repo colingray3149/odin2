@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/odin.todo_update.input.json",
+  "title": "odin.todo_update input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "todoId": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["pending", "active", "blocked", "completed", "cancelled"] },
+    "expectedRevision": { "type": "integer", "minimum": 0 },
+    "timestampMs": { "type": "integer" }
+  },
+  "required": ["todoId", "status", "expectedRevision", "timestampMs"]
+}

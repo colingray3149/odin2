@@ -1,0 +1,23 @@
+schema = "odin.registry.v1"
+toolset = "kube"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Cancels one finite Job by run id, given the resourceVersion observed at admission. The stop is recorded before it happens, and the report lists retained checkpoints and leftovers."
+handler = { id = "odin_kube.workload.cancel" }
+input_schema = "schemas/capability/kube.workload.cancel.input.json"
+output_schema = "schemas/capability/kube.workload.cancel.output.json"
+effect_class = "R3"
+seat_tags = ["operator"]
+# Covers the runtime's actuation bound: the declared 120s teardown window
+# plus 2 bounded 30s request phases and 10s slack (190s).
+timeout_seconds = 190
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_kube.workload.cancel_evidence" }
+tests = [
+  "odin-cli::bin/odind kube_runtime::execution::job_verbs::cancel_deletes_the_job_and_nothing_is_left_to_summarize",
+  "odin-kube reconciler::create::launch_shape_tests::cancel_clears_policy_maps_and_claim_before_the_run_is_terminal",
+]

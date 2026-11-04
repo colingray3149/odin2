@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Model gateway"
+description = "LiteLLM is active on mini as a user unit and its readiness endpoint answers on loopback."
+probes = [
+  "unit:mini user litellm.service",
+  "http:http://127.0.0.1:4000/health/readiness",
+]

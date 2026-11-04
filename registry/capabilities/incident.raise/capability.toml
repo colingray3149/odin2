@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "status"
+op = "incident"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Raise an incident. Raises an incident (severity, summary, detail, affected objects): a Huginn card, a phone alert for error or critical when a sink is declared, and one wake of the conversation seat for warning and above; info stays in Huginn. The result reports how each of these went."
+handler = { id = "incident_raise" }
+input_schema = "schemas/capability/incident.raise.input.json"
+output_schema = "schemas/capability/incident.raise.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_incident_raise_evidence" }
+tests = [
+  "odin-cli::bin/odind incidents::tests::a_repeating_watchdog_is_one_incident_until_it_clears",
+  "odin-cli::bin/odind incidents::tests::only_an_error_or_worse_pages_the_phone",
+]

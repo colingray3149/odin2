@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "status"
+op = "jobs"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "List running and finished jobs. Lists the conversation seat's background jobs: each call still running after a few seconds, with its tool, what it is about, how long it has run and its deadline, and recently finished jobs with how they ended. Worth it when the owner asks how something is going."
+handler = { id = "jobs_list" }
+input_schema = "schemas/capability/jobs.list.input.json"
+output_schema = "schemas/capability/jobs.list.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 10
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_jobs_list_evidence" }
+tests = [
+  "odin-hermes::it runtime::jobs::a_finished_job_wakes_the_conversation_with_its_report",
+]

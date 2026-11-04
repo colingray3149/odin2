@@ -1,0 +1,19 @@
+schema = "odin.registry.v1"
+toolset = "files"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Saves an owner attachment or shared artifact as a new file in a writable root, by default the save folder. Folders are created as needed and a taken name gets a numeric suffix; up to 25 MiB. Worth it when the owner wants a file kept on his machine; the result gives the path. His own folders, so he isn't asked."
+handler = { id = "files_save" }
+input_schema = "schemas/capability/files.save.input.json"
+output_schema = "schemas/capability/files.save.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_files_save_evidence" }
+tests = [
+]

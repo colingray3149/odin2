@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/desktop.look.input.json",
+  "title": "desktop.look input",
+  "description": "What to show of the selected declared desktop.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "device": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Desktop friendly name; omitted uses the declared local conversation desktop."
+    },
+    "shot": {
+      "type": "string",
+      "enum": [
+        "screen",
+        "all",
+        "window",
+        "zoom",
+        "none"
+      ],
+      "description": "What to screenshot after: the focused monitor (default; or output), every monitor, a window, a zoom into your last screenshot, or none."
+    },
+    "output": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Monitor for shot=screen, e.g. DP-3 or HDMI-A-1."
+    },
+    "window": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Window id for shot=window."
+    },
+    "zoom": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "For shot=zoom: a rectangle in your last screenshot's pixels.",
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ]
+    },
+    "layout": {
+      "type": "boolean",
+      "description": "Also list monitors, workspaces and windows."
+    }
+  },
+  "required": []
+}

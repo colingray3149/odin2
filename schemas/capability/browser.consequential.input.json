@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/browser.consequential.input.json",
+  "title": "browser.consequential input",
+  "description": "One consequential structural action bound to an exact odin-browser session revision, the caller-supplied policy revision and digests, and optional operator-approval identity. Action/argument pairing is structural only; the bound session policy supplies all authorization and effect classification.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sessionId": { "$ref": "#/$defs/browserSessionId" },
+    "expectedRevision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "navigate",
+        "back",
+        "forward",
+        "reload",
+        "fill",
+        "activate",
+        "submitForm",
+        "pressKey",
+        "scroll",
+        "screenshot",
+        "close"
+      ]
+    },
+    "arguments": { "type": "object" },
+    "argumentsDigest": { "$ref": "#/$defs/blake3Digest" },
+    "policyRevision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "policyDigest": { "$ref": "#/$defs/blake3Digest" },
+    "approvalId": { "$ref": "#/$defs/domainId" }
+  },
+  "required": [
+    "sessionId",
+    "expectedRevision",
+    "action",
+    "arguments",
+    "argumentsDigest",
+    "policyRevision",
+    "policyDigest"
+  ],
+  "oneOf": [
+    {
+      "properties": {
+        "action": { "const": "navigate" },
+        "arguments": { "$ref": "#/$defs/navigateArguments" }
+      }
+    },
+    {
+      "properties": {
+        "action": {
+          "enum": ["back", "forward", "reload", "screenshot", "close"]
+        },
+        "arguments": { "$ref": "#/$defs/noArguments" }
+      }
+    },
+    {
+      "properties": {
+        "action": { "const": "fill" },
+        "arguments": { "$ref": "#/$defs/fillArguments" }
+      }
+    },
+    {
+      "properties": {
+        "action": { "enum": ["activate", "submitForm"] },
+        "arguments": { "$ref": "#/$defs/selectorArguments" }
+      }
+    },
+    {
+      "properties": {
+        "action": { "const": "pressKey" },
+        "arguments": { "$ref": "#/$defs/keyArguments" }
+      }
+    },
+    {
+      "properties": {
+        "action": { "const": "scroll" },
+        "arguments": { "$ref": "#/$defs/scrollArguments" }
+      }
+    }
+  ],
+  "$defs": {
+    "browserSessionId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "domainId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "blake3Digest": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "noArguments": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    },
+    "navigateArguments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": ["url"]
+    },
+    "selectorArguments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "selector": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": ["selector"]
+    },
+    "fillArguments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "selector": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 8192
+        }
+      },
+      "required": ["selector", "text"]
+    },
+    "keyArguments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": ["key"]
+    },
+    "scrollArguments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "deltaX": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "deltaY": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        }
+      },
+      "required": ["deltaX", "deltaY"]
+    }
+  }
+}

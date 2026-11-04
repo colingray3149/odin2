@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "research"
+op = "stats"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Measure this run and write /export/run-stats.json. The file is the only footer source docs.render reads: list-price cost (subscription use labelled included, not billed), wall time, every finished tool invocation including failed ones, distinct https hosts from recorded result or argument URLs, and the model the gateway actually served. A value that was not measured is null and named in unavailable. A web call whose URL was not recorded leaves websites unavailable rather than zero. An unmeasured field stays unavailable. The served model is the gateway's served group, or the one usage model when the journal records exactly one. This snapshot is replaced by the authority's final measurement before the PDF is saved."
+handler = { id = "run_stats" }
+input_schema = "schemas/capability/run.stats.input.json"
+output_schema = "schemas/capability/run.stats.output.json"
+effect_class = "R1"
+seat_tags = ["operator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_run_stats_evidence" }
+tests = [
+  "odin-hermes runtime::run_stats::tests::the_stats_file_lands_whole_in_the_export_and_a_failed_write_says_why",
+  "odin-hermes runtime::run_stats::tests::finished_web_calls_count_distinct_https_hosts_and_skip_this_tool",
+]

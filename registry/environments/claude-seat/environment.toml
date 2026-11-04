@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "environment"
+enabled = true
+description = "Claude Code seat sessions on the authority host. Bubblewrap is the boundary (the harness command); this unit only starts that bubble and stops it. Writes are not confined a second time."
+transport = "fleet-host"
+host = "mini"
+seats = ["supervisor"]
+git_mirror = "10.0.0.11"
+
+[observation]
+channel = "events"
+
+# The harness command is the bubble. A second ProtectSystem layer would hide the binds the bubble needs.
+[sandbox]
+confine_writes = false
+hidden = [".ssh", ".config/sops-nix", ".local/state/odin", ".gnupg", ".config/gh", ".local/share/kreate", ".config/kreate"]

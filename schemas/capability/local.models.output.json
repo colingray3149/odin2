@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/local.models.output.json",
+  "title": "local.models output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "text"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "text": { "type": "string" },
+    "models": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "type": "string" },
+          "size": { "type": "number" },
+          "vram_gib": { "type": "number" },
+          "context": { "type": "integer" },
+          "loaded": { "type": "boolean" },
+          "resident": { "type": "boolean" },
+          "mode": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

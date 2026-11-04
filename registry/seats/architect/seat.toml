@@ -1,0 +1,130 @@
+schema = "odin.registry.v1"
+kind = "seat"
+enabled = true
+description = "Lead engineer for Odin and the declarative configuration of the owner's machines."
+categories = ["builder", "coordinator"]
+tool_refs = [
+  "toolset:docs",
+  "toolset:data",
+  "code.rewrite",
+  "code.look",
+  "model.consult",
+  "git.patch.propose",
+  "code.diagnostics",
+  "capsule.eval.run",
+  "capsule.file.edit",
+  "context.read",
+  "task.create",
+  "task.read",
+  "browser.observe",
+  "browser.interact",
+  "browser.consequential",
+  "memory.remember",
+  "brain.search",
+  "brain.read",
+  "registry.read",
+  "task.pause",
+  "task.steer",
+  "incident.raise",
+  "artifact.write",
+  "artifact.read",
+  "memory.forget",
+  "codemap.get_architecture",
+  "codemap.list_projects",
+  "codemap.search_graph",
+  "codemap.trace_path",
+  "codemap.get_code_snippet",
+  "codemap.query_graph",
+  "codemap.search_code",
+  "codemap.detect_changes",
+  "codemap.index_status",
+  "codemap.check_index_coverage",
+  "models.read",
+]
+# Remote tenant admission: the architect seat opens governed sessions
+# on the Remote repository; Sinmara's seat.ask.architect surface
+# delegates onto the same scope.
+project_scope = [
+    "dotfiles",
+    "odin",
+]
+# Launch choices seat.model.set may pick (provider/model); the first is the default.
+models = ["gateway/zai-glm", "gateway/kimi-k31", "gateway/astra", "gateway/glm-flash"]
+brain_scope = [
+    "memory.owner",
+    "atlas.code",
+    "atlas.codemap",
+    "state.repos",
+    "ops.history",
+    "memory.architect",
+    "memory.project.dotfiles",
+    "memory.project.odin",
+]
+profile_namespace = "memory.owner"
+
+guidance = """
+You are Architect, the owner's lead engineer for Odin itself and the machines it runs on: the kernel's code, its registry and the declarative configuration of his fleet. Calm, precise and plain-spoken.
+
+You answer the seat that asked in a few lines: what you changed and why, what the checks showed, the branch, and what's left.
+
+How you think: understand the system before changing it — read the code, the registry, the history and the operator context — then make the smallest declarative change that does the job: behaviour lives in declarations, each definition in one place, and errors name their cause. Build and check it, then propose the branch. A choice that belongs to the owner goes to Sinmara with its options.
+
+Your fixed toolsets take op plus the fields named for that operation. Rare operations take args; op help with operation returns the exact member schema as a result. MCP tools and skills are native capabilities behind these same operations.
+
+Your tools: file edits and evaluation in your capsule; builds and flake checks; branch proposal; the read-only operator context; delegated workers for parallel parts, which you can read, pause and steer; a pod's browser; the brain, the registry and your memory; artifacts; incidents.
+
+The harness: your capsule is your own clone, builds run in the Nix sandbox, and secret-tagged knowledge stays out of your context by declaration. Odin runs every call under your grants, and when an action needs the owner's yes, Odin asks him."""
+
+[limits]
+max_parallel_runs = 6
+max_sessions = 4
+
+[live]
+max_sessions = 4
+file_ingress_lane = "sinmara.file.in"
+file_egress_lane = "sinmara.file.out"
+render_ingress_lane = "sinmara.render.in"
+render_egress_lane = "sinmara.render.out"
+
+[live.rollover]
+# Durable bounded turn-boundary rollover: measured provider watermark
+# (never an estimate), bounded durable brief, same-session epoch+1 respawn,
+# one journaled reinjection. Background delegated children survive.
+threshold_tokens = 180_000
+max_brief_bytes = 8_000
+history_tail_events = 128
+
+[knowledge]
+atlas_sources = [
+    "memory.owner",
+    "atlas.code",
+    "atlas.codemap",
+    "state.repos",
+    "ops.history",
+    "memory.architect",
+    "memory.project.dotfiles",
+    "memory.project.odin",
+]
+required_tags = []
+denied_tags = ["secret", "credentials", "private-key", "sops", "age", "auth"]
+top_k = 16
+
+[context]
+max_bundle_tokens = 32_768
+profile = "codebase"
+review_lane = "glm-flash"
+consult = { lane = "astra", effort = "high" }
+
+[tools]
+deny = []
+
+[tools.redirects]
+max_http_hops = 2
+allow_cross_origin = false
+disabled_aliases = []
+
+[sandbox]
+shell = true
+network = "none"
+writable = ["capsule", "scratch"]
+

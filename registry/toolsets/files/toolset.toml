@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Files on his machines and in Odin: list, read, save anywhere, send to his chat or drop on a device."
+examples = [
+  'files {op: list, root, find: "lab3"}',
+  'files {op: save, artifact, root, folder}',
+]

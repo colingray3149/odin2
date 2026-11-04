@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "calendar"
+op = "unroutine"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Removes one of your routines; it stops firing."
+handler = { id = "routine_remove" }
+input_schema = "schemas/capability/routine.remove.input.json"
+output_schema = "schemas/capability/routine.remove.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_routine_remove_evidence" }
+tests = [
+  "odin-cli::bin/odind project_authoring::tests::a_seat_declares_replaces_and_removes_its_own_routine_and_no_one_elses",
+]

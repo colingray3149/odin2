@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/files.share.input.json",
+  "title": "files.share input",
+  "description": "One file by its declared root and its path relative to that root, as files.list gives them.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "root": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "path": { "type": "string", "minLength": 1, "maxLength": 1024 }
+  },
+  "required": ["root", "path"]
+}

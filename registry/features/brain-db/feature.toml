@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Brain database"
+description = "The odin-brain database setup unit is active on mini, so the brain's Postgres database is owned and extended."
+probes = [
+  "unit:mini system odin-brain-db.service",
+]

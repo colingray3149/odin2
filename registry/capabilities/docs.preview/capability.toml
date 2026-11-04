@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "docs"
+expose = "on_demand"
+kind = "capability"
+enabled = true
+implementation = "workflow"
+version = 1
+description = "Preview pages. Supply a PDF or office artifact/intake and optional pages. Office files are laid out by LibreOffice, then drawn with poppler."
+handler = { id = "odin_workflow.run" }
+input_schema = "schemas/capability/docs.preview.input.json"
+output_schema = "schemas/capability/docs.preview.output.json"
+effect_class = "R0"
+seat_tags = ["*"]
+timeout_seconds = 300
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_workflow.receipt" }
+tests = [
+  "odin-workflows docs::tests::preview_office_converts_then_draws",
+]

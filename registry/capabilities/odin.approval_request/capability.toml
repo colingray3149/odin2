@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Requests the owner's approval for one capability call on a target bound to this session."
+handler = { id = "odin_approval_request" }
+input_schema = "schemas/capability/odin.approval_request.input.json"
+output_schema = "schemas/capability/odin.approval_request.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_approval_request_evidence" }
+tests = [
+  "odin-omp host_tools::approval_request::tests::same_id_same_scope_retry_returns_existing_request",
+  "odin-hermes runtime::dispatch_handler_tests::owner_answers::yes_runs_the_gated_call_exactly_once",
+  "odin-hermes runtime::dispatch_handler_tests::owner_answers::an_undeliverable_question_is_withdrawn_and_colin_is_told",
+]

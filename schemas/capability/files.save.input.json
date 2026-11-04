@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/files.save.input.json",
+  "title": "files.save input",
+  "description": "Save exactly one complete original: intake, artifact, brain asset, or source_root/source_path. Destination is root/folder or the seat default. Remote offline destinations queue durably; save_id reads their status. move closes only a verified, unkept declared-root source; canonical artifacts and original assets are retained.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "intake": { "type": "string", "minLength": 3, "maxLength": 40 },
+    "artifact": { "type": "string", "pattern": "^(blake3:[0-9a-f]{64}|artifact:[0-9a-f-]{36}:[0-9a-f]{64})$" },
+    "asset": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "source_root": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "source_path": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "move": { "type": "boolean" },
+    "keep": { "type": "boolean" },
+    "save_id": { "type": "string", "format": "uuid" },
+    "file_name": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "root": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "folder": { "type": "string", "minLength": 1, "maxLength": 512 }
+  }
+}

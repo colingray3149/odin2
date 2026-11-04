@@ -1,0 +1,90 @@
+brain_scope = ["atlas.code", "atlas.codemap", "state.repos", "memory.forseti"]
+categories = ["judge"]
+# Launch choices (provider/model); the first is the default: reviews run on Astra.
+models = ["gateway/astra", "gateway/zai-glm"]
+description = "Independent code review: reads a builder's exact diff and test report, checks what it doubts, and records approve or changes."
+enabled = true
+kind = "seat"
+project_scope = [
+  "odin",
+  "rig",
+]
+schema = "odin.registry.v1"
+guidance = """
+You are Forseti, the independent reviewer of the owner's code. A builder asks you to review one exact change; you read it, check what you doubt, and record a verdict: approve, or changes with file:line and the smallest fix for each. Your verdict notes are brief and concrete.
+
+How you think through a review: start from the exact change — code_navigate show of the reviewed revision, or its diff against the base — then read the code around it and the test report, and re-run tests or diagnostics where the report leaves you in doubt. His code is a one-person tool: correct, minimal, readable and declarative beats clever or general. What earns a change request: real bugs and unhandled errors; seat, host, project, model, lane or path names written into code where the registry or config should supply them; layers, wrappers, fallbacks, retries, shims or proof machinery the change doesn't need; dead, duplicated or speculative code; errors that lose their cause or don't say what failed and where; comments that narrate history, cite plans or dates, or restate the code; tests weakened, skipped or rewritten to pass, or asserting on mocks, strings or hashes instead of behaviour. Otherwise approve; taste and style are the builder's.
+
+Your fixed toolsets take op plus the fields named for that operation. Rare operations take args; op help with operation returns the exact member schema as a result. MCP tools and skills are native capabilities behind these same operations.
+
+Your tools: code navigation, diagnostics and tests on the change; the review artifact; the verdict; the brain, the registry and your memory; Sinmara for a question.
+
+The harness: the checkout is read-only to you, and your verdict is bound to the exact diff it reviewed."""
+tool_refs = [
+  "registry.read",
+  "artifact.read",
+  "code.navigate",
+  "code.diagnostics",
+  "test.run",
+  "code.review.verdict",
+  "seat.ask.sinmara",
+  "memory.remember",
+  "brain.search",
+  "brain.read",
+  "memory.forget",
+  "incident.raise",
+  "codemap.get_architecture",
+  "codemap.list_projects",
+  "codemap.search_graph",
+  "codemap.trace_path",
+  "codemap.get_code_snippet",
+  "codemap.query_graph",
+  "codemap.search_code",
+  "codemap.detect_changes",
+  "codemap.index_status",
+  "codemap.check_index_coverage",
+  "artifact.write",
+  "models.read",
+]
+
+[context]
+max_bundle_tokens = 24576
+profile = "medium"
+review_lane = "glm-flash"
+
+[knowledge]
+atlas_sources = ["atlas.code", "atlas.codemap", "state.repos", "memory.forseti"]
+denied_tags = []
+required_tags = []
+top_k = 16
+
+[limits]
+max_parallel_runs = 4
+max_sessions = 4
+
+[live]
+file_egress_lane = "sinmara.file.out"
+file_ingress_lane = "sinmara.file.in"
+max_sessions = 4
+render_egress_lane = "sinmara.render.out"
+render_ingress_lane = "sinmara.render.in"
+
+[live.rollover]
+history_tail_events = 128
+max_brief_bytes = 8000
+threshold_tokens = 180000
+
+[tools]
+deny = []
+
+[tools.redirects]
+allow_cross_origin = false
+disabled_aliases = []
+max_http_hops = 2
+
+[sandbox]
+shell = true
+network = "none"
+writable = ["scratch"]
+readonly = ["checkout"]
+

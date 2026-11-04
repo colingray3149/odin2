@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+toolset = "brain"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Pins a short note to one open task, job, worker, run, session or approval by its id. Say where it stands, what it waits on and what was decided. The note rides your live memory while that task is open; once it closes the note moves to the brain's ops history, where brain search finds it."
+handler = { id = "odin_brain.note" }
+input_schema = "schemas/capability/task.note.input.json"
+output_schema = "schemas/capability/task.note.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 10
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_brain.note_evidence" }
+tests = [
+  "odin-brain::it runtime::live_memory::closed_work_leaves_a_day_after_it_closed_and_notes_pin_only_to_open_work",
+]

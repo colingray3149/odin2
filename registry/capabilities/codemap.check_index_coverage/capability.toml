@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "code"
+op = "coverage"
+kind = "capability"
+enabled = true
+implementation = "codemap"
+version = 1
+description = "Check code index coverage. Checks whether exact paths or a scope of a declared project are indexed and fresh in its code graph, page by page. A clean result means no recorded gap, not proof of completeness."
+handler = { id = "odin_adapter.operation" }
+input_schema = "schemas/capability/codemap.check_index_coverage.input.json"
+output_schema = "schemas/capability/codemap.check_index_coverage.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "builder", "judge"]
+timeout_seconds = 60
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_adapter.receipt" }
+tests = [
+  "odin-adapter-mcp::bin/odin-adapter-mcp tests::each_declared_codemap_tool_is_served_and_a_drifted_surface_is_refused",
+]

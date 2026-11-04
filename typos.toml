@@ -1,0 +1,51 @@
+[files]
+extend-exclude = [
+  "view/omp/",
+  "view/shim/",
+  "extension/generated/",
+  "crates/odin-brain/assets/",
+  "target/",
+  "node_modules/",
+  "*.lock",
+  "registry/models.available.json",
+  "flake.lock",
+]
+
+[default]
+# Baseline digest columns are generated hashes, not words.
+# Letter runs glued to character, byte or quoted-printable (=E9) escapes are encoded text, not standalone words;
+# a quoted-printable letter is a byte from A0 up, so a plain `name=10` stays checked.
+extend-ignore-re = [
+  "[0-9a-fA-F]{8,}",
+  "[A-Za-z]+\\\\+u\\{[0-9a-fA-F]+\\}",
+  "[A-Za-z]+\\\\+u[0-9a-fA-F]{4}",
+  "[A-Za-z]+\\\\+'[0-9a-fA-F]{2}",
+  "[A-Za-z]+\\\\+x[0-9a-fA-F]{2}",
+  "[A-Za-z]+=[A-F][0-9A-F]",
+]
+
+[default.extend-words]
+# SMTP HELO/EHLO client identity (helo_name); not the greeting hello.
+helo = "helo"
+# POSIX open(2) flag O_WRONLY.
+WRONLY = "WRONLY"
+# Established spelling in this tree (ReasonCategory::UnparseableShape, unparseable_shape).
+unparseable = "unparseable"
+# OpenDocument Format media-type stem (application/vnd.oasis.opendocument).
+ODF = "ODF"
+# Local binding: the page was queried again.
+requeried = "requeried"
+# Health-export initialism.
+hae = "hae"
+# Open Packaging Format metadata and the recorded LibriVox narrator's name.
+opf = "opf"
+Gord = "Gord"
+
+[default.extend-identifiers]
+# Linux capability field CapInh (inherited set), not a word fragment.
+CapInh = "CapInh"
+# The gost tunnel program.
+gost = "gost"
+GOST = "GOST"
+# Camera thumbnail files (.THM).
+thm = "thm"

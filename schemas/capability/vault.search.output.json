@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/vault.search.output.json",
+  "title": "vault.search output",
+  "description": "Bounded receipt of the retrieval-eligible vault pool. Page text never appears in envelopes: text flows through the M11 brain index and citations only, while this receipt carries names, content digests, and sizes. Names and digests are adapter-provenanced untrusted content, never policy. truncated=true with a pages array capped at the requested maximum flags the shortfall explicitly — it is never silent. Digests use the odin-domain Digest wire form.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "source_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "revision_digest": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "page_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "pages": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^blake3:[0-9a-f]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": ["name", "digest", "bytes"]
+      }
+    }
+  },
+  "required": ["source_id", "revision_digest", "page_count", "truncated", "pages"]
+}

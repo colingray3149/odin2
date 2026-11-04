@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "build"
+op = "test"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Runs the session capsule's tests and returns pass, fail and ignore counts, failing-test messages and compiler diagnostics; up to 20 minutes. attr (or nothing) runs a flake output or all flake checks in the Nix build sandbox; paths runs 1 to 8 pytest files; cargo runs one Cargo package's tests with cargo-nextest (package, optionally a test target and a name filter). paths and cargo run in a disposable copy with the capsule's Nix dev environment. One of attr, paths or cargo per call. A log with no recognized test framework is reported as such, not as a pass."
+handler = { id = "test_run" }
+input_schema = "schemas/capability/test.run.input.json"
+output_schema = "schemas/capability/test.run.output.json"
+effect_class = "R1"
+seat_tags = ["builder", "judge"]
+timeout_seconds = 1260
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_test_run_evidence" }
+tests = [
+  "odin-cli::bin/odind coding_route::tests::a_cargo_selection_runs_only_the_named_tests",
+]

@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/seat.model.set.output.json",
+  "title": "seat.model.set output",
+  "description": "Real durable live-command receipt for the selected declared model. Acceptance records admission, not completion or confirmation that the model has changed. Rejected commands are typed errors.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "seat": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "receipt": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "const": "accepted"
+            },
+            "commandId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "status",
+            "commandId"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "const": "duplicate"
+            },
+            "commandId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "priorOutcome": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "status": {
+                          "const": "applied"
+                        },
+                        "commandId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "commandId"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "status": {
+                          "const": "cancelled"
+                        },
+                        "commandId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "commandId",
+                        "reason"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "status": {
+                          "const": "failed"
+                        },
+                        "commandId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "error": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "code": {
+                              "type": "string"
+                            },
+                            "message": {
+                              "type": "string"
+                            },
+                            "retryable": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "message",
+                            "retryable"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "commandId",
+                        "error"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "required": [
+            "status",
+            "commandId",
+            "priorOutcome"
+          ]
+        }
+      ]
+    }
+  },
+  "required": [
+    "seat",
+    "provider",
+    "model",
+    "sessionId",
+    "receipt"
+  ]
+}

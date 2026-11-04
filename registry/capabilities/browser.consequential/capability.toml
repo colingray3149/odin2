@@ -1,0 +1,25 @@
+schema = "odin.registry.v1"
+toolset = "research"
+op = "submit"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Carries out one browser step that needs the owner's yes (submitting, paying, sending) on a browser a pod has open. Odin asks him with the exact page and request, and a changed page or request is a new question."
+handler = { id = "odin_browser.consequential" }
+input_schema = "schemas/capability/browser.consequential.input.json"
+output_schema = "schemas/capability/browser.consequential.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+batchable = true
+preview = "browser"
+evidence_extractor = { id = "odin_browser.consequential_evidence" }
+tests = [
+  "odin-cli::browser_batch owner_decided_browser_batch_runs_each_entry_once_through_the_real_coordinator",
+  "odin-cli browser_runtime::coordinator::checkout::tests::an_approved_checkout_places_the_order_and_returns_the_confirmation",
+  "odin-omp host_tools::operations::production_operation_dispatch::approval_lifecycle::an_approved_browser_action_reaches_the_browser_and_a_changed_page_is_refused",
+]

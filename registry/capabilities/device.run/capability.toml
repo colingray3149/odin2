@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "code"
+op = "device"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Run one declared device action of the calling project. The action's fixed argv is rendered from the project sphere and executed inside the lane bubble; undeclared devices, actions, and paths are refused."
+handler = { id = "device_run" }
+input_schema = "schemas/capability/device.run.input.json"
+output_schema = "schemas/capability/device.run.output.json"
+effect_class = "R2"
+seat_tags = ["builder"]
+timeout_seconds = 300
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_device_run_evidence" }
+tests = [
+  "odin-omp host_tools::device::tests::a_rendered_device_action_runs_confined_with_no_dev",
+  "odin-omp host_tools::device::tests::only_a_parent_step_makes_a_path_leave_the_sphere",
+]

@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "Grok 4.7 through the OpenCode Go plan's Zen endpoint."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/go-grok"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "opencode-go/grok-4.7"
+# frontier, everyday or fast-cheap.
+tier = "everyday"
+# Position in the class try order.
+order = 4
+# Account pin holding this card's credentials.
+account = "opencode-go"
+# One line naming when this card is the right pick.
+strengths = "Grok reasoning on the Go subscription; extra everyday depth."

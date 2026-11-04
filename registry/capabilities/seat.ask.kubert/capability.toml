@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "delegate"
+op = "ask_kubert"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Ask Kubert for cluster work. Hands Kubert one operations job: launching a published pod profile (with any token or name the owner gave), pausing, resuming, restarting or stopping a running pod, or other cluster work; Kubert reports what it actually did. A receipt means the job was accepted, not that a pod is running. The work shows in its own terminal tab, and a retry continues the same task."
+handler = { id = "seat_ask" }
+delegate_to = "kubert"
+input_schema = "schemas/capability/seat.ask.input.json"
+output_schema = "schemas/capability/seat.ask.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator", "builder"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_seat_ask_evidence" }
+tests = [
+  "odin-hermes::it governed_dispatch::arbitrary_declared_targets_reach_the_governed_owner_through_real_dispatch",
+]

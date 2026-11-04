@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+toolset = "status"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Restore a drained fleet node. Returns one drained fleet host to service: uncordons its nodes, resumes the Odin pods its drain paused, and reports the scheduler state read back from the cluster."
+handler = { id = "odin_hermes.fleet_restore" }
+input_schema = "schemas/capability/fleet.restore.input.json"
+output_schema = "schemas/capability/fleet.restore.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes.fleet_restore_evidence" }
+tests = [
+  "odin-cli::bin/odind fleet_workloads::tests::a_pod_that_would_not_resume_stays_recorded_for_the_next_restore",
+]

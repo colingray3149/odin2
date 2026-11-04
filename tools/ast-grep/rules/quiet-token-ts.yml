@@ -1,0 +1,9 @@
+id: quiet-token-ts
+language: typescript
+severity: error
+message: "[quiet] is only valid in the Rust QUIET_REPLY definition"
+rule:
+  any:
+    - kind: string
+    - kind: template_string
+  regex: '\[quiet\]'

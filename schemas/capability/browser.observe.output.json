@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/browser.observe.output.json",
+  "title": "browser.observe output",
+  "description": "One bounded TypedRead projection from the odin-browser session actor. Content is always TrustClass::Untrusted with exact provenance; cookies, storage, autofill, password values, request auth headers, and runtime form values are never returned.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/textProjection" },
+    { "$ref": "#/$defs/linksProjection" },
+    { "$ref": "#/$defs/tablesProjection" },
+    { "$ref": "#/$defs/accessibilityProjection" },
+    { "$ref": "#/$defs/sanitizedDomProjection" }
+  ],
+  "$defs": {
+    "blake3Digest": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "readMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trust": {
+          "const": "untrusted"
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sourceUrl": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9+.-]*://[^@?#[\\x00-\\x1f]]*$"
+            },
+            "origin": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9+.-]*://[^/?#@\\x00-\\x1f]+$"
+            },
+            "exactUrlDigest": { "$ref": "#/$defs/blake3Digest" },
+            "documentDigest": { "$ref": "#/$defs/blake3Digest" },
+            "observedAt": {
+              "type": "string",
+              "format": "date-time",
+              "minLength": 1
+            }
+          },
+          "required": ["sourceUrl", "origin", "exactUrlDigest", "documentDigest", "observedAt"]
+        },
+        "freshness": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "current": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "observedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["observedAt"]
+                }
+              },
+              "required": ["current"]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "stale": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "observedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "minLength": 1
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["observedAt", "reason"]
+                }
+              },
+              "required": ["stale"]
+            }
+          ]
+        },
+        "bound": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "byteBound": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1048576
+            },
+            "emittedBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "totalBytes": {
+              "type": ["integer", "null"],
+              "minimum": 0
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": ["byteBound", "emittedBytes", "totalBytes", "truncated"]
+        },
+        "tokenEstimate": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["trust", "provenance", "freshness", "bound", "tokenEstimate", "reason"]
+    },
+    "accessibilityNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/accessibilityNode" }
+        }
+      },
+      "required": ["role", "name", "children"]
+    },
+    "domNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "text": {
+          "type": ["string", "null"]
+        },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/domNode" }
+        }
+      },
+      "required": ["tag", "attributes", "text", "children"]
+    },
+    "textProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "metadata": { "$ref": "#/$defs/readMetadata" },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": ["metadata", "text"]
+        }
+      },
+      "required": ["text"]
+    },
+    "linksProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "links": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "metadata": { "$ref": "#/$defs/readMetadata" },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[a-z][a-z0-9+.-]*://[^@?#[\\x00-\\x1f]]*$"
+                  },
+                  "urlDigest": { "$ref": "#/$defs/blake3Digest" },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["url", "urlDigest", "text"]
+              }
+            }
+          },
+          "required": ["metadata", "links"]
+        }
+      },
+      "required": ["links"]
+    },
+    "tablesProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tables": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "metadata": { "$ref": "#/$defs/readMetadata" },
+            "tables": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "caption": {
+                    "type": ["string", "null"]
+                  },
+                  "rows": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                },
+                "required": ["caption", "rows"]
+              }
+            }
+          },
+          "required": ["metadata", "tables"]
+        }
+      },
+      "required": ["tables"]
+    },
+    "accessibilityProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "accessibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "metadata": { "$ref": "#/$defs/readMetadata" },
+            "root": { "$ref": "#/$defs/accessibilityNode" }
+          },
+          "required": ["metadata", "root"]
+        }
+      },
+      "required": ["accessibility"]
+    },
+    "sanitizedDomProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sanitizedDom": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "metadata": { "$ref": "#/$defs/readMetadata" },
+            "root": { "$ref": "#/$defs/domNode" },
+            "sanitization": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "removedRuntimeValues": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "removedSensitiveAttributes": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": ["removedRuntimeValues", "removedSensitiveAttributes"]
+            }
+          },
+          "required": ["metadata", "root", "sanitization"]
+        }
+      },
+      "required": ["sanitizedDom"]
+    }
+  }
+}

@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "status"
+op = "journal"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Read Odin's journal. Reads the tail of odind's own journal (up to 200 lines, optionally since a time and from a minimum level: error, warn or info), redacted. Worth it when the owner asks how something went or why it failed."
+handler = { id = "journal_read" }
+input_schema = "schemas/capability/journal.read.input.json"
+output_schema = "schemas/capability/journal.read.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_journal_read_evidence" }
+tests = [
+  "odin-hermes runtime::journal::tests::the_tail_reads_redacts_and_names_the_query",
+]

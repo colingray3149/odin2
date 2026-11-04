@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/git.patch.propose.input.json",
+  "title": "git.patch.propose input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^seat/[a-z0-9-]+/[a-z0-9-]+$"
+    }
+  },
+  "required": [
+    "summary"
+  ]
+}

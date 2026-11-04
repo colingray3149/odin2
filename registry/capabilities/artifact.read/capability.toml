@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "files"
+op = "artifact"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Reads one shared artifact: text inline, other content as base64, up to 256 KiB a page. It is shared with your seat or project and digest-verified."
+handler = { id = "artifact_read" }
+input_schema = "schemas/capability/artifact.read.input.json"
+output_schema = "schemas/capability/artifact.read.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_artifact_read_evidence" }
+tests = [
+  "odin-cli::bin/odind coding_route::file_result_tests::artifact_pages_reassemble_every_byte_including_utf8_splits_and_binary",
+]

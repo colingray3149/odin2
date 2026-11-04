@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "brain"
+op = "pages"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Lists the vault pages eligible for retrieval: names, digests and sizes. Their text is searched through the brain. An unavailable vault is reported as such."
+handler = { id = "vault_search" }
+input_schema = "schemas/capability/vault.search.input.json"
+output_schema = "schemas/capability/vault.search.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_vault_search_evidence" }
+tests = [
+  "odin-hermes::it vault::a_search_lists_only_the_scoped_pages_of_the_served_space",
+]

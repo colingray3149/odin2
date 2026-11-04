@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/pod-exec.output.json",
+  "title": "pod-exec output",
+  "description": "One pod-exec run: the argv that ran, its exit code, the last bytes of each stream with their full lengths, and the files under the pod's export dir afterwards.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "capability": {
+      "type": "string"
+    },
+    "argv": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "exitCode": {
+      "type": "integer"
+    },
+    "timedOut": {
+      "type": "boolean"
+    },
+    "stdout": {
+      "type": "string"
+    },
+    "stderr": {
+      "type": "string"
+    },
+    "stdoutBytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "stderrBytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "exportDir": {
+      "type": "string"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "path",
+          "bytes"
+        ]
+      }
+    },
+    "filesUnreadable": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "capability",
+    "argv",
+    "exitCode",
+    "timedOut",
+    "stdout",
+    "stderr",
+    "stdoutBytes",
+    "stderrBytes",
+    "exportDir",
+    "files"
+  ]
+}

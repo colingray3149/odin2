@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Local models on mini: list, load, unload, swap, pull and one-shot complete; GPU modes of each host."
+examples = [
+  'models {op: "list"}',
+  'models {op: "swap", id: "qwen3.6-35b"}',
+  'models {op: "complete", id: "lfm2.5-8b-a1b", prompt: "Rewrite this section in the style card voice: ...", max_tokens: 2048}',
+]

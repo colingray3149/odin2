@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "code"
+op = "index"
+kind = "capability"
+enabled = true
+implementation = "codemap"
+version = 1
+description = "Read code indexing status. One project index's readiness: node and edge counts, root, watch state, coverage gaps and the indexed git HEAD — the state of the code graph behind the codemap tools, not the code itself. Best-effort; verify cited paths with codemap.check_index_coverage."
+handler = { id = "odin_adapter.operation" }
+input_schema = "schemas/capability/codemap.index_status.input.json"
+output_schema = "schemas/capability/codemap.index_status.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "builder", "judge"]
+timeout_seconds = 60
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_adapter.receipt" }
+tests = [
+  "odin-adapter-mcp::bin/odin-adapter-mcp tests::each_declared_codemap_tool_is_served_and_a_drifted_surface_is_refused",
+]

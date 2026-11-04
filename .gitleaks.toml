@@ -1,0 +1,59 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic Discord owner in recovery test"
+condition = "AND"
+paths = ['''^crates/odin-hermes/tests/it/discord/recovery_windows\.rs$''']
+regexTarget = "match"
+regexes = ['''discord-owner:444400000000000009''']
+
+[[allowlists]]
+description = "Effect idempotency key fixture"
+condition = "AND"
+paths = ['''^crates/odin-hermes/tests/it/integrated_path\.rs$''']
+regexTarget = "secret"
+regexes = ['''^vault-seal-harbor-1$''']
+
+[[allowlists]]
+description = "Screen redaction test's synthetic bearer and truncated private key"
+condition = "AND"
+paths = ['''^crates/odin-omp/src/live/zellij/screen\.rs$''']
+regexTarget = "match"
+regexes = [
+  '''Authorization: Bearer eyJhbGciOiJIUzI1NiJ9''',
+  '''-----BEGIN OPENSSH PRIVATE KEY-----\\n\\\n\s*b3BlbnNzaC1rZXktdjEAAAAA\\n\\\n\s*-----END OPENSSH PRIVATE KEY-----''',
+]
+
+[[allowlists]]
+description = "Delegation test fixture key"
+condition = "AND"
+paths = ['''^crates/odin-omp/src/host_tools/delegation/tests\.rs$''']
+regexTarget = "secret"
+regexes = ['''^abc123def456$''']
+
+[[allowlists]]
+description = "Journal tail test's synthetic retry token"
+condition = "AND"
+paths = ['''^crates/odin-hermes/src/runtime/journal\.rs$''']
+regexTarget = "secret"
+regexes = ['''sk-live-abc123''']
+
+[[allowlists]]
+description = "Redaction test's synthetic query token"
+condition = "AND"
+paths = ['''^crates/odin-omp/src/redact\.rs$''']
+regexTarget = "secret"
+regexes = ['''pk\.abcdef123456''']
+
+[[allowlists]]
+description = "Dependency and build trees are not source"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)target/''',
+  '''(^|/)\.direnv/''',
+  '''(^|/)dist/''',
+  '''^result($|-)''',
+  '''(^|/)\.cargo-''',
+  '''__pycache__/''',
+]

@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "kube"
+op = "health"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Reads live cluster health: node readiness and pressure, pods with problems (not running, not ready, crash-looping) and recent warning events, as the API server reports them. Empty lists are real observations; an unreachable cluster or an incomplete scan is reported as unavailable."
+handler = { id = "odin_kube.health.read" }
+input_schema = "schemas/capability/kube.health.read.input.json"
+output_schema = "schemas/capability/kube.health.read.output.json"
+effect_class = "R0"
+seat_tags = ["operator"]
+timeout_seconds = 90
+idempotency = "pure"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_kube.health.read_evidence" }
+tests = [
+  "odin-cli::bin/odind kube_runtime::evidence::health_evidence_tests::health_evidence_accepts_an_ok_observation_with_empty_arrays",
+  "odin-kube health::tests::a_crash_looping_native_sidecar_is_a_problem",
+]

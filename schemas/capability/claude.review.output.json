@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "description": "Finished review text and its shared artifact; origin controls whether Sinmara reports a non-material result.",
+  "properties": {
+    "review": { "type": "string" },
+    "artifactId": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+    "initiatedBy": { "type": "string", "enum": ["owner", "self"] }
+  },
+  "required": ["review", "artifactId", "initiatedBy"],
+  "additionalProperties": false
+}

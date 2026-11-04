@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Odin authority daemon"
+description = "odind runs as the owner's user service on mini; the unit check proves it is active there."
+probes = [
+  "unit:mini user odind.service",
+]

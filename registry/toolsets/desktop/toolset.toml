@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "The owner's desktops when asked: look, act, apps, audio, music, monitors, devices, scenes."
+examples = [
+  'desktop {op: look}',
+  'desktop {op: act, steps: [{do: launch, app}]}',
+]

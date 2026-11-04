@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/report.pages.input.json",
+  "title": "report.pages input",
+  "description": "One exported PDF and the directory its page images are written to.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "pdf": {
+      "description": "PDF under /export, e.g. /export/report.pdf.",
+      "type": "string",
+      "minLength": 13,
+      "maxLength": 180,
+      "pattern": "^/export/[A-Za-z0-9][A-Za-z0-9 ._()+,-]{0,159}\\.pdf$"
+    },
+    "dir": {
+      "description": "Directory under /export that receives page-01.png and pages.json.",
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 180,
+      "pattern": "^/export/[A-Za-z0-9][A-Za-z0-9 ._()+,-]{0,159}$"
+    }
+  },
+  "required": ["pdf", "dir"]
+}

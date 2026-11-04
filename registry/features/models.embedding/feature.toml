@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "WeMM embeddings served locally for the brain"
+description = "The local embedding lane's account is open in the model book; no embedding is requested."
+probes = [
+  "models:wemm-embedding",
+]

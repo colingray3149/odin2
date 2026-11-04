@@ -1,0 +1,1083 @@
+//! Side-channel admission, dispatch, and evidence: the bounded active
+//! table with its owned task set, the lifecycle-owned dispatch of every
+//! admitted call, and the pinned wire result frames.
+
+use super::*;
+
+/// Capacity of the bounded history of terminal side-channel outcomes.
+pub const SIDE_CHANNEL_HISTORY_CAP: usize = 256;
+/// Total logical request bytes retained by admitted side-channel work.
+pub const SIDE_CHANNEL_ACTIVE_BYTE_BUDGET: usize = 16 * 1024 * 1024;
+/// Permits bounding every admitted host-tool / URI operation, including its
+/// active-table entry, owned task, blocking effect, result send, and outcome
+/// journal. Admission acquires a permit before cloning request state.
+pub const DISPATCH_PERMITS: usize = 16;
+/// The most a call's own `wait_seconds` may extend its job deadline; the seat
+/// tools that accept `wait_seconds` refuse a larger value.
+const MAX_WAIT_SECONDS: u64 = 600;
+#[cfg(test)]
+const TEST_CALL_TIMEOUT: Duration = Duration::from_secs(180);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SideDisposition {
+    Running,
+    Cancelled,
+}
+
+pub(super) struct SideEntry {
+    pub(super) kind: SideChannelKind,
+    pub(super) name: String,
+    pub(super) retained_bytes: usize,
+    pub(super) disposition: SideDisposition,
+}
+
+enum SideWork {
+    Reply(Value),
+    Tool {
+        scope: Scope,
+        execution: ExecutionBinding,
+        arguments: Value,
+        ignored: Vec<String>,
+    },
+    Uri {
+        scope: Scope,
+        execution: ExecutionBinding,
+        read: bool,
+    },
+}
+
+pub(super) struct PreparedSideCall {
+    request_id: String,
+    kind: SideChannelKind,
+    name: String,
+    work: SideWork,
+    permit: OwnedSemaphorePermit,
+}
+
+pub(super) enum SidePreparation {
+    Ignored,
+    Rejected {
+        request_id: String,
+        kind: SideChannelKind,
+        detail: &'static str,
+    },
+    Prepared(Box<PreparedSideCall>),
+}
+
+pub(super) struct SideTable {
+    pub(super) active: HashMap<String, SideEntry>,
+    pub(super) active_bytes: usize,
+    pub(super) admission_open: bool,
+    pub(super) tasks: JoinSet<Result<(), BridgeError>>,
+    pub(super) task_failure: Option<String>,
+    pub(super) history: VecDeque<SideChannelOutcome>,
+    /// Unanswered confirm dialogs by id, with the child generation that asked.
+    pub(super) confirmations: BTreeMap<String, u64>,
+    pub(super) dropped: u64,
+}
+
+impl Default for SideTable {
+    fn default() -> Self {
+        Self {
+            active: HashMap::new(),
+            active_bytes: 0,
+            admission_open: true,
+            tasks: JoinSet::new(),
+            task_failure: None,
+            history: VecDeque::new(),
+            confirmations: BTreeMap::new(),
+            dropped: 0,
+        }
+    }
+}
+
+impl SideTable {
+    fn reap_finished_tasks(&mut self) {
+        while let Some(joined) = self.tasks.try_join_next() {
+            match joined {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    self.admission_open = false;
+                    self.task_failure
+                        .get_or_insert_with(|| format!("owned side-channel task failed: {error}"));
+                }
+                Err(error) => {
+                    self.admission_open = false;
+                    self.task_failure
+                        .get_or_insert_with(|| format!("owned side-channel task failed: {error}"));
+                }
+            }
+        }
+    }
+
+    pub(super) fn admission_rejection(&self, retained_bytes: usize) -> Option<&'static str> {
+        if !self.admission_open {
+            Some("side-channel admission is closed")
+        } else if self.task_failure.is_some() {
+            Some("side-channel task authority is failed")
+        } else if self.active.len() >= DISPATCH_PERMITS {
+            Some("side-channel active-count ceiling reached")
+        } else if self
+            .active_bytes
+            .checked_add(retained_bytes)
+            .is_none_or(|bytes| bytes > SIDE_CHANNEL_ACTIVE_BYTE_BUDGET)
+        {
+            Some("side-channel active-byte ceiling reached")
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn cancel(&mut self, request_id: &str, kind: SideChannelKind) -> bool {
+        let Some(entry) = self.active.get_mut(request_id) else {
+            return false;
+        };
+        if entry.kind != kind {
+            return false;
+        }
+        entry.disposition = SideDisposition::Cancelled;
+        true
+    }
+
+    pub(super) fn remove_active(&mut self, request_id: &str) -> Option<SideEntry> {
+        let entry = self.active.remove(request_id)?;
+        self.active_bytes = self.active_bytes.saturating_sub(entry.retained_bytes);
+        Some(entry)
+    }
+
+    /// Retains one terminal outcome; the oldest retained outcome yields to
+    /// the bounded history and is counted, never silently dropped.
+    pub(super) fn remember(&mut self, outcome: SideChannelOutcome) {
+        if self.history.len() >= SIDE_CHANNEL_HISTORY_CAP {
+            self.history.pop_front();
+            self.dropped = self.dropped.saturating_add(1);
+        }
+        self.history.push_back(outcome);
+    }
+}
+
+impl Shared {
+    pub(super) fn side_guard(&self) -> Result<MutexGuard<'_, SideTable>, BridgeError> {
+        shared_lock(&self.side, "side-channel")
+    }
+    /// Reserves every resource synchronously before copying child-controlled
+    /// fields. Duplicate ids retain observation evidence but never launch or
+    /// answer a second interaction.
+    pub(super) fn prepare_side_call(
+        &self,
+        frame: &DecodedRpcFrame,
+        class: FrameClass,
+    ) -> Result<SidePreparation, BridgeError> {
+        let kind = match class {
+            FrameClass::HostTool => SideChannelKind::Tool,
+            FrameClass::HostUri => SideChannelKind::Uri,
+            _ => return Ok(SidePreparation::Ignored),
+        };
+        let value = frame.value();
+        let Some(request_id) = value.get("id").and_then(Value::as_str) else {
+            return Ok(SidePreparation::Ignored);
+        };
+        let (name, uri_read) = match kind {
+            SideChannelKind::Tool => {
+                let Some(name) = value.get("toolName").and_then(Value::as_str) else {
+                    return Ok(SidePreparation::Ignored);
+                };
+                (name, false)
+            }
+            SideChannelKind::Uri => {
+                let Some(operation) = value.get("operation").and_then(Value::as_str) else {
+                    return Ok(SidePreparation::Ignored);
+                };
+                let Some(url) = value.get("url").and_then(Value::as_str) else {
+                    return Ok(SidePreparation::Ignored);
+                };
+                (url, operation == "read")
+            }
+        };
+        let retained_bytes = frame.raw().len().max(1);
+        let mut table = self.side_guard()?;
+        table.reap_finished_tasks();
+        if table.active.contains_key(request_id) {
+            return Ok(SidePreparation::Ignored);
+        }
+        let rejection = table.admission_rejection(retained_bytes);
+        if let Some(detail) = rejection {
+            return Ok(SidePreparation::Rejected {
+                request_id: request_id.to_owned(),
+                kind,
+                detail,
+            });
+        }
+        let permit = match Arc::clone(&self.dispatch).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                return Ok(SidePreparation::Rejected {
+                    request_id: request_id.to_owned(),
+                    kind,
+                    detail: "side-channel dispatch ceiling reached",
+                });
+            }
+        };
+
+        // All child-controlled allocation happens after the count, byte, and
+        // semaphore bounds have admitted this request.
+        let request_id = request_id.to_owned();
+        let mut name = name.to_owned();
+        // Capture scope and epoch together; later rollover must not refresh this request.
+        let binding = self.binding_snapshot()?;
+        let scope = binding.dispatch_scope();
+        let execution = ExecutionBinding::from_binding(&binding);
+        let work = match kind {
+            SideChannelKind::Tool => {
+                use crate::host_tools::operations::PreparedToolCall;
+                match self
+                    .operations
+                    .projection_view(&self.operation_binding)?
+                    .prepare_tool_call(
+                        &self.admitted_host_tools,
+                        &name,
+                        value.get("arguments").cloned().unwrap_or_else(|| json!({})),
+                        Some(&scope),
+                    ) {
+                    Ok(PreparedToolCall::Call {
+                        name: resolved,
+                        arguments,
+                        ignored,
+                    }) => {
+                        name = resolved;
+                        SideWork::Tool {
+                            scope,
+                            execution,
+                            arguments,
+                            ignored,
+                        }
+                    }
+                    Ok(PreparedToolCall::Help(schema)) => SideWork::Reply(json!({
+                        "content":[{"type":"text","text":schema.to_string()}],
+                        "details":schema,"isError":false,
+                    })),
+                    Err(error) => {
+                        SideWork::Reply(side_error_result(kind, &error.to_string(), None))
+                    }
+                }
+            }
+            SideChannelKind::Uri => SideWork::Uri {
+                scope,
+                execution,
+                read: uri_read,
+            },
+        };
+        table.active_bytes += retained_bytes;
+        let previous = table.active.insert(
+            request_id.clone(),
+            SideEntry {
+                kind,
+                name: name.clone(),
+                retained_bytes,
+                disposition: SideDisposition::Running,
+            },
+        );
+        debug_assert!(previous.is_none());
+        Ok(SidePreparation::Prepared(Box::new(PreparedSideCall {
+            request_id,
+            kind,
+            name,
+            work,
+            permit,
+        })))
+    }
+
+    /// Transfers a prepared request into the bridge-owned task set. Closing
+    /// admission and cancelling the reservation wins over a delayed start.
+    pub(super) fn start_side_call(
+        self: &Arc<Self>,
+        prepared: Box<PreparedSideCall>,
+    ) -> Result<(), (Box<PreparedSideCall>, BridgeError)> {
+        let mut table = match self.side_guard() {
+            Ok(table) => table,
+            Err(error) => return Err((prepared, error)),
+        };
+        table.reap_finished_tasks();
+        let runnable = table.admission_open
+            && table.task_failure.is_none()
+            && table
+                .active
+                .get(&prepared.request_id)
+                .is_some_and(|entry| entry.disposition == SideDisposition::Running);
+        if !runnable {
+            return Err((
+                prepared,
+                BridgeError::SideChannelDrain {
+                    detail: "side-channel admission closed before dispatch".to_owned(),
+                },
+            ));
+        }
+        let shared = Arc::clone(self);
+        table
+            .tasks
+            .spawn(async move { shared.run_prepared_side_call(*prepared).await });
+        Ok(())
+    }
+
+    pub(super) fn cancel_side_call(&self, value: &Value) -> Result<(), BridgeError> {
+        let target = value
+            .get("targetId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let cancel_kind = match value.get("type").and_then(Value::as_str) {
+            Some("host_tool_cancel") => SideChannelKind::Tool,
+            Some("host_uri_cancel") => SideChannelKind::Uri,
+            _ => return Ok(()),
+        };
+        let _ = self.side_guard()?.cancel(target, cancel_kind);
+        Ok(())
+    }
+
+    /// Atomically closes admission and suppresses every outstanding result.
+    /// Tasks stay owned until `drain_side_tasks` has joined them.
+    pub(super) fn close_side_admission(&self) -> Result<(), BridgeError> {
+        let mut table = self.side_guard()?;
+        table.admission_open = false;
+        for entry in table.active.values_mut() {
+            entry.disposition = SideDisposition::Cancelled;
+        }
+        Ok(())
+    }
+
+    pub(super) fn open_side_admission(&self) -> Result<(), BridgeError> {
+        let mut table = self.side_guard()?;
+        table.reap_finished_tasks();
+        if let Some(detail) = table.task_failure.clone() {
+            return Err(BridgeError::SideChannelDrain { detail });
+        }
+        if !table.active.is_empty()
+            || table.active_bytes != 0
+            || !table.tasks.is_empty()
+            || self.dispatch.available_permits() != DISPATCH_PERMITS
+        {
+            return Err(BridgeError::SideChannelDrain {
+                detail: format!(
+                    "cannot reopen with {} active call(s), {} retained byte(s), {} owned task(s), and {} available permit(s)",
+                    table.active.len(),
+                    table.active_bytes,
+                    table.tasks.len(),
+                    self.dispatch.available_permits(),
+                ),
+            });
+        }
+        table.admission_open = true;
+        Ok(())
+    }
+
+    pub(super) async fn abandon_prepared_side_call(
+        &self,
+        prepared: PreparedSideCall,
+        error: &str,
+    ) -> Result<(), BridgeError> {
+        let entry = { self.side_guard()?.remove_active(&prepared.request_id) };
+        let Some(entry) = entry else {
+            return Ok(());
+        };
+        let status = if entry.disposition == SideDisposition::Cancelled {
+            SideChannelStatus::Cancelled { result: None }
+        } else {
+            SideChannelStatus::Failed {
+                error: error.to_owned(),
+                error_kind: None,
+            }
+        };
+        self.finish_side_outcome(
+            &prepared.request_id,
+            SideChannelOutcome {
+                request_id: prepared.request_id.clone(),
+                kind: entry.kind,
+                name: entry.name,
+                status,
+            },
+            false,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn run_prepared_side_call(&self, prepared: PreparedSideCall) -> Result<(), BridgeError> {
+        let PreparedSideCall {
+            request_id,
+            kind,
+            name,
+            work,
+            permit,
+        } = prepared;
+        match work {
+            SideWork::Reply(reply) => {
+                self.run_side_channel(request_id, kind, name, permit, move || Ok(reply), None)
+                    .await?;
+            }
+            SideWork::Tool {
+                scope,
+                execution,
+                arguments,
+                ignored,
+            } => {
+                let operations = self.operations.projection_view(&self.operation_binding)?;
+                let operation_binding = self.operation_binding.clone();
+                let session = execution.session_id().clone();
+                // The background slot is reserved only if the call is still
+                // running at the seat's inline deadline: a call that answers
+                // inline never takes one, and a full board at the deadline
+                // keeps the call running inline instead of refusing it.
+                let reserved = operations
+                    .jobs()
+                    .filter(|jobs| {
+                        jobs.runs_in_background(scope.seat.as_ref(), &name)
+                            && !operations.reports_delegated_completion(&name)
+                    })
+                    .map(|jobs| ReservedCall {
+                        deadline: operations
+                            .declared_timeout(&name)
+                            .unwrap_or(crate::host_tools::jobs::DEFAULT_DEADLINE)
+                            .max(crate::host_tools::jobs::MIN_DEADLINE)
+                            + Duration::from_secs(
+                                arguments["wait_seconds"]
+                                    .as_u64()
+                                    .unwrap_or(0)
+                                    .min(MAX_WAIT_SECONDS),
+                            ),
+                        arguments: arguments.clone(),
+                        jobs: Arc::clone(jobs),
+                    });
+                let dispatch_name = name.clone();
+                let request = request_id.clone();
+                let operation = move || -> Result<Value, BridgeError> {
+                    // Every production tool dispatch enters the sole
+                    // operation authority. An unlisted/unbound familiar name
+                    // is rejected by HostToolOperations before any handler.
+                    let result = operations.dispatch_tool(
+                        SessionOperationContext {
+                            binding: &operation_binding,
+                            session: &session,
+                            scope: &scope,
+                            execution: Some(&execution),
+                        },
+                        &dispatch_name,
+                        None,
+                        arguments,
+                        &request,
+                    )?;
+                    let result = with_ignored(result, &ignored);
+                    let error = result
+                        .get("isError")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let (result, images) = split_images(result);
+                    let text =
+                        model_tool_text(&result).map_err(|cause| BridgeError::Serialization {
+                            detail: cause.to_string(),
+                        })?;
+                    let mut content = vec![json!({"type": "text", "text": text})];
+                    content.extend(images);
+                    Ok(json!({
+                        "content": content,
+                        "details": result,
+                        "isError": error,
+                    }))
+                };
+                self.run_side_channel(request_id, kind, name, permit, operation, reserved)
+                    .await?;
+            }
+            SideWork::Uri {
+                scope,
+                execution,
+                read,
+            } => {
+                let router = self.uri_router.clone();
+                let resolve_url = name.clone();
+                let operation = move || -> Result<Value, BridgeError> {
+                    if !read {
+                        return Err(UriError::WriteRejected { url: resolve_url }.into());
+                    }
+                    // The router validates execution context for brain reads only.
+                    let resolved = router
+                        .resolve(&UriContext::with_execution(scope, execution), &resolve_url)
+                        .map_err(BridgeError::Uri)?;
+                    Ok(uri_result_value(&resolved))
+                };
+                self.run_side_channel(request_id, kind, name, permit, operation, None)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) async fn timed_call_for_test(
+        &self,
+        request: &str,
+        jobs: Arc<crate::host_tools::jobs::JobBoard>,
+        operation: impl FnOnce() -> Result<Value, BridgeError> + Send + 'static,
+    ) {
+        let permit = Arc::clone(&self.dispatch)
+            .acquire_owned()
+            .await
+            .expect("permit");
+        self.run_side_channel(
+            request.to_owned(),
+            SideChannelKind::Tool,
+            "web_search".to_owned(),
+            permit,
+            operation,
+            Some(ReservedCall {
+                jobs,
+                arguments: json!({}),
+                deadline: TEST_CALL_TIMEOUT,
+            }),
+        )
+        .await
+        .expect("timed side call");
+    }
+
+    /// The owned permit spans the entire task, including blocking effect,
+    /// cancellation arbitration, result delivery, and durable outcome. A
+    /// call that may become a job and is still running at the seat's inline
+    /// deadline detaches: the model is answered with its job id and the
+    /// call is watched to the end without the permit. A full board at that
+    /// moment keeps the call running inline — its answer arrives late in
+    /// the same turn, never not at all.
+    async fn run_side_channel(
+        &self,
+        request_id: String,
+        kind: SideChannelKind,
+        name: String,
+        _permit: OwnedSemaphorePermit,
+        operation: impl FnOnce() -> Result<Value, BridgeError> + Send + 'static,
+        call: Option<ReservedCall>,
+    ) -> Result<(), BridgeError> {
+        // One real start time: the job's run time and its absolute deadline
+        // both measure from here, not from when the call detaches.
+        let started = std::time::Instant::now();
+        let progress = odin_domain::progress::Slot::default();
+        let slot = progress.clone();
+        let mut task =
+            tokio::task::spawn_blocking(move || odin_domain::progress::scoped(slot, operation));
+        let outcome = match call {
+            None => (&mut task).await,
+            Some(call) => {
+                match tokio::time::timeout_at(
+                    tokio::time::Instant::from_std(started + call.jobs.inline()),
+                    &mut task,
+                )
+                .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(_) => match call.jobs.try_reserve() {
+                        Ok(reservation) => {
+                            match call.jobs.start(
+                                reservation,
+                                &name,
+                                &call.arguments,
+                                call.deadline,
+                                started,
+                                progress,
+                            ) {
+                                Ok((id, result)) => {
+                                    let watched = BackgroundJob {
+                                        jobs: Arc::clone(&call.jobs),
+                                        deadline_at: started + call.deadline,
+                                    };
+                                    tokio::spawn(watch_job(watched, id, task));
+                                    return self
+                                        .settle_side_call(request_id, kind, name, result)
+                                        .await;
+                                }
+                                Err(reason) => {
+                                    // The journal could not record the job. The
+                                    // effect already started, so keep its permit
+                                    // and deliver its eventual result inline.
+                                    tracing::warn!("call remains inline: {reason}");
+                                    (&mut task).await
+                                }
+                            }
+                        }
+                        // The board is full at the deadline: the call keeps
+                        // running inline to completion.
+                        Err(_board_full) => (&mut task).await,
+                    },
+                }
+            }
+        };
+        match outcome {
+            Ok(Ok(result)) => {
+                self.settle_side_call(request_id, kind, name, result)
+                    .await?
+            }
+            Ok(Err(error)) => {
+                let error_kind = error.error_kind();
+                let detail = error.to_string();
+                let result = side_error_result(kind, &model_error_text(&detail), Some(error_kind));
+                self.fail_side_call(request_id, kind, name, detail, result, Some(error_kind))
+                    .await?;
+            }
+            Err(error) => {
+                let detail = format!("side-channel worker failed: {error}");
+                let result = side_error_result(kind, &detail, Some("worker"));
+                self.fail_side_call(
+                    request_id,
+                    kind,
+                    name,
+                    detail.clone(),
+                    result,
+                    Some("worker"),
+                )
+                .await?;
+                self.close_side_admission()?;
+                if !matches!(self.status()?, BridgeStatus::Stopped) {
+                    self.mark_failed(&detail)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn side_disposition(
+        &self,
+        request_id: &str,
+        kind: SideChannelKind,
+    ) -> Result<Option<SideDisposition>, BridgeError> {
+        Ok(self
+            .side_guard()?
+            .active
+            .get(request_id)
+            .filter(|entry| entry.kind == kind)
+            .map(|entry| entry.disposition))
+    }
+
+    pub(super) fn side_result_authorized(
+        &self,
+        request_id: &str,
+        kind: SideChannelKind,
+    ) -> Result<bool, BridgeError> {
+        Ok(self.side_disposition(request_id, kind)? == Some(SideDisposition::Running))
+    }
+
+    async fn settle_side_call(
+        &self,
+        request_id: String,
+        kind: SideChannelKind,
+        name: String,
+        result: Value,
+    ) -> Result<(), BridgeError> {
+        let sent = if self.side_result_authorized(&request_id, kind)? {
+            self.send_side_result(&request_id, kind, &result).await
+        } else {
+            false
+        };
+        if sent && kind == SideChannelKind::Tool {
+            if let Err(error) = self
+                .operations
+                .acknowledge_delivery(result.get("details").unwrap_or(&result))
+            {
+                tracing::warn!("delivered tool result acknowledgement failed: {error}");
+            }
+        }
+        let status = if sent {
+            SideChannelStatus::Completed { result, sent: true }
+        } else if self.side_disposition(&request_id, kind)? == Some(SideDisposition::Cancelled) {
+            SideChannelStatus::Cancelled {
+                result: Some(result),
+            }
+        } else {
+            SideChannelStatus::Completed {
+                result,
+                sent: false,
+            }
+        };
+        self.finish_side_outcome(
+            &request_id,
+            SideChannelOutcome {
+                request_id: request_id.clone(),
+                kind,
+                name,
+                status,
+            },
+            true,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn fail_side_call(
+        &self,
+        request_id: String,
+        kind: SideChannelKind,
+        name: String,
+        detail: String,
+        error_result: Value,
+        error_kind: Option<&str>,
+    ) -> Result<(), BridgeError> {
+        let sent = if self.side_result_authorized(&request_id, kind)? {
+            self.send_side_result(&request_id, kind, &error_result)
+                .await
+        } else {
+            false
+        };
+        let status = if !sent
+            && self.side_disposition(&request_id, kind)? == Some(SideDisposition::Cancelled)
+        {
+            SideChannelStatus::Cancelled {
+                result: Some(error_result),
+            }
+        } else {
+            SideChannelStatus::Failed {
+                error: detail,
+                error_kind: error_kind.map(str::to_owned),
+            }
+        };
+        self.finish_side_outcome(
+            &request_id,
+            SideChannelOutcome {
+                request_id: request_id.clone(),
+                kind,
+                name,
+                status,
+            },
+            true,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Routes side results through a cancellation-aware pump message. A
+    /// bounded acknowledgement prevents stop from deadlocking behind a result
+    /// that raced admission closure.
+    async fn send_side_result(
+        &self,
+        request_id: &str,
+        kind: SideChannelKind,
+        result: &Value,
+    ) -> bool {
+        let generation = self.generation.load(Ordering::Acquire);
+        let (ack_tx, ack_rx) = oneshot::channel();
+        if self
+            .pump_tx
+            .send(PumpMessage::SideResult {
+                generation,
+                request_id: request_id.to_owned(),
+                kind,
+                result: result.clone(),
+                ack: ack_tx,
+            })
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        matches!(
+            tokio::time::timeout(self.process_spec.kill_timeout, ack_rx).await,
+            Ok(Ok(true))
+        )
+    }
+
+    /// Journals and retains the terminal outcome before releasing the active
+    /// byte reservation. `remove_active` is false only when the reservation
+    /// was already removed while abandoning a never-started request.
+    async fn finish_side_outcome(
+        &self,
+        request_id: &str,
+        outcome: SideChannelOutcome,
+        remove_active: bool,
+    ) -> Result<(), BridgeError> {
+        self.journal_side_outcome(&outcome).await?;
+        let mut table = self.side_guard()?;
+        if remove_active {
+            let _ = table.remove_active(request_id);
+        }
+        table.remember(outcome);
+        Ok(())
+    }
+
+    /// One normalized durable live event per terminal side-channel outcome.
+    async fn journal_side_outcome(&self, outcome: &SideChannelOutcome) -> Result<(), BridgeError> {
+        let body = json!({
+            "kind": "side_channel_outcome",
+            "request_id": outcome.request_id,
+            "channel": match outcome.kind {
+                SideChannelKind::Tool => "tool",
+                SideChannelKind::Uri => "uri",
+            },
+            "name": outcome.name,
+            "status": match &outcome.status {
+                SideChannelStatus::Completed { result, sent } => json!({
+                    "outcome": "completed",
+                    "sent": sent,
+                    "result": without_image_data(result),
+                }),
+                SideChannelStatus::Cancelled { result } => json!({
+                    "outcome": "cancelled",
+                    "result": result,
+                }),
+                SideChannelStatus::Failed { error, error_kind } => json!({
+                    "outcome": "failed",
+                    "error": error,
+                    "errorKind": error_kind,
+                }),
+            },
+        });
+        if let Err(error) = self.append_event(body).await {
+            self.mark_failed(&format!("side-channel outcome append failed: {error}"))?;
+        }
+        Ok(())
+    }
+
+    /// Joins every admitted wrapper without aborting it. A timeout puts the
+    /// still-owning `JoinSet` back into bridge state and fails closed.
+    pub(super) async fn drain_side_tasks(&self, budget: Duration) -> Result<(), BridgeError> {
+        let (mut tasks, mut failure) = {
+            let mut table = self.side_guard()?;
+            table.reap_finished_tasks();
+            (
+                std::mem::replace(&mut table.tasks, JoinSet::new()),
+                table.task_failure.clone(),
+            )
+        };
+        let deadline = tokio::time::Instant::now() + budget;
+        while !tasks.is_empty() {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, tasks.join_next()).await {
+                Ok(Some(Ok(Ok(())))) => {}
+                Ok(Some(Ok(Err(error)))) => {
+                    failure.get_or_insert_with(|| {
+                        format!("owned side-channel task failed while draining: {error}")
+                    });
+                }
+                Ok(Some(Err(error))) => {
+                    failure.get_or_insert_with(|| {
+                        format!("owned side-channel task failed while draining: {error}")
+                    });
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    let count = tasks.len();
+                    let mut table = self.side_guard()?;
+                    debug_assert!(table.tasks.is_empty());
+                    table.tasks = tasks;
+                    return Err(BridgeError::SideChannelDrain {
+                        detail: format!(
+                            "timed out with {count} owned task(s), {} active call(s), and {} retained byte(s)",
+                            table.active.len(),
+                            table.active_bytes,
+                        ),
+                    });
+                }
+            }
+        }
+        let mut table = self.side_guard()?;
+        if let Some(detail) = failure {
+            table.task_failure = Some(detail.clone());
+            table.admission_open = false;
+            return Err(BridgeError::SideChannelDrain { detail });
+        }
+        if !table.active.is_empty()
+            || table.active_bytes != 0
+            || self.dispatch.available_permits() != DISPATCH_PERMITS
+        {
+            return Err(BridgeError::SideChannelDrain {
+                detail: format!(
+                    "joined tasks left {} active call(s), {} retained byte(s), and {} available permit(s)",
+                    table.active.len(),
+                    table.active_bytes,
+                    self.dispatch.available_permits(),
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Takes a handler's `images` (OMP `ImageContent` blocks) out of its result:
+/// they ride the tool result as image blocks, never as text or `details`.
+pub(super) fn split_images(mut result: Value) -> (Value, Vec<Value>) {
+    let is_image = |block: &Value| {
+        block.get("type").and_then(Value::as_str) == Some("image")
+            && block.get("data").is_some_and(Value::is_string)
+            && block.get("mimeType").is_some_and(Value::is_string)
+    };
+    let all_images = result
+        .get("images")
+        .and_then(Value::as_array)
+        .is_some_and(|images| images.iter().all(is_image));
+    if !all_images {
+        return (result, Vec::new());
+    }
+    match result
+        .as_object_mut()
+        .and_then(|object| object.remove("images"))
+    {
+        Some(Value::Array(images)) => (result, images),
+        _ => (result, Vec::new()),
+    }
+}
+
+/// A tool result as journaled: each image block keeps its type and size,
+/// not its base64 data.
+pub(super) fn without_image_data(result: &Value) -> Value {
+    let mut result = result.clone();
+    if let Some(content) = result.get_mut("content").and_then(Value::as_array_mut) {
+        for block in content {
+            if block.get("type").and_then(Value::as_str) != Some("image") {
+                continue;
+            }
+            if let Some(data) = block.get("data").and_then(Value::as_str) {
+                let bytes = data.len();
+                block["data"] = json!(format!("<{bytes} base64 bytes>"));
+            }
+        }
+    }
+    result
+}
+
+/// The pinned terminal result frame for one side-channel interaction.
+/// Tool results carry an `AgentToolResult`-shaped payload; URI results merge
+/// the resolution fields next to `type`/`id` exactly as the pinned schema
+/// declares.
+pub(super) fn side_result_frame(request_id: &str, kind: SideChannelKind, result: &Value) -> Value {
+    match kind {
+        SideChannelKind::Tool => json!({
+            "type": "host_tool_result",
+            "id": request_id,
+            "result": result,
+            "isError": result.get("isError").and_then(Value::as_bool).unwrap_or(false),
+        }),
+        SideChannelKind::Uri => {
+            let mut wire = json!({
+                "type": "host_uri_result",
+                "id": request_id,
+            });
+            if let (Some(object), Some(fields)) = (wire.as_object_mut(), result.as_object()) {
+                for (key, value) in fields {
+                    if key != "type" && key != "id" {
+                        let _ = object.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            wire
+        }
+    }
+}
+
+/// A call of the conversation seat that becomes a job if it is still
+/// running at its inline deadline. The slot itself is taken only then.
+struct ReservedCall {
+    jobs: Arc<crate::host_tools::jobs::JobBoard>,
+    arguments: Value,
+    deadline: Duration,
+}
+
+struct BackgroundJob {
+    jobs: Arc<crate::host_tools::jobs::JobBoard>,
+    /// The call's absolute deadline, measured from its real start.
+    deadline_at: std::time::Instant,
+}
+
+/// Waits out a job and reports how it ended. Past its deadline it fails by
+/// name; the call itself may still finish then, but nothing reports it.
+async fn watch_job(
+    job: BackgroundJob,
+    id: String,
+    task: tokio::task::JoinHandle<Result<Value, BridgeError>>,
+) {
+    let remaining = job
+        .deadline_at
+        .saturating_duration_since(std::time::Instant::now());
+    let outcome = match tokio::time::timeout(remaining, task).await {
+        Ok(Ok(Ok(result))) => {
+            let text = result["content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|block| block["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if result["isError"].as_bool() == Some(true) {
+                Err(text)
+            } else {
+                Ok(text)
+            }
+        }
+        Ok(Ok(Err(error))) => Err(model_error_text(&error.to_string())),
+        Ok(Err(error)) => Err(format!("the call's worker failed: {error}")),
+        Err(_) => Err(
+            "it did not finish within its deadline, so it was given up (it may still \
+             complete, but nothing will report it)"
+                .to_owned(),
+        ),
+    };
+    job.jobs.finish(&id, outcome);
+}
+
+/// The pinned `isError` result payload answering a failed side-channel call,
+/// so the child's pending request always terminates.
+pub(super) fn side_error_result(
+    kind: SideChannelKind,
+    detail: &str,
+    error_kind: Option<&str>,
+) -> Value {
+    match kind {
+        SideChannelKind::Tool => {
+            let mut result = json!({
+                "content": [{"type": "text", "text": detail}],
+                "isError": true,
+            });
+            if let Some(error_kind) = error_kind {
+                result["details"] = json!({ "errorKind": error_kind });
+            }
+            result
+        }
+        SideChannelKind::Uri => json!({
+            "isError": true,
+            "error": detail,
+        }),
+    }
+}
+
+pub(super) fn uri_result_value(resolved: &UriResult) -> Value {
+    let mut content_type = match resolved.content_type.as_str() {
+        "text/markdown" => "text/markdown",
+        "application/json" => "application/json",
+        _ => "text/plain",
+    };
+    let (content, note) = match &resolved.body {
+        UriBody::Json(value) => (
+            serde_json::to_string(value)
+                .expect("serde_json::Value has no non-serializable representation"),
+            None,
+        ),
+        UriBody::Bytes(bytes) => match std::str::from_utf8(bytes) {
+            Ok(text) => (text.to_owned(), None),
+            Err(_) => {
+                content_type = "application/json";
+                (
+                    json!({
+                        "encoding": "base64",
+                        "bytes": base64::engine::general_purpose::STANDARD.encode(bytes),
+                    })
+                    .to_string(),
+                    Some("binary artifact content is represented as canonical base64".to_owned()),
+                )
+            }
+        },
+    };
+    let mut notes = resolved.notes.clone();
+    if let Some(note) = note {
+        notes.push(note);
+    }
+    let mut wire = json!({
+        "content": content,
+        "contentType": content_type,
+        "immutable": resolved.immutable,
+    });
+    let object = wire.as_object_mut().expect("wire object literal");
+    if !notes.is_empty() {
+        let _ = object.insert("notes".to_owned(), json!(notes));
+    }
+    wire
+}

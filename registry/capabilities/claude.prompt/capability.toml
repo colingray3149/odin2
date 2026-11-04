@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+toolset = "claude"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Sends a prompt to a Claude session running in a pod. Its work comes back as events claude.read returns. Host tabs are the owner's to type into."
+handler = { id = "claude_prompt" }
+input_schema = "schemas/capability/claude.prompt.input.json"
+output_schema = "schemas/capability/claude.prompt.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator", "builder"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_claude_prompt_evidence" }
+tests = [
+  "odin-cli::bin/odind claude_sessions::tests::a_prompt_reaches_the_running_pod_once_and_an_empty_one_is_refused",
+]

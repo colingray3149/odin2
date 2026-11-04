@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "calendar"
+op = "remind"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Set a reminder. Schedules a reminder in the owner's current time zone, fired by code at the exact time: notify sends the text, wake starts a conversation turn. Give one time (local, or RFC 3339 with an offset), minutes from now, or a calendar event anchor (for \"before I leave for class\", the first timed event that day on the calendar holding his classes). Repeats take repeat_every_minutes and repeat_times (firings after the first); an anchored repeat stops when its event starts. Worth it whenever he asks to be reminded; the confirmation names the resolved time."
+handler = { id = "reminder_set" }
+input_schema = "schemas/capability/reminder.set.input.json"
+output_schema = "schemas/capability/reminder.set.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_reminder_set_evidence" }
+tests = [
+  "odin-hermes::it runtime::schedule::reminders_are_set_listed_and_cancelled_in_the_owner_zone",
+  "odin-hermes runtime::reminders::listing_tests::a_repeat_stops_before_the_event_it_counts_down_to",
+]

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/task.steer.input.json",
+  "title": "task.steer input",
+  "description": "Redirect a delegated worker, or raise one declared lane-budget dimension. A raise changes its cap without steering. The caller must be its parent or ancestor, escalation target, or an active delegated sibling with the same parent and project.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "childSession": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Typed raise of one declared lane-budget dimension. Names the dimension and the new absolute cap. A value equal to the current cap is refused as the exact limit.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["wallSeconds", "buildSlots", "pods"]
+        },
+        "value": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": ["kind", "value"]
+    }
+  },
+  "anyOf": [
+    { "required": ["childSession", "message"] },
+    { "required": ["childSession", "limits"] }
+  ]
+}

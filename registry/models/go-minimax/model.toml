@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "MiniMax M3 through the OpenCode Go plan's Zen endpoint."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/go-minimax"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "opencode-go/minimax-m3"
+# frontier, everyday or fast-cheap.
+tier = "fast-cheap"
+# Position in the class try order.
+order = 4
+# Account pin holding this card's credentials.
+account = "opencode-go"
+# One line naming when this card is the right pick.
+strengths = "MiniMax turns on the Go subscription."

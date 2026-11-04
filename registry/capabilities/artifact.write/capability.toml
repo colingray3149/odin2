@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "files"
+op = "keep"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Stores a workspace file or text as an artifact, or shares an artifactId, with named seats or projects; returns its digest. Your own seat and project always have it. Worth it to hand a pod or another seat material: save it here and pass the artifact as the pod's input. Up to 32 MiB, from inside the workspace."
+handler = { id = "artifact_write" }
+input_schema = "schemas/capability/artifact.write.input.json"
+output_schema = "schemas/capability/artifact.write.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_artifact_write_evidence" }
+tests = [
+  "odin-cli::bin/odind coding_route::file_result_tests::a_readable_original_can_be_handed_to_a_child_project_and_reported_back",
+]

@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "DeepSeek V4.1 Flash on the Command Code GOAT key."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/goat-flash"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "commandcode/deepseek/deepseek-v4.1-flash"
+# frontier, everyday or fast-cheap.
+tier = "fast-cheap"
+# Position in the class try order.
+order = 1
+# Account pin holding this card's credentials.
+account = "commandcode-goat"
+# One line naming when this card is the right pick.
+strengths = "The cheap fast lane: quick lookups, drafts and fallback turns."
+# Fallback lanes, in order.
+fallbacks = ["glm-flash", "terra"]
+# True names a lane seats may run.
+seats = true

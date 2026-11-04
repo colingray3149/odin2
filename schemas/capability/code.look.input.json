@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/code.look.input.json",
+  "title": "code.look input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["url"],
+  "properties": {
+    "start": { "type": "string", "minLength": 1, "maxLength": 400, "description": "Dev command run with bash in the capsule, e.g. bun run dev; give start or serve." },
+    "serve": { "type": "string", "minLength": 1, "maxLength": 400, "description": "Capsule-relative directory of built files served as a static site." },
+    "url": { "type": "string", "pattern": "^http://127\\.0\\.0\\.1:[0-9]{2,5}(/.*)?$", "description": "Page to load on the capsule's loopback, e.g. http://127.0.0.1:5173/." },
+    "widths": { "type": "array", "items": { "type": "integer", "minimum": 320, "maximum": 2560 }, "minItems": 1, "maxItems": 3, "description": "Viewport widths in px (default 390 and 1280)." },
+    "wait_ms": { "type": "integer", "minimum": 1000, "maximum": 90000, "description": "How long to wait for the server to listen, in ms (default 30000)." }
+  }
+}

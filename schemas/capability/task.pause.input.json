@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/task.pause.input.json",
+  "title": "task.pause input",
+  "description": "Pause a delegated worker at a safe point (it keeps its transcript), resume a paused one, or stop it (its session and tab close). Only the delegating parent may control its worker.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "childSession": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "action": {
+      "enum": [
+        "pause",
+        "resume",
+        "stop"
+      ]
+    }
+  },
+  "required": [
+    "childSession",
+    "action"
+  ]
+}

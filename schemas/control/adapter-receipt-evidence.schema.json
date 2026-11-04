@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/control/adapter-receipt-evidence.schema.json",
+  "title": "Adapter operation receipt evidence",
+  "description": "Evidence the dispatcher derives for every settled declared-adapter operation: the exact adapter identity that answered, the operation kind, the digest of the canonical captured response, the observation instant, and the taint after the operation. The response is digested, never copied; credential material never appears.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "adapter_identity": { "$ref": "#/$defs/adapter_identity" },
+    "kind": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z0-9_-]+)+$" },
+    "response_digest": { "$ref": "#/$defs/blake3Digest" },
+    "observed_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "taint": { "type": "string", "enum": ["clean", "credential_tainted"] }
+  },
+  "required": ["adapter_identity", "kind", "response_digest", "observed_at", "taint"],
+  "$defs": {
+    "adapter_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "adapter_id": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,191}$" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "binding_digest": { "$ref": "#/$defs/blake3Digest" }
+      },
+      "required": ["adapter_id", "version", "binding_digest"]
+    },
+    "blake3Digest": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" }
+  }
+}

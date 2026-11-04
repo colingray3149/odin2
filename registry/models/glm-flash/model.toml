@@ -1,0 +1,23 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "GLM 5.3 Flash on the Z.ai Coding account."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/glm-flash"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "zai/glm-5.3-flash"
+# frontier, everyday or fast-cheap.
+tier = "fast-cheap"
+# Position in the class try order.
+order = 2
+# Account pin holding this card's credentials.
+account = "zai-coding"
+# One line naming when this card is the right pick.
+strengths = "Cheap flash turns and the seat review lane."
+# True names a lane seats may run.
+seats = true
+# Fallback lanes, in order.
+fallbacks = ["terra", "kimi-k31", "zai-glm"]
+brain_review = true
+# The Z.ai flash route rejects OpenAI reasoning_effort.
+reasoning_effort = false

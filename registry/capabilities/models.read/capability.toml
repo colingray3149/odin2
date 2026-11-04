@@ -1,0 +1,25 @@
+schema = "odin.registry.v1"
+toolset = "status"
+op = "models"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "List available models. Reads every model plan and key the owner has (billing, monthly cost, renewal, how much of each declared usage window is used and whether it is held), the lanes on each, and the fast, standard and strong classes in order with the lane each runs on now. No side effects."
+handler = { id = "models_read" }
+input_schema = "schemas/capability/models.read.input.json"
+output_schema = "schemas/capability/models.read.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "builder", "judge", "operator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_models_read_evidence" }
+probes = [
+  "models:glm-flash",
+  "models:astra",
+]
+tests = [
+  "odin-hermes runtime::models::tests::models_read_serves_the_plans_lanes_and_class_order_of_the_gateway",
+]

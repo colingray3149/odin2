@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/task.note.output.json",
+  "title": "task.note output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "pinned": {
+      "type": "boolean"
+    },
+    "task": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    }
+  },
+  "required": [
+    "pinned",
+    "task"
+  ]
+}

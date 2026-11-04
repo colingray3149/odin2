@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "DeepSeek V4.1 Flash through the OpenCode Go plan's Zen endpoint."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/go-deepseek-flash"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "opencode-go/deepseek-v4.1-flash"
+# frontier, everyday or fast-cheap.
+tier = "fast-cheap"
+# Account pin holding this card's credentials.
+account = "opencode-go"
+# One line naming when this card is the right pick.
+strengths = "Quick DeepSeek turns inside the Go subscription's allowance."
+# True names a lane seats may run.
+seats = true
+
+# The Go route accepts medium, though AVAILABLE lists low/high/max.
+[thinking]
+default = "medium"
+levels = ["low", "medium", "high"]

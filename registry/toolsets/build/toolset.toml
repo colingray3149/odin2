@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Builds, checks, tests, diagnostics, patches and review requests in the lane's capsule."
+examples = [
+  'build {op: test, attr}',
+  'build {op: diagnostics}',
+]

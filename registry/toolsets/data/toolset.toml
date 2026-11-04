@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Answer questions over CSV, JSON or Parquet files with SQL; edit config files keeping comments."
+examples = [
+  'data {op: "query", tables: {t: "n\n1"}, sql: "select * from t"}',
+  'data {op: "edit", args: {text: "a: 1", expr: ".a=2"}}',
+]

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/local.models.input.json",
+  "title": "local.models input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "op": {
+      "type": "string",
+      "enum": ["list", "load", "unload", "swap", "pull", "mode"],
+      "x-op-descriptions": {
+        "list": "List a host's local models: size, context, loaded and resident state, mode.",
+        "load": "Load one local model by id.",
+        "unload": "Unload one model by id, or every model with id all.",
+        "swap": "Unload every model that is not resident, then load id.",
+        "pull": "Download a model from a Hugging Face repo, link or bare name, then list it.",
+        "mode": "Show a host's GPU mode, or switch it: odin or kreate on mini, odin or gaming on pc."
+      }
+    },
+    "id": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Model id from list; unload accepts all." },
+    "source": { "type": "string", "minLength": 1, "maxLength": 500, "description": "pull: a Hugging Face owner/repo or owner/repo:file, a link, or a model name." },
+    "file": { "type": "string", "minLength": 1, "maxLength": 200, "description": "pull: the GGUF file name inside the repo." },
+    "mode": { "type": "string", "minLength": 1, "maxLength": 32, "description": "mode: odin, kreate or gaming. Omitted shows the current mode." },
+    "host": { "type": "string", "minLength": 1, "maxLength": 64, "description": "Fleet host name, such as mini or pc. Omitted runs on the host Odin runs on." }
+  },
+  "required": ["op"]
+}

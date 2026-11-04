@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Only real pages reach the phone"
+description = "The ntfy push server is running on mini, so pages can reach the phone."
+probes = [
+  "unit:mini user ntfy.service",
+]

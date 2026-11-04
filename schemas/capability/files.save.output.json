@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/files.save.output.json",
+  "title": "files.save output",
+  "description": "Where the new file is: its host, root, path in the root (with any numeric suffix) and size.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "host": { "type": "string" },
+    "root": { "type": "string" },
+    "path": { "type": "string", "minLength": 1 },
+    "sizeBytes": { "type": "integer", "minimum": 0 }
+  },
+  "required": ["host", "root", "path", "sizeBytes"]
+}

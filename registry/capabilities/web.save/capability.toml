@@ -1,0 +1,29 @@
+schema = "odin.registry.v1"
+toolset = "research"
+kind = "capability"
+enabled = true
+implementation = "pod-exec"
+version = 1
+description = "Saves one public web page into this pod's /export folder as path: the file as published (a PDF, an image, a data sheet) or, with render, the page as a browser draws it (a PNG). Odin's own stealth browser fetches it, so it reaches pages this pod's network cannot; a page that answers an error status is refused with that status. Files in /export up to 25 MiB each and 256 MiB total go back with the pod's report as artifacts the launching seat can save; transfer failures are named. A site that refuses or times out through the research VPN is tried again from the next research region, and the error names every region tried."
+handler = { id = "odin_pod_exec.run" }
+input_schema = "schemas/capability/web.save.input.json"
+output_schema = "schemas/capability/pod-exec.output.json"
+effect_class = "R1"
+seat_tags = ["operator"]
+timeout_seconds = 150
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_pod_exec.receipt" }
+
+tests = [
+  "odin-omp host_tools::pod_exec::tests::a_failed_fetch_never_writes_to_the_pod",
+  "odin-omp host_tools::pod_exec::tests::a_refused_fetch_is_tried_again_from_the_next_region",
+  "odin-omp host_tools::pod_exec::tests::an_allowed_site_is_fetched_directly",
+  "odin-omp host_tools::pod_exec::tests::a_hung_fetch_is_killed_at_the_contract_timeout",
+]
+
+[exec]
+executable = "/bin/cp"
+argv = ["/dev/stdin", "{path}"]
+stdin = { url = "url", render = "render" }

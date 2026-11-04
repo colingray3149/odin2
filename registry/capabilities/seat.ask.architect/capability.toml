@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "delegate"
+op = "ask_architect"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Hands Architect one concrete job on one project in its scope (Odin, the fleet's configuration). The job and project come from the request, the conversation or a declared default. A receipt means the job was accepted; its result comes back as a task report. The work shows in its own terminal tab, and a retry continues the same task."
+handler = { id = "seat_ask" }
+delegate_to = "architect"
+input_schema = "schemas/capability/seat.ask.input.json"
+output_schema = "schemas/capability/seat.ask.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_seat_ask_evidence" }
+tests = [
+  "odin-hermes::it governed_dispatch::arbitrary_declared_targets_reach_the_governed_owner_through_real_dispatch",
+]

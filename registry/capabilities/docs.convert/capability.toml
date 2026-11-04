@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+toolset = "docs"
+kind = "capability"
+enabled = true
+implementation = "workflow"
+version = 1
+description = "Convert documents. Targets include Word, PDF, Markdown, HTML, EPUB, ODT, CSV, Typst, reStructuredText and Org. Markdown or Typst to PDF uses the render templates; a separate reference artifact styles DOCX output. Uses pandoc and LibreOffice."
+handler = { id = "odin_workflow.run" }
+input_schema = "schemas/capability/docs.convert.input.json"
+output_schema = "schemas/capability/docs.convert.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 300
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_workflow.receipt" }
+tests = [
+  "odin-workflows docs::tests::convert_md_to_docx_uses_pandoc",
+]

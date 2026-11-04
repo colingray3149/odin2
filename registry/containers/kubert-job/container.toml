@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+kind = "container"
+enabled = true
+description = "Finite Kubernetes Job profile offered to the Kubert operations seat."
+purpose = "kubert-job"
+base = "docker.io/library/alpine:3.22"
+seats_offered = ["kubert"]
+scripts = ["bin/true"]
+watchdogs = []
+identity_fields = ["base", "contents.kind", "monitoring.slice", "purpose", "scripts"]
+surface = ["stdout"]
+
+[tunables]
+parallelism = 1
+
+[contents]
+kind = "scripts"
+
+[monitoring]
+slice = "architect-engine"
+cadence_seconds = 30

@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Terra model lane"
+description = "The terra lane's account is open in the model book; no completion is requested."
+probes = [
+  "models:terra",
+]

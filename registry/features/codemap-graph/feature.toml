@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Code map index"
+description = "The code-map index timer is active on pc; per-project freshness is not checked."
+probes = [
+  "unit:pc user code-map-index.timer",
+]

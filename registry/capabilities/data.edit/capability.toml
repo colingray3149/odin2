@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "data"
+expose = "on_demand"
+kind = "capability"
+enabled = true
+implementation = "workflow"
+version = 1
+description = "Edit structured text. YAML, JSON, XML and TOML keep comments. Supply artifact, intake or text, and a yq expr such as .services.web.image = \"nginx:1.29\". Returns a new file and unified diff; originals are unchanged."
+handler = { id = "odin_workflow.run" }
+input_schema = "schemas/capability/data.edit.input.json"
+output_schema = "schemas/capability/data.edit.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_workflow.receipt" }
+tests = [
+  "odin-workflows data::tests::edit_keeps_original_and_returns_diff",
+]

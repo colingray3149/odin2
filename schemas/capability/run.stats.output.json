@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/run.stats.output.json",
+  "title": "run.stats output",
+  "description": "The same odin.run-stats.v1 object written to /export/run-stats.json. Null plus the field name in unavailable means that value was not measured. Figures are never invented.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "odin.run-stats.v1" },
+    "capturedAt": { "type": "string", "minLength": 20 },
+    "listPriceUsd": { "type": ["number", "null"], "minimum": 0 },
+    "subscriptionIncluded": { "type": ["boolean", "null"] },
+    "wallSeconds": { "type": ["integer", "null"], "minimum": 0 },
+    "toolCalls": { "type": ["integer", "null"], "minimum": 0 },
+    "websites": { "type": ["integer", "null"], "minimum": 0 },
+    "servedModel": { "type": ["string", "null"], "minLength": 1 },
+    "unavailable": {
+      "type": "array",
+      "items": {
+        "enum": ["listPriceUsd", "subscriptionIncluded", "wallSeconds", "toolCalls", "websites", "servedModel"]
+      },
+      "uniqueItems": true
+    },
+    "written": { "type": "string" },
+    "note": { "type": "string" }
+  },
+  "required": [
+    "schema",
+    "capturedAt",
+    "listPriceUsd",
+    "subscriptionIncluded",
+    "wallSeconds",
+    "toolCalls",
+    "websites",
+    "servedModel",
+    "unavailable",
+    "written",
+    "note"
+  ]
+}

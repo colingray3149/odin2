@@ -1,0 +1,23 @@
+schema = "odin.registry.v1"
+toolset = "odin"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Deploy a reviewed Odin revision. Deploys a project's merged commit, with the owner's approval: on the project's declared deploy host it gates that exact commit (the tip of origin/main), then switches the project's declared target hosts once the conversation is quiet. One deploy runs at a time; odin.deploy.status follows it."
+handler = { id = "odin_deploy" }
+input_schema = "schemas/capability/odin.deploy.input.json"
+output_schema = "schemas/capability/odin.deploy.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 5400
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "owner"
+preview = "deploy"
+evidence_extractor = { id = "odin_hermes_odin_deploy_evidence" }
+tests = [
+  "odin-hermes runtime::coding::deploy::tests::an_approved_retry_of_a_failed_deploy_runs_it_again",
+  "odin-hermes runtime::coding::deploy::tests::a_deploy_is_journaled_once_per_start_and_end",
+]

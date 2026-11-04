@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/docs.preview.output.json",
+  "title": "docs.preview output",
+  "type": "object",
+  "properties": {
+    "done": {
+      "type": "string"
+    },
+    "page_count": {
+      "type": "integer"
+    },
+    "images": {
+      "type": "array"
+    },
+    "note": {
+      "type": "string"
+    },
+    "failed": {
+      "type": "string"
+    },
+    "capability": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "done",
+    "page_count"
+  ]
+}

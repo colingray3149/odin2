@@ -1,0 +1,38 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-tool"
+destination = "capabilities"
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Public/business research semantics. No CAPTCHA bypass, breach data or private deanonymisation."
+
+[[variable]]
+name = "executable"
+required = true
+meaning = "Installed workload-image executables only. Read this list; no invented paths or shell interpreters."
+
+[[variable]]
+name = "argv"
+type = "array<string>"
+required = true
+meaning = "Fixed argv tokens with at most one {field} scalar slot per token; required typed inputs only. No shell."
+
+[[variable]]
+name = "options"
+type = "table"
+required = true
+meaning = "Optional input field to one fixed flag token, e.g. { limit = '--limit' }; {} for none."
+
+[[variable]]
+name = "inputs"
+type = "table"
+required = true
+meaning = "JSON Schema as TOML: type='object', additionalProperties=false, required=[...], properties={ field={type='string', ...} }. Scalar string/integer/boolean fields only. Compiler emits the dedicated JSON schema atomically."
+
+[[variable]]
+name = "timeout_seconds"
+type = "int:1:3600"
+required = true
+meaning = "Hard tool execution deadline in seconds. The author_grant transaction also grants osint.* tools to Kubert and both generic research profiles, usable by the next pod without interrupting active work."

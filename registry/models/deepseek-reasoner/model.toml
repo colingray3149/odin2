@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = false
+description = "DeepSeek V4 Pro reasoning through the DeepSeek API key."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/deepseek-reasoner"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "deepseek/deepseek-v4-pro"
+# frontier, everyday or fast-cheap.
+tier = "everyday"
+# Position in the class try order.
+order = 3
+# Account pin holding this card's credentials.
+account = "deepseek"
+# One line naming when this card is the right pick.
+strengths = "Deep reasoning on a cheap key when the subscription lanes are busy."

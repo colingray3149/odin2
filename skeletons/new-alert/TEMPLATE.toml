@@ -1,0 +1,20 @@
+schema = "odin.skeleton.patch.v1"
+kind = "new-alert"
+# Patch target kind; container is the supported value.
+target_kind = "container"
+# Existing container ID to update.
+target_id = "__container__"
+# Patch operation; append_watchdog adds one detector.
+operation = "append_watchdog"
+# Unique watchdog ID within the container.
+watchdog_id = "__alert_id__"
+# Detector expression: status field, comparison operator, and numeric threshold.
+condition = "__condition__"
+# Matching samples before firing; integer 1..1000.
+consecutive_hits = "__consecutive_hits__"
+# Minimum seconds between alerts; integer 0..86400.
+cooldown_seconds = "__cooldown_seconds__"
+# Alert level: info, warning, error, or critical.
+severity = "__severity__"
+# Existing slice ID allowed to respond to the alert.
+slice = "__slice__"

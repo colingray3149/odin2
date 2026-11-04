@@ -1,0 +1,85 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-container"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "containers"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "enabled"
+type = "bool"
+required = true
+meaning = "Enable after simulation."
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Container role."
+
+[[variable]]
+name = "purpose"
+type = "id"
+required = true
+meaning = "Identity-bearing purpose."
+
+[[variable]]
+name = "base"
+type = "string"
+required = true
+meaning = "Image/local runtime profile."
+
+[[variable]]
+name = "seat"
+type = "id-or-empty"
+required = true
+meaning = "Offered seat."
+
+[[variable]]
+name = "script"
+type = "relative-path"
+required = true
+meaning = "Declared executable."
+
+[[variable]]
+name = "watchdog"
+type = "relative-path-or-empty"
+required = true
+meaning = "Declared watcher."
+
+[[variable]]
+name = "tunable_name"
+type = "id"
+required = true
+meaning = "Non-identity setting."
+
+[[variable]]
+name = "tunable_value"
+type = "scalar"
+required = true
+meaning = "Tunable default."
+
+[[variable]]
+name = "surface"
+type = "id"
+required = true
+meaning = "Existing/inline surface."
+
+[[variable]]
+name = "contents_kind"
+type = "enum:odin_env|scripts|adapter"
+required = true
+meaning = "Content profile."
+
+[[variable]]
+name = "slice"
+type = "id"
+required = true
+meaning = "Existing kernel slice."
+
+[[variable]]
+name = "cadence_seconds"
+type = "int:1:86400"
+required = true
+meaning = "Monitoring cadence."

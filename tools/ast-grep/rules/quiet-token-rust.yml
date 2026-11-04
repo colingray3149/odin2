@@ -1,0 +1,9 @@
+id: quiet-token-rust
+language: rust
+severity: error
+message: "[quiet] is only valid in the QUIET_REPLY definition"
+rule:
+  any:
+    - kind: string_literal
+    - kind: raw_string_literal
+  regex: '\[quiet\]'

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/odin.deploy.input.json",
+  "title": "odin.deploy input",
+  "properties": {
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{40}$"
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "project",
+    "commit"
+  ]
+}

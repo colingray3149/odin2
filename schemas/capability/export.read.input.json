@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/export.read.input.json",
+  "title": "export.read input",
+  "description": "One file in this pod's /export folder and the byte to read from.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "description": "The file, e.g. /export/theharvester.json.",
+      "type": "string",
+      "pattern": "^/export/[A-Za-z0-9][A-Za-z0-9 ._()+,-]{0,159}$"
+    },
+    "offset": {
+      "description": "The byte to start from: 0, then 16384, 32768, ...",
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 33554432
+    }
+  },
+  "required": [
+    "path",
+    "offset"
+  ]
+}

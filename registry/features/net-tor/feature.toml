@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Tor client"
+description = "tor.service is active on mini; Tor stays independent of the fleet DNS."
+probes = [
+  "unit:mini system tor.service",
+]

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "description": "Run one read-only Opus review of non-sensitive brain-root-relative paths. Paths containing archive, private, records or media components are refused. Opaque artifact ids are refused because their source cannot be verified. Never include identifiable third-party personal data in the question or bundle.",
+  "properties": {
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8000
+    },
+    "bundle": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      },
+      "maxItems": 24,
+      "uniqueItems": true
+    },
+    "initiated_by": {
+      "type": "string",
+      "enum": ["owner", "self"]
+    }
+  },
+  "required": ["question", "initiated_by"],
+  "additionalProperties": false
+}

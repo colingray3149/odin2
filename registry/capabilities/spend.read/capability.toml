@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "status"
+op = "spend"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Read model spending. Reads what the model gateway spent per day, lane, seat and pod workload over the last days: dollars billed (API lanes), subscription use at list price kept apart as included in the plan, tokens and requests. Visibility only; no cap is enforced. No side effects."
+handler = { id = "spend_read" }
+input_schema = "schemas/capability/spend.read.input.json"
+output_schema = "schemas/capability/spend.read.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_spend_read_evidence" }
+tests = [
+  "odin-hermes runtime::spend::tests::a_week_of_gateway_activity_splits_billed_from_included",
+]

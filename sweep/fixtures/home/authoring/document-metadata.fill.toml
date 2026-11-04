@@ -1,0 +1,12 @@
+schema = "odin.authoring.fill.v1"
+
+[[fill]]
+skeleton = "new-tool"
+destination_id = "osint.document-metadata"
+
+[fill.values]
+description = "JSON metadata for staged public/business documents."
+argv = ["-json", "{path}"]
+options = {}
+inputs = { type = "object", additionalProperties = false, required = ["path"], properties = { path = { type = "string", pattern = "^/export/" } } }
+timeout_seconds = 30

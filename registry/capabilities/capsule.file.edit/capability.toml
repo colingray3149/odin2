@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "code"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Edits one text file in the session's capsule: replaces one exact passage with new text, or writes the whole file given the SHA-256 of what it replaces. Each edit is journaled."
+handler = { id = "odin_file.edit" }
+input_schema = "schemas/capability/capsule.file.edit.input.json"
+output_schema = "schemas/capability/capsule.file.edit.output.json"
+effect_class = "R1"
+seat_tags = ["builder"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_file.edit_evidence" }
+tests = [
+  "odin-effector::bin/odin-effector capsule::tests::an_exact_replacement_applies_once_and_refuses_absent_or_ambiguous_text",
+  "odin-sidecar authority::transport_only::builtin_handlers_map_to_fixed_effects_and_derive_exact_arguments",
+]

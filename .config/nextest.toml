@@ -1,0 +1,9 @@
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+# The gate runs every test and writes a JUnit report that gate-results.py reads.
+[profile.gate]
+fail-fast = false
+
+[profile.gate.junit]
+path = "junit.xml"

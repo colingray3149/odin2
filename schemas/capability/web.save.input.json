@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/web.save.input.json",
+  "title": "web.save input",
+  "description": "One public web page and the /export file it is saved as.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "url": {
+      "description": "The page or document, http or https.",
+      "type": "string",
+      "pattern": "^https?://\\S+$",
+      "maxLength": 2048
+    },
+    "path": {
+      "description": "Where in /export the file goes, e.g. /export/results.pdf; a file already there is replaced.",
+      "type": "string",
+      "pattern": "^/export/[A-Za-z0-9][A-Za-z0-9 ._()+,-]{0,159}$"
+    },
+    "render": {
+      "description": "Save the page as a browser draws it (a PNG, name it .png) instead of its file as published.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "url",
+    "path"
+  ]
+}

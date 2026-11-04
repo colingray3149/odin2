@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "code"
+op = "context"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Read project context. Reads one text file beneath the read-only operator context directory; paths that leave it are refused."
+handler = { id = "odin_context.read" }
+input_schema = "schemas/capability/context.read.input.json"
+output_schema = "schemas/capability/context.read.output.json"
+effect_class = "R0"
+seat_tags = ["builder"]
+timeout_seconds = 5
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_context.read_evidence" }
+tests = [
+  "odin-omp host_tools::context_read::tests::a_read_is_bounded_cut_on_a_character_and_text_only",
+  "odin-omp host_tools::context_read::tests::replaced_context_root_refuses_reads_until_original_identity_returns",
+]

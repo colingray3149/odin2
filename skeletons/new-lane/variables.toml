@@ -1,0 +1,61 @@
+schema = "odin.skeleton.variables.v1"
+kind = "new-lane"
+# Registry directory to write, or container-patch to update an existing container.
+destination = "lanes"
+
+# Each name replaces __name__ in TEMPLATE.toml; type declares accepted input values.
+# Types use enum:a|b, int:min:max, array<T>, and optional<T>; omitted optional inputs remove the field.
+# required=true requires an input; meaning describes its purpose.
+[[variable]]
+name = "enabled"
+type = "bool"
+required = true
+meaning = "Enable after validation."
+
+[[variable]]
+name = "description"
+type = "string"
+required = true
+meaning = "Lane purpose."
+
+[[variable]]
+name = "project"
+type = "id"
+required = true
+meaning = "Existing project."
+
+[[variable]]
+name = "family"
+type = "id"
+required = true
+meaning = "Descriptive family identifier; does not select a scheduler."
+
+[[variable]]
+name = "default_seat"
+type = "id"
+required = true
+meaning = "Existing seat."
+
+[[variable]]
+name = "queue"
+type = "id"
+required = true
+meaning = "Descriptive queue identifier; does not control scheduling."
+
+[[variable]]
+name = "independent_review"
+type = "bool"
+required = true
+meaning = "Separate author/certifier."
+
+[[variable]]
+name = "direction"
+type = "optional<enum:internal|ingress|egress>"
+required = false
+meaning = "Transfer direction; declared only together with payload_kind, omitted for engine lanes."
+
+[[variable]]
+name = "payload_kind"
+type = "optional<enum:command|event|file|render|scientific>"
+required = false
+meaning = "Payload contract; omit together with direction so the compiled lane has no transfer policy."

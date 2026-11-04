@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "feature"
+enabled = true
+title = "Cerebras and Gemini free lanes"
+description = "The cerebras and gemini-free lanes' accounts are open in the model book; balances are not checked."
+probes = [
+  "models:cerebras",
+  "models:gemini-free",
+]

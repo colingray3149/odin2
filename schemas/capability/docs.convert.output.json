@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/docs.convert.output.json",
+  "title": "docs.convert output",
+  "type": "object",
+  "properties": {
+    "done": {
+      "type": "string"
+    },
+    "page_count": {
+      "type": "integer"
+    },
+    "bytes": {
+      "type": "integer"
+    },
+    "artifacts": {
+      "type": "array"
+    },
+    "note": {
+      "type": "string"
+    },
+    "failed": {
+      "type": "string"
+    },
+    "capability": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "done"
+  ]
+}

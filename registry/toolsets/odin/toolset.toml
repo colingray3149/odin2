@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Change Odin itself: registry, seats, projects, pods, models, deploys, merges."
+examples = [
+  'odin {op: author, skeleton, id, values}',
+  'odin {op: deploy, project, commit}',
+]

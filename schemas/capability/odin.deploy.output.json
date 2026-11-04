@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/odin.deploy.output.json",
+  "title": "odin.deploy output",
+  "properties": {
+    "commit": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "gate",
+        "deploying",
+        "done",
+        "failed"
+      ]
+    },
+    "line": {
+      "type": "string"
+    },
+    "at": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "commit",
+    "stage",
+    "line",
+    "at"
+  ]
+}

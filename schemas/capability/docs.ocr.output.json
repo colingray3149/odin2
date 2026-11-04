@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/docs.ocr.output.json",
+  "title": "docs.ocr output",
+  "type": "object",
+  "properties": {
+    "done": {
+      "type": "string"
+    },
+    "page_count": {
+      "type": "integer"
+    },
+    "bytes": {
+      "type": "integer"
+    },
+    "text": {
+      "type": "string"
+    },
+    "text_truncated": {
+      "type": "boolean"
+    },
+    "artifacts": {
+      "type": "array"
+    },
+    "failed": {
+      "type": "string"
+    },
+    "capability": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "done",
+    "page_count"
+  ]
+}

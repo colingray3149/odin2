@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "delegate"
+op = "ask_gungnir"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Ask Gungnir for an engineering change. Ask Gungnir to help implement this task: it codes and tests in its own clone, gets Forseti's review of the exact change, and reports back a reviewed branch for git.branch.merge (then odin.deploy, for a project that declares a deploy). Work stays within the selected project's declared permissions and appears in its own terminal tab; a retry continues the same task rather than starting another. Naming provider and model selects one of the target seat's declared launch options for this ask only."
+handler = { id = "seat_ask" }
+delegate_to = "gungnir"
+input_schema = "schemas/capability/seat.ask.input.json"
+output_schema = "schemas/capability/seat.ask.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_seat_ask_evidence" }
+tests = [
+  "odin-hermes::it governed_dispatch::arbitrary_declared_targets_reach_the_governed_owner_through_real_dispatch",
+]

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/report.view.input.json",
+  "title": "report.view input",
+  "description": "One exported page PNG the model will see as an image block.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "description": "Page PNG under /export, e.g. /export/pages/page-01.png.",
+      "type": "string",
+      "minLength": 12,
+      "maxLength": 220,
+      "pattern": "^/export/[A-Za-z0-9][A-Za-z0-9 ._()+,-/]{0,180}page-[0-9]{1,4}\\.png$"
+    }
+  },
+  "required": ["path"]
+}
