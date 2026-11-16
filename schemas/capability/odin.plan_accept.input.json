@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/odin.plan_accept.input.json",
+  "title": "odin.plan_accept input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "session": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "The seat session whose plan the owner accepts."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The plan revision you read, exactly."
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "The plan's objective, exactly as you read it."
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "required": ["session"]
+}

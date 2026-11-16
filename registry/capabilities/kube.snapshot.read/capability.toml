@@ -5,7 +5,7 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Reads the cluster's workloads: Jobs, pods and schedulable placement against node capacity."
+description = "Reads the bound workload projection and lane compute usage against effective core-hour, GPU-hour and dollar caps."
 handler = { id = "odin_kube.snapshot.read" }
 input_schema = "schemas/capability/kube.snapshot.read.input.json"
 output_schema = "schemas/capability/kube.snapshot.read.output.json"
@@ -18,5 +18,6 @@ approval_policy = "none"
 evidence_extractor = { id = "odin_kube.snapshot.read_evidence" }
 tests = [
   "odin-cli::bin/odind kube_runtime::evidence::snapshot_evidence_tests::snapshot_evidence_accepts_a_present_null_projection",
+  "odin-cli::bin/odind kube_runtime::evidence::snapshot_evidence_tests::snapshot_evidence_preserves_lane_compute_budgets",
   "odin-kube watch::tests::a_gone_watch_relists_in_full_and_resumes_from_the_fresh_list",
 ]

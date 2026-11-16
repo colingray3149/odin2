@@ -1,0 +1,13 @@
+schema = "odin.registry.v1"
+kind = "brain-role"
+enabled = true
+description = "Entity resolution for the ambiguous middle band, and merging duplicate facts."
+role = "distil"
+engine = "lane"
+lanes = ["luna", "glm-flash"]
+[params]
+max_output = 512
+effort = "low"
+temperature = 0
+max_parallel = 2
+passes = 1

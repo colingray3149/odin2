@@ -87,8 +87,11 @@ fn discover_kind(root: &Path, kind: RegistryKind, discovery: &mut Discovery) {
             discovery.findings.push(RegistryFinding::fail(
                 "registry-kind-type",
                 registry_prefix(root).join(kind.directory()),
-                "required registry kind must be a regular directory, not a symlink or special file",
+                "registry kind must be a regular directory, not a symlink or special file",
             ));
+            return;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && kind.is_optional() => {
             return;
         }
         Err(error) => {
@@ -283,6 +286,45 @@ mod tests {
                 fs::write(directory.join(config), b"").expect("write object config");
             }
         }
+    }
+
+    #[test]
+    fn compute_kinds_are_optional_but_validated_when_present() {
+        let fixture = Fixture::new();
+        for kind in [RegistryKind::ComputeProvider, RegistryKind::ComputeTarget] {
+            fs::remove_dir(fixture.root.join(kind.directory())).expect("remove optional kind");
+        }
+        fs::remove_dir(fixture.root.join(RegistryKind::Seat.directory()))
+            .expect("remove required kind");
+
+        let discovery = walk(&fixture.root);
+        assert_eq!(discovery.findings.len(), 1);
+        assert_eq!(discovery.findings[0].code, "registry-kind-missing");
+        assert!(discovery.findings[0].path.ends_with("seats"));
+        assert!(discovery.findings[0].is_failure());
+
+        fs::create_dir(fixture.root.join(RegistryKind::Seat.directory()))
+            .expect("restore required kind");
+        fs::write(
+            fixture.root.join(RegistryKind::ComputeProvider.directory()),
+            b"",
+        )
+        .expect("create invalid kind entry");
+        fs::create_dir(fixture.root.join(RegistryKind::ComputeTarget.directory()))
+            .expect("create optional kind");
+        fixture.object(RegistryKind::ComputeTarget, "invalid", &["wrong.toml"]);
+
+        let discovery = walk(&fixture.root);
+        assert!(discovery.findings.iter().any(|finding| {
+            finding.code == "registry-kind-type"
+                && finding.path.ends_with("compute-providers")
+                && finding.is_failure()
+        }));
+        assert!(discovery.findings.iter().any(|finding| {
+            finding.code == "registry-config-name"
+                && finding.path.ends_with("compute-targets/invalid/wrong.toml")
+                && finding.is_failure()
+        }));
     }
 
     #[test]

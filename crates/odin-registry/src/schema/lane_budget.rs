@@ -15,6 +15,9 @@ use super::seat::LaneLimitsToml;
 pub const WALL_LIMIT_KEY: &str = "limits.wall_seconds";
 pub const BUILD_SLOTS_LIMIT_KEY: &str = "limits.build_slots";
 pub const PODS_LIMIT_KEY: &str = "limits.pods";
+pub const CORE_HOURS_LIMIT_KEY: &str = "limits.core_hours";
+pub const GPU_HOURS_LIMIT_KEY: &str = "limits.gpu_hours";
+pub const COMPUTE_USD_LIMIT_KEY: &str = "limits.compute_usd";
 
 /// One dimension of the declared lane budget.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -23,14 +26,23 @@ pub enum LaneBudgetKind {
     WallSeconds,
     BuildSlots,
     Pods,
+    CoreHours,
+    GpuHours,
+    ComputeUsd,
 }
 
 impl LaneBudgetKind {
+    /// The compute dimensions the meter charges, in display order.
+    pub const COMPUTE: [Self; 3] = [Self::CoreHours, Self::GpuHours, Self::ComputeUsd];
+
     pub const fn key(self) -> &'static str {
         match self {
             Self::WallSeconds => WALL_LIMIT_KEY,
             Self::BuildSlots => BUILD_SLOTS_LIMIT_KEY,
             Self::Pods => PODS_LIMIT_KEY,
+            Self::CoreHours => CORE_HOURS_LIMIT_KEY,
+            Self::GpuHours => GPU_HOURS_LIMIT_KEY,
+            Self::ComputeUsd => COMPUTE_USD_LIMIT_KEY,
         }
     }
 
@@ -39,6 +51,9 @@ impl LaneBudgetKind {
             Self::WallSeconds => limits.wall_seconds.map(NonZeroU32::get),
             Self::BuildSlots => limits.build_slots.map(|value| u32::from(value.get())),
             Self::Pods => limits.pods.map(|value| u32::from(value.get())),
+            Self::CoreHours => limits.core_hours.map(NonZeroU32::get),
+            Self::GpuHours => limits.gpu_hours.map(NonZeroU32::get),
+            Self::ComputeUsd => limits.compute_usd.map(NonZeroU32::get),
         }
     }
 }
@@ -104,6 +119,12 @@ pub struct LaneBudget {
     pub wall_seconds: Option<u32>,
     pub build_slots: Option<u32>,
     pub pods: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core_hours: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_hours: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compute_usd: Option<u32>,
 }
 
 impl LaneBudget {
@@ -112,6 +133,9 @@ impl LaneBudget {
             wall_seconds: LaneBudgetKind::WallSeconds.declared(limits),
             build_slots: LaneBudgetKind::BuildSlots.declared(limits),
             pods: LaneBudgetKind::Pods.declared(limits),
+            core_hours: LaneBudgetKind::CoreHours.declared(limits),
+            gpu_hours: LaneBudgetKind::GpuHours.declared(limits),
+            compute_usd: LaneBudgetKind::ComputeUsd.declared(limits),
         }
     }
 
@@ -120,6 +144,9 @@ impl LaneBudget {
             LaneBudgetKind::WallSeconds => self.wall_seconds,
             LaneBudgetKind::BuildSlots => self.build_slots,
             LaneBudgetKind::Pods => self.pods,
+            LaneBudgetKind::CoreHours => self.core_hours,
+            LaneBudgetKind::GpuHours => self.gpu_hours,
+            LaneBudgetKind::ComputeUsd => self.compute_usd,
         }
     }
 
@@ -153,6 +180,9 @@ impl LaneBudget {
             LaneBudgetKind::WallSeconds => self.wall_seconds = Some(raise.value),
             LaneBudgetKind::BuildSlots => self.build_slots = Some(raise.value),
             LaneBudgetKind::Pods => self.pods = Some(raise.value),
+            LaneBudgetKind::CoreHours => self.core_hours = Some(raise.value),
+            LaneBudgetKind::GpuHours => self.gpu_hours = Some(raise.value),
+            LaneBudgetKind::ComputeUsd => self.compute_usd = Some(raise.value),
         }
         Ok(raise.value)
     }
@@ -193,23 +223,6 @@ impl RaisedLaneBudgets {
         let path = huginn_root.join(LANE_BUDGET_FILE);
         let _lock = RaiseLock::acquire(huginn_root)?;
         Self::read_locked(&path)
-    }
-
-    /// Exclusive read-modify-write of one dimension. Concurrent raises of
-    /// other lanes or dimensions are preserved. The replacement is a unique
-    /// temp file renamed over the live file.
-    pub fn raise(
-        huginn_root: &std::path::Path,
-        lane: &str,
-        kind: LaneBudgetKind,
-        value: u32,
-    ) -> Result<Self, String> {
-        let path = huginn_root.join(LANE_BUDGET_FILE);
-        let _lock = RaiseLock::acquire(huginn_root)?;
-        let mut budgets = Self::read_locked(&path)?.unwrap_or_default();
-        budgets.apply(lane, kind, value);
-        budgets.write_locked(&path)?;
-        Ok(budgets)
     }
 
     fn read_locked(path: &std::path::Path) -> Result<Option<Self>, String> {
@@ -257,6 +270,9 @@ impl RaisedLaneBudgets {
             LaneBudgetKind::WallSeconds => budget.wall_seconds = Some(value),
             LaneBudgetKind::BuildSlots => budget.build_slots = Some(value),
             LaneBudgetKind::Pods => budget.pods = Some(value),
+            LaneBudgetKind::CoreHours => budget.core_hours = Some(value),
+            LaneBudgetKind::GpuHours => budget.gpu_hours = Some(value),
+            LaneBudgetKind::ComputeUsd => budget.compute_usd = Some(value),
         }
     }
 
@@ -306,7 +322,7 @@ impl RaisedLaneBudgets {
 
 /// Exclusive advisory lock for the whole read-modify-write. Readers take the
 /// same lock so they never observe a partial replacement.
-struct RaiseLock {
+pub(crate) struct RaiseLock {
     file: std::fs::File,
 }
 
@@ -315,7 +331,7 @@ impl RaiseLock {
         Self::acquire_file(huginn_root, &format!(".{LANE_BUDGET_FILE}.lock"))
     }
 
-    fn acquire_file(huginn_root: &std::path::Path, name: &str) -> Result<Self, String> {
+    pub(crate) fn acquire_file(huginn_root: &std::path::Path, name: &str) -> Result<Self, String> {
         std::fs::create_dir_all(huginn_root).map_err(|error| error.to_string())?;
         let path = huginn_root.join(name);
         let file = std::fs::OpenOptions::new()
@@ -434,11 +450,59 @@ pub fn unix_millis() -> u64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn each_compute_budget_raises_and_refuses_at_its_cap() {
+        let declared = LaneLimitsToml {
+            core_hours: NonZeroU32::new(100),
+            gpu_hours: NonZeroU32::new(10),
+            compute_usd: NonZeroU32::new(50),
+            ..LaneLimitsToml::default()
+        };
+        for kind in LaneBudgetKind::COMPUTE {
+            let floor = kind.declared(&declared).expect("declared");
+            let mut budget = LaneBudget::declared(&declared);
+            assert_eq!(budget.cap(kind), Some(floor));
+            let raised = budget
+                .raise(
+                    &declared,
+                    LaneBudgetRaise {
+                        kind,
+                        value: floor + 1,
+                    },
+                )
+                .expect("raise");
+            assert_eq!(budget.cap(kind), Some(raised));
+            let refused = budget
+                .raise(
+                    &declared,
+                    LaneBudgetRaise {
+                        kind,
+                        value: raised,
+                    },
+                )
+                .expect_err("exact");
+            assert!(refused.detail.contains(kind.key()), "{}", refused.detail);
+            let over = at_cap(kind, budget.cap(kind), raised).expect_err("full");
+            assert!(over.contains(kind.key()));
+        }
+        let undeclared = LaneBudget::default()
+            .raise(
+                &LaneLimitsToml::default(),
+                LaneBudgetRaise {
+                    kind: LaneBudgetKind::CoreHours,
+                    value: 5,
+                },
+            )
+            .expect_err("undeclared");
+        assert_eq!(undeclared.kind, "undeclared_limit");
+    }
+
     fn limits(wall: u32, slots: u16, pods: u16) -> LaneLimitsToml {
         LaneLimitsToml {
             wall_seconds: NonZeroU32::new(wall),
             build_slots: NonZeroU16::new(slots),
             pods: NonZeroU16::new(pods),
+            ..LaneLimitsToml::default()
         }
     }
 

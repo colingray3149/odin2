@@ -39,14 +39,15 @@ pub struct SeatToml {
     /// Retire the proposed seat at expiry or when its delegated work finishes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ephemeral: Option<SeatEphemeralToml>,
-    /// Writing this memory namespace requires both its declaration and a matching grant.
+    /// The owner profile this seat serves: injected into its core memory (otherwise only searchable);
+    /// writing it requires both this declaration and a matching grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_namespace: Option<AtlasId>,
     /// Provider/model pairs the seat may run on, the first by default; they replace the composed launch choices.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<SeatModelToml>,
-    /// Registry id of the slice that grants this seat. Absent keeps the
-    /// historical prefix match; omitted so existing snapshots stay identical.
+    /// Registry id of the slice that grants this seat. Absent binds no
+    /// live slice (it is never inferred from the seat id); omitted so existing snapshots stay identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slice: Option<SliceId>,
     /// Shell defaults off; omit undeclared sandbox settings to preserve canonical snapshot hashes.
@@ -186,6 +187,19 @@ fn is_default_inline_seconds(value: &u16) -> bool {
     *value == DEFAULT_INLINE_SECONDS
 }
 
+fn default_max_batch_launches() -> u32 {
+    256
+}
+fn is_default_max_batch_launches(value: &u32) -> bool {
+    *value == 256
+}
+fn default_max_batch_inputs() -> u32 {
+    16
+}
+fn is_default_max_batch_inputs(value: &u32) -> bool {
+    *value == 16
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SeatLimitsToml {
@@ -206,6 +220,18 @@ pub struct SeatLimitsToml {
         skip_serializing_if = "is_default_inline_seconds"
     )]
     pub inline_seconds: u16,
+    /// Maximum launches in one create_many call.
+    #[serde(
+        default = "default_max_batch_launches",
+        skip_serializing_if = "is_default_max_batch_launches"
+    )]
+    pub max_batch_launches: u32,
+    /// Maximum artifact inputs on each create_many item.
+    #[serde(
+        default = "default_max_batch_inputs",
+        skip_serializing_if = "is_default_max_batch_inputs"
+    )]
+    pub max_batch_inputs: u32,
     /// Optional per-seat cap enforced by the model gateway, not Odin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<BudgetPolicyToml>,
@@ -245,6 +271,10 @@ pub struct SeatLiveToml {
     /// Absent disables rollover; composition caps its trigger at the served lane's context limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollover: Option<SeatRolloverToml>,
+    /// Present: this seat's own sessions (never workloads or pod reviews) run
+    /// on Odin's in-process loom harness instead of OMP. Absent keeps OMP.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loom: Option<SeatLoomToml>,
     /// Optional turn deadline in seconds (1..=86400); expiry cancels the turn without claiming an answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turn_seconds: Option<NonZeroU64>,
@@ -256,7 +286,7 @@ pub struct SeatLiveToml {
     )]
     pub quiet_seconds: u64,
     /// Event wakes this seat subscribes to, besides the conversation seat.
-    /// `child_report`, `stall`, `repo_watch`, `workload_watch`. Omitted
+    /// `child_report`, `stall`, `repo_watch`, `workload_watch`, `simulation`. Omitted
     /// seats subscribe to none, so existing snapshots stay identical.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub watches: BTreeSet<String>,
@@ -274,6 +304,71 @@ fn default_quiet_seconds() -> u64 {
 /// Share the turn limit between authored and runtime validation.
 pub const MAX_TURN_SECONDS: u64 = 86_400;
 
+/// Loom's context budget. Every value is read when a session opens: a
+/// running session keeps what it opened with, the next one takes the new
+/// value. Tokens are the provider's own counts where it reports them,
+/// bytes / 4 before the first report.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SeatLoomToml {
+    /// Hard ceiling for one rendered request; over it, compact or refuse.
+    pub turn_budget_tokens: u64,
+    /// Summary plus recent window past this folds the oldest exchanges.
+    pub compact_at_tokens: u64,
+    /// A fold stops once summary plus window is under this.
+    pub compact_to_tokens: u64,
+    /// The model-written part of the rolling summary.
+    pub summary_max_bytes: usize,
+    /// Model card writing the summary folds, `gateway/<lane>`.
+    pub summary_model: String,
+    /// A settled tool result over this enters history as a digest plus artifact.
+    pub digest_bytes: usize,
+    /// A tool result over this is a digest plus artifact even in its own turn.
+    pub inline_result_bytes: usize,
+    /// Hermes's unprompted wakes (reports, follow-ups, seat.ask pings,
+    /// incidents) run in a side context that adds only a posted reply.
+    pub side_turns: bool,
+    /// Tool calls in one turn before the tail suggests delegating.
+    pub inline_tool_calls: u32,
+    /// Tool calls that end a turn.
+    pub max_tool_calls_per_turn: u32,
+    /// Identical consecutive calls that end a turn as a loop.
+    pub loop_repeat_limit: u32,
+    /// Cached-token share (percent) over the floor window under which an incident is raised.
+    pub cache_hit_floor_percent: u8,
+    /// The span the cache-hit floor is judged over.
+    pub cache_floor_window_hours: u32,
+    /// Seconds a gateway connection may take to open.
+    pub connect_timeout_seconds: u32,
+    /// Seconds a request may go without a streamed byte before the turn ends as stalled.
+    pub stream_idle_seconds: u32,
+    /// Turns waiting behind the running one; past it a prompt is refused by name.
+    pub max_queued_turns: u32,
+}
+
+impl Default for SeatLoomToml {
+    fn default() -> Self {
+        Self {
+            turn_budget_tokens: 24_000,
+            compact_at_tokens: 16_000,
+            compact_to_tokens: 8_000,
+            summary_max_bytes: 6_144,
+            summary_model: "gateway/luna".to_owned(),
+            digest_bytes: 2_048,
+            inline_result_bytes: 16_384,
+            side_turns: true,
+            inline_tool_calls: 3,
+            max_tool_calls_per_turn: 24,
+            loop_repeat_limit: 4,
+            cache_hit_floor_percent: 50,
+            cache_floor_window_hours: 24,
+            connect_timeout_seconds: 10,
+            stream_idle_seconds: 300,
+            max_queued_turns: 32,
+        }
+    }
+}
+
 /// Runtime validation rechecks these limits so incorrect composition cannot bypass them.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, default)]
@@ -281,7 +376,7 @@ pub struct SeatRolloverToml {
     /// Absolute token watermark: default 180000, maximum 2000000. Ignored
     /// for the trigger when `window_fraction` is set.
     pub threshold_tokens: u64,
-    /// Rollover brief bytes: default 16384, range 1024..=32768.
+    /// Rollover brief bytes: default 8000, range 1024..=32768.
     pub max_brief_bytes: usize,
     /// Conversation-tail event count (default 128, within 8..=1024).
     pub history_tail_events: usize,
@@ -299,6 +394,10 @@ pub struct SeatRolloverToml {
     /// alone wake the seat; a declared value never polls tighter than this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heartbeat_minutes: Option<u16>,
+    /// `changed` skips a heartbeat when nothing the seat watches moved since
+    /// the last one fired; `always` (the default) fires on every interval.
+    #[serde(default, skip_serializing_if = "HeartbeatWhen::is_always")]
+    pub heartbeat_when: HeartbeatWhen,
     /// A prompt retires the session and opens a fresh one instead of
     /// injecting. Absent keeps injection. Omitted from older snapshots.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -314,8 +413,24 @@ impl Default for SeatRolloverToml {
             window_fraction: None,
             fresh_after_rollovers: None,
             heartbeat_minutes: None,
+            heartbeat_when: HeartbeatWhen::Always,
             fresh_on_new_information: false,
         }
+    }
+}
+
+/// When a declared heartbeat fires.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartbeatWhen {
+    #[default]
+    Always,
+    Changed,
+}
+
+impl HeartbeatWhen {
+    pub fn is_always(&self) -> bool {
+        *self == Self::Always
     }
 }
 
@@ -357,6 +472,10 @@ pub struct SeatToolsToml {
     pub listing_bytes: Option<NonZeroU32>,
     pub deny: BTreeSet<ToolName>,
     pub redirects: SeatToolRedirectsToml,
+    /// Toolsets the seat holds but rarely calls: listed inside one `more` tool with each op's required
+    /// fields, instead of as tools of their own.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub deferred: BTreeSet<String>,
 }
 
 /// Use declared project and presentation guidance rather than inferring conversation configuration.
@@ -378,6 +497,10 @@ pub struct SeatConversationToml {
     /// room (dotfiles `gateway.classes`), unless the owner picked a model himself and it still has room.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class: Option<ModelClass>,
+    /// The lane an escalation moves to (repeated tool failures, the owner's redo or "think hard"),
+    /// one of the seat's launches; absent, it moves to the next class's first lane with room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escalation: Option<String>,
 }
 
 /// the owner's three model classes, each a hand-ordered list of gateway lanes.
@@ -418,7 +541,6 @@ pub struct ProjectToml {
     pub source_root: String,
     pub default_seat: SeatId,
     pub memory_namespaces: BTreeSet<AtlasId>,
-    pub artifact_policy: String,
     /// Privacy floor for declared memory; apl_restricted and secret exclude it from model payloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub privacy: Option<odin_domain::knowledge::PrivacyClass>,
@@ -431,6 +553,8 @@ pub struct ProjectToml {
     /// GitHub `owner/name` the project tracks; the view shows its latest CI run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_refresh_seconds: Option<u64>,
     /// Where `odin.deploy` ships this project: `tools/ship.sh` in its checkout on that host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deploy: Option<ProjectDeployToml>,
@@ -441,6 +565,12 @@ pub struct ProjectToml {
     /// admits pod profiles by the seat offer checks alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sphere: Option<ProjectSphereToml>,
+    /// Model roles the project's own code runs inside one run, each on a
+    /// gateway lane (bare card lane). The gateway mints one virtual key per
+    /// such project, limited to these lanes; its script pods get that key
+    /// and `ODIN_GATEWAY_ROLES` instead of the shared pod key.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub agents: BTreeMap<String, String>,
 }
 
 /// A project's sphere: what a lane of that project may read, write, launch,
@@ -580,11 +710,37 @@ pub struct LaneLimitsToml {
     /// Concurrent live pods (Jobs and Claude pods) this lane may hold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pods: Option<NonZeroU16>,
+    /// Requested CPU cores × hours this lane's pods may use per budget window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core_hours: Option<NonZeroU32>,
+    /// Requested GPUs × hours per budget window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_hours: Option<NonZeroU32>,
+    /// Dollars of priced node time (node `cost.usd_per_hour`) per budget window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compute_usd: Option<NonZeroU32>,
+    /// The rolling window the compute budgets cover, in days; absent means 30.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_window_days: Option<NonZeroU16>,
 }
+
+/// The rolling compute budget window when a lane declares none.
+pub const DEFAULT_BUDGET_WINDOW_DAYS: u16 = 30;
 
 impl LaneLimitsToml {
     pub const fn is_empty(&self) -> bool {
-        self.wall_seconds.is_none() && self.build_slots.is_none() && self.pods.is_none()
+        self.wall_seconds.is_none()
+            && self.build_slots.is_none()
+            && self.pods.is_none()
+            && self.core_hours.is_none()
+            && self.gpu_hours.is_none()
+            && self.compute_usd.is_none()
+            && self.budget_window_days.is_none()
+    }
+
+    pub fn window_days(&self) -> u16 {
+        self.budget_window_days
+            .map_or(DEFAULT_BUDGET_WINDOW_DAYS, NonZeroU16::get)
     }
 }
 
@@ -596,9 +752,7 @@ pub struct LaneToml {
     pub enabled: bool,
     pub description: String,
     pub project: ProjectId,
-    pub family: String,
     pub default_seat: SeatId,
-    pub queue: String,
     pub requires_independent_review: bool,
     /// Overrides the project reviewer capability when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -608,6 +762,10 @@ pub struct LaneToml {
     /// Declared wall, build-slot, and pod budget. Absent means no lane budget.
     #[serde(default, skip_serializing_if = "LaneLimitsToml::is_empty")]
     pub limits: LaneLimitsToml,
+    /// This lane's seat takes its project's workload findings in its open
+    /// session before the launching session does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub owns_workloads: bool,
 }
 
 impl LaneToml {

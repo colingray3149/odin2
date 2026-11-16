@@ -14,3 +14,5 @@ order = 7
 account = "cerebras"
 # One line naming when this card is the right pick.
 strengths = "GPT-OSS 120B on Cerebras; the same model as free-fast on other hardware."
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"

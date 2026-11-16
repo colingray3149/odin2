@@ -436,6 +436,7 @@ fn compose_fixture(
         workload_drafts: None,
         task_grants: None,
         approved_calls: None,
+        root_plan_consent: None,
         jobs: None,
         delivery_acknowledger: None,
         process,
@@ -462,6 +463,11 @@ fn compose_fixture(
         brain_postgres: needs_brain_store.then(odin_brain::test_cluster::TestCluster::thread_store),
         brain_rerank: None,
         artifact_root,
+        promotion_verifier: None,
+        campaign_validator: None,
+        spend_validator: None,
+        campaign_recorder: None,
+        spend_recorder: None,
         context_trace_root: None,
         max_artifact_read_bytes: 4096,
         project_roots: BTreeMap::from([(project.clone(), project_root)]),
@@ -497,6 +503,7 @@ fn compose_fixture(
         conversation_guidance: super::declared_conversation_guidance(objects)
             .expect("guidance projection"),
         toolsets: odin_registry::toolsets::declared_toolsets(objects),
+        deferred_toolsets: odin_registry::toolsets::declared_deferrals(objects),
         workload_sessions: if workload_law {
             BTreeMap::from([(
                 WORKLOAD_PROFILE.to_owned(),
@@ -519,6 +526,7 @@ fn compose_fixture(
         hermes_tools: Vec::new(),
         turn_images: None,
         hermes_internal_bindings: Vec::new(),
+        seat_read_roots: BTreeMap::new(),
         seat_sandboxes: match sandboxed {
             true => BTreeMap::from([(
                 SeatId::new(SEAT).expect("seat id"),
@@ -557,6 +565,8 @@ fn compose_fixture(
             inputs: Vec::new(),
             launching_run: None,
             unresolved_hosts: Default::default(),
+            limits: None,
+            seeds: Vec::new(),
         }),
         served_revision: Some(1),
         harness: None,

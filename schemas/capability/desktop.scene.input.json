@@ -104,8 +104,13 @@
           ]
         },
         "window": {
-          "type": "integer",
-          "minimum": 1
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "maxLength": 128,
+          "description": "A window's id, or its app or title (\"discord\", \"palworld\") or \"focused\"."
         },
         "index": {
           "type": "integer",
@@ -296,6 +301,9 @@
             "pause",
             "next",
             "previous",
+            "shuffle",
+            "repeat",
+            "search",
             "map",
             "bluetoothDevices",
             "bluetoothConnect",
@@ -312,7 +320,7 @@
             "stop",
             "launch"
           ],
-          "description": "Audio: defaultOutput sink; volume percent, sink?; mute muted; route application, sink; appVolume application, percent (one app's own volume). Media: status, pause, next, previous; play resumes, or with uri (a player URI or link, found by web search) and optional title opens it, checked against the link's own title."
+          "description": "Audio: status (one summary line each: default, outputs, apps and where each is heard); defaultOutput sink switches the whole computer (Earbuds, Speakers or a sink name) and moves every app with it; route application, sink moves just that app; volume percent, sink?; mute muted; appVolume application, percent (one app's own volume). appVolume on the music app sets the player's own volume. Media: status (track, artists, album, device, shuffle, repeat, up next), pause, next, previous; volume percent (the player's own); shuffle enabled; repeat off|track|context; search text (tracks, albums, artists and playlists, each with its URI); play resumes, or with uri (a player URI or link, found by web search) or one from search, and optional title opens it, checked against the link's own title."
         },
         "app": {
           "anyOf": [
@@ -431,6 +439,17 @@
         },
         "muted": {
           "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Media shuffle on or off."
+        },
+        "repeat": {
+          "enum": [
+            "off",
+            "track",
+            "context"
+          ]
         },
         "application": {
           "type": "string"

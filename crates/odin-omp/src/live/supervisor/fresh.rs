@@ -346,6 +346,7 @@ impl LiveSupervisor {
                             .clone()
                             .ok_or_else(|| unavailable("fresh prompt missing"))?,
                         owner_text: None,
+                        wake: false,
                     },
                 }
             };
@@ -536,10 +537,74 @@ impl LiveSupervisor {
         true
     }
 
+    /// Whether a due heartbeat should prompt `session`. Changed-only seats
+    /// fire when their daemon-side watched state changes; the first fires.
+    pub async fn heartbeat_changed(
+        &self,
+        seat: &odin_domain::SeatId,
+        session: LiveSessionId,
+    ) -> bool {
+        let changed_only = self
+            .heartbeat_changed_only
+            .lock()
+            .is_ok_and(|seats| seats.contains(seat));
+        if !changed_only {
+            return true;
+        }
+        let mut digest = String::new();
+        let watched = self
+            .heartbeat_watched
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
+        if let Some(watched) = watched {
+            digest.push_str(&watched.digest(seat));
+        }
+        let Ok(mut digests) = self.heartbeat_digests.lock() else {
+            return true;
+        };
+        if digests.get(&session) == Some(&digest) {
+            tracing::info!(
+                "heartbeat skipped session={session} seat={seat}: nothing watched changed"
+            );
+            return false;
+        }
+        digests.insert(session, digest);
+        true
+    }
+
+    /// Declares whether `seat`'s heartbeat fires only on change.
+    pub fn set_heartbeat_when(
+        &self,
+        seat: &odin_domain::SeatId,
+        when: crate::live::rollover::HeartbeatWhen,
+    ) {
+        if let Ok(mut seats) = self.heartbeat_changed_only.lock() {
+            if when == crate::live::rollover::HeartbeatWhen::Changed {
+                seats.insert(seat.clone());
+            } else {
+                seats.remove(seat);
+            }
+        }
+    }
+
+    /// Installed by the daemon that reads workloads and incidents.
+    pub fn set_heartbeat_watched(
+        &self,
+        watched: std::sync::Arc<dyn crate::live::service::HeartbeatWatched>,
+    ) {
+        if let Ok(mut slot) = self.heartbeat_watched.lock() {
+            *slot = Some(watched);
+        }
+    }
+
     /// Drops the last fire so a prompt that did not land is due again.
     pub fn clear_heartbeat(&self, session: LiveSessionId) {
         if let Ok(mut clocks) = self.heartbeat_clock().lock() {
             clocks.remove(&session);
+        }
+        if let Ok(mut digests) = self.heartbeat_digests.lock() {
+            digests.remove(&session);
         }
     }
 

@@ -4,6 +4,7 @@ enabled = true
 description = "Lead engineer for Odin and the declarative configuration of the owner's machines."
 categories = ["builder", "coordinator"]
 tool_refs = [
+  "toolset:plan",
   "toolset:docs",
   "toolset:data",
   "code.rewrite",
@@ -11,6 +12,8 @@ tool_refs = [
   "model.consult",
   "git.patch.propose",
   "code.diagnostics",
+  "test.run",
+  "check.run",
   "capsule.eval.run",
   "capsule.file.edit",
   "context.read",
@@ -19,16 +22,16 @@ tool_refs = [
   "browser.observe",
   "browser.interact",
   "browser.consequential",
-  "memory.remember",
-  "brain.search",
-  "brain.read",
+  "knowledge.search",
+  "knowledge.read",
+  "knowledge.add",
+  "knowledge.status",
   "registry.read",
   "task.pause",
   "task.steer",
   "incident.raise",
   "artifact.write",
   "artifact.read",
-  "memory.forget",
   "codemap.get_architecture",
   "codemap.list_projects",
   "codemap.search_graph",
@@ -49,7 +52,7 @@ project_scope = [
     "odin",
 ]
 # Launch choices seat.model.set may pick (provider/model); the first is the default.
-models = ["gateway/zai-glm", "gateway/kimi-k31", "gateway/astra", "gateway/glm-flash"]
+models = ["gateway/sol", "gateway/zai-glm", "gateway/kimi-k31", "gateway/astra", "gateway/glm-flash"]
 brain_scope = [
     "memory.owner",
     "atlas.code",
@@ -60,20 +63,19 @@ brain_scope = [
     "memory.project.dotfiles",
     "memory.project.odin",
 ]
-profile_namespace = "memory.owner"
 
 guidance = """
 You are Architect, the owner's lead engineer for Odin itself and the machines it runs on: the kernel's code, its registry and the declarative configuration of his fleet. Calm, precise and plain-spoken.
 
 You answer the seat that asked in a few lines: what you changed and why, what the checks showed, the branch, and what's left.
 
-How you think: understand the system before changing it — read the code, the registry, the history and the operator context — then make the smallest declarative change that does the job: behaviour lives in declarations, each definition in one place, and errors name their cause. Build and check it, then propose the branch. A choice that belongs to the owner goes to Sinmara with its options.
+How you think: understand the system before changing it — read the code, the registry, the history and the operator context — then make the smallest declarative change that does the job: behaviour lives in declarations, each definition in one place, and errors name their cause. Evaluate and check it with your diagnostics, then propose the branch. A choice that belongs to the owner goes to Sinmara with its options.
 
 Your fixed toolsets take op plus the fields named for that operation. Rare operations take args; op help with operation returns the exact member schema as a result. MCP tools and skills are native capabilities behind these same operations.
 
-Your tools: file edits and evaluation in your capsule; builds and flake checks; branch proposal; the read-only operator context; delegated workers for parallel parts, which you can read, pause and steer; a pod's browser; the brain, the registry and your memory; artifacts; incidents.
+Your tools: file edits, evaluation and diagnostics in your capsule; tests and checks (verify a registry or crate change with test run {cargo: {package}} before proposing; a config change alone is Sinmara's registry edit, not a branch); branch proposal; the read-only operator context; delegated workers for parallel parts, which you can read, pause and steer; a pod's browser; the knowledge tools (search and read; add for project notes), the registry and your own page (read brain/agents/architect.md once at the start of a session: standing prompts and lessons; record a lesson or decision with knowledge.add as=note about your project); artifacts; incidents.
 
-The harness: your capsule is your own clone, builds run in the Nix sandbox, and secret-tagged knowledge stays out of your context by declaration. Odin runs every call under your grants, and when an action needs the owner's yes, Odin asks him."""
+The harness: your capsule is your own clone, evaluation runs in the Nix sandbox, and secret-tagged knowledge stays out of your context by declaration. Odin runs every call under your grants, and when an action needs the owner's yes, Odin asks him."""
 
 [limits]
 max_parallel_runs = 6
@@ -112,7 +114,6 @@ top_k = 16
 [context]
 max_bundle_tokens = 32_768
 profile = "codebase"
-review_lane = "glm-flash"
 consult = { lane = "astra", effort = "high" }
 
 [tools]

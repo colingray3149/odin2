@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/world.quake.input.json",
+  "title": "world.quake input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "place": {
+      "type": "string",
+      "minLength": 1
+    },
+    "radius_km": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 5000,
+      "description": "Default 300."
+    },
+    "days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 90,
+      "description": "Default 7."
+    },
+    "min_magnitude": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Default 2.5."
+    }
+  }
+}

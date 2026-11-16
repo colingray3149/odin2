@@ -3,8 +3,10 @@ use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
+use super::render::RENDER_LIMIT;
+use super::{OFFICE_LIMIT, PANDOC_LIMIT, POPPLER_LIMIT};
 use crate::bench::Workbench;
-use crate::{Ctx, Failure, FailureKind};
+use crate::{Ctx, Failure, FailureKind, MAX_PREVIEWS};
 
 struct Case {
     bench: Workbench,
@@ -270,4 +272,82 @@ fn ocr_skips_text_by_default_and_truncates_the_inline_text() {
     assert!(!args.contains(&"--image-dpi".to_owned()));
     assert_eq!(args[args.len() - 2], staged.display().to_string());
     case.assert_offline();
+}
+
+/// The `timeout_seconds` a capability file declares.
+fn declared_timeout(capability: &str) -> u64 {
+    capability
+        .lines()
+        .find_map(|line| line.strip_prefix("timeout_seconds = "))
+        .and_then(|value| value.trim().parse().ok())
+        .expect("a timeout_seconds line")
+}
+
+#[test]
+fn declared_docs_timeouts_cover_their_worst_inner_sums() {
+    let preview = include_str!("../../../../registry/capabilities/docs.preview/capability.toml");
+    let render = include_str!("../../../../registry/capabilities/docs.render/capability.toml");
+    // Every call draws at most MAX_PREVIEWS pages, one pdftoppm each, after one pdfinfo.
+    let previews = MAX_PREVIEWS as u64 * POPPLER_LIMIT.as_secs();
+    // Markdown is the longest render: pandoc, typst, the page count, then the previews.
+    let worst_render =
+        PANDOC_LIMIT.as_secs() + RENDER_LIMIT.as_secs() + POPPLER_LIMIT.as_secs() + previews;
+    // An office file: LibreOffice, the page count, then the previews.
+    let worst_preview = OFFICE_LIMIT.as_secs() + POPPLER_LIMIT.as_secs() + previews;
+    assert!(
+        worst_render <= declared_timeout(render),
+        "docs.render can run {worst_render} s inside a {} s timeout",
+        declared_timeout(render)
+    );
+    assert!(
+        worst_preview <= declared_timeout(preview),
+        "docs.preview can run {worst_preview} s inside a {} s timeout",
+        declared_timeout(preview)
+    );
+}
+
+#[test]
+fn an_office_file_sent_on_gets_the_same_libreoffice_pdf_and_its_page_count() {
+    let mut case = Case::new();
+    let out = case.job().join("pdf");
+    case.fake("soffice", |fake| {
+        fake.file(out.join("Thesis Final.pdf"), "%PDF").exit(1)
+    });
+    case.fake("pdfinfo", |fake| fake.stdout("Pages: 41\n"));
+    let staged = case.staged("Thesis Final.docx", "PK");
+    let (pdf, pages) = super::office_pdf(&case.ctx(), &staged, &out).expect("rendered");
+    assert_eq!((pdf, pages), (out.join("Thesis Final.pdf"), 41));
+    assert!(case
+        .args_of("soffice")
+        .contains(&"-env:UserInstallation=file:///tmp/lo-profile".to_owned()));
+    assert!(super::is_office("Thesis Final.DOCX") && super::is_office("deck.pptx"));
+    assert!(!super::is_office("notes.pdf") && !super::is_office("docx"));
+}
+
+#[test]
+fn a_send_refuses_a_tool_result_or_bytes_unlike_the_name() {
+    let result = br#"{"artifact":"blake3:859547d0","mediaType":"application/vnd.openxmlformats-officedocument.wordprocessingml.document","name":"Thesis Final.docx"}"#;
+    assert_eq!(
+        super::check_send("artifact blake3:3ea6d9b7", "Thesis Final.docx", result),
+        Err("artifact blake3:3ea6d9b7 is a tool result (JSON), not a .docx file; send the result's `artifact` field".to_owned())
+    );
+    assert!(super::check_send("a", "notes.txt", result).is_err());
+    assert!(super::check_send("a", "deck.pptx", b"PK\x03\x04rest").is_ok());
+    assert!(super::check_send("a", "old.doc", &[0xd0, 0xcf, 0x11, 0xe0, 0xa1]).is_ok());
+    assert!(super::check_send("a", "lab.pdf", b"%PDF-1.7").is_ok());
+    assert!(super::check_send("a", "lab.pdf", b"<html>").is_err());
+    assert!(super::check_send("a", "head.webp", b"RIFF\x10\0\0\0WEBPVP8 ").is_ok());
+    assert!(super::check_send("a", "data.json", br#"{"rows":[]}"#).is_ok());
+    assert!(super::check_send("a", "notes.rtf", b"anything").is_ok());
+}
+
+#[test]
+fn an_image_named_for_another_format_is_renamed_for_what_it_is() {
+    let job = tempfile::tempdir().expect("job folder");
+    std::fs::create_dir(job.path().join("shots")).expect("subfolder");
+    std::fs::write(job.path().join("shots/head.jpg"), b"RIFF\x10\0\0\0WEBPVP8 ").expect("webp");
+    std::fs::write(job.path().join("real.jpg"), [0xff, 0xd8, 0xff, 0xe0]).expect("jpeg");
+    let text = super::render::named_by_content(job.path(), "![a](shots/head.jpg) ![b](real.jpg)");
+    assert_eq!(text, "![a](shots/head.webp) ![b](real.jpg)");
+    assert!(job.path().join("shots/head.webp").is_file());
 }

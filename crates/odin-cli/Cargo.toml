@@ -37,6 +37,7 @@ odin-ledger.workspace = true
 odin-node.workspace = true
 odin-kube.workspace = true
 kube.workspace = true
+k8s-openapi.workspace = true
 odin-hermes.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 parking_lot.workspace = true
@@ -50,8 +51,13 @@ odin-strict-json = { version = "0.0.0", path = "../odin-strict-json" }
 odin-types = { version = "0.0.0", path = "../odin-types" }
 rusqlite.workspace = true
 rustix = { workspace = true, features = ["event", "fs", "net"] }
+roxmltree = "0.20"
+resvg = { version = "0.45.1", default-features = false, features = ["text"] }
+rust-widgets-font = { version = "4.0.0", features = ["latin"] }
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
+tar = "0.4"
 pulldown-cmark.workspace = true
 thiserror.workspace = true
 time.workspace = true

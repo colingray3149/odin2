@@ -104,6 +104,12 @@ impl BrowserCommandCoordinator {
         stored: &odin_ledger::command::Command,
         spec: &CommandSpec,
     ) -> Result<live::HuginnResponse, live::HuginnProtocolError> {
+        if stored.issuer != spec.issuer {
+            return Err(conflict(
+                "commandIdReuse",
+                "command ID is already bound to a different issuer",
+            ));
+        }
         Self::duplicate_response_for_binding(
             stored,
             &spec.id,

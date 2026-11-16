@@ -14,3 +14,5 @@ order = 3
 account = "deepseek"
 # One line naming when this card is the right pick.
 strengths = "Deep reasoning on a cheap key when the subscription lanes are busy."
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"

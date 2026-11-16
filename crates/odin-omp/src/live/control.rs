@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
-use odin_brain::context::{ContextTokenizer, PINNED_TOKENIZER_ID};
+use odin_brain::context::{ContextTokenizer, ESTIMATE_TOKENIZER_ID, PINNED_TOKENIZER_ID};
 use odin_domain::huginn::{
     AbortScope, ApprovalDecision, LiveCommandBody, LiveContentBlock, LiveError, LiveMessage,
     LiveSessionState, ModelName, PermissionDecision, PermissionRequestId, ProviderName,
@@ -85,6 +85,38 @@ pub trait LiveControlBackend: Send + Sync {
         } else {
             self.prompt(message, owner_text).await?;
         }
+        Ok(true)
+    }
+    /// Hermes's unprompted wake ([`LiveCommandBody::Prompt`]'s `wake`). A
+    /// harness with a side context runs it there; the default is an
+    /// ordinary prompt or follow-up.
+    async fn prompt_wake(
+        &self,
+        message: &LiveMessage,
+        owner_text: Option<&str>,
+        follow_up: bool,
+    ) -> Result<(), LiveError> {
+        if follow_up {
+            self.follow_up(message, owner_text).await
+        } else {
+            self.prompt(message, owner_text).await
+        }
+    }
+    /// The identified dispatch of a wake: identity-safe backends keep their
+    /// own dispatch, the rest run [`Self::prompt_wake`].
+    async fn dispatch_wake(
+        &self,
+        command_id: &odin_domain::CommandId,
+        message: &LiveMessage,
+        owner_text: Option<&str>,
+        follow_up: bool,
+    ) -> Result<bool, LiveError> {
+        if self.supports_identity_safe_dispatch() {
+            return self
+                .dispatch_message(command_id, message, owner_text, follow_up)
+                .await;
+        }
+        self.prompt_wake(message, owner_text, follow_up).await?;
         Ok(true)
     }
     async fn steer(&self, message: &LiveMessage) -> Result<(), LiveError>;
@@ -192,11 +224,14 @@ pub struct LaneContextBudget {
 }
 
 impl LaneContextBudget {
-    /// The exact byte-policy identity: whole-request text counted as UTF-8
-    /// bytes (one token per byte). Any other declared identity is a native
-    /// counting lane.
-    pub fn byte_policy(&self) -> bool {
-        self.tokenizer.as_str() == PINNED_TOKENIZER_ID
+    /// Whether Odin counts the whole request itself: exact UTF-8 bytes or the
+    /// uncalibrated estimate. Any other declared identity is a native counting
+    /// lane, measured by the harness snapshot.
+    pub fn host_counted(&self) -> bool {
+        matches!(
+            self.tokenizer.as_str(),
+            PINNED_TOKENIZER_ID | ESTIMATE_TOKENIZER_ID
+        )
     }
 
     /// The staged declaration the trusted extension parses — the one
@@ -262,9 +297,9 @@ pub struct VerifiedLaneState {
 fn declared_family(tokenizer: &TokenizerId) -> Result<&'static str, LiveError> {
     match tokenizer.as_str() {
         odin_brain::context::QWEN3_TOKENIZER_ID => Ok("qwen3"),
-        PINNED_TOKENIZER_ID => Err(LiveError::InvalidRequest {
+        PINNED_TOKENIZER_ID | ESTIMATE_TOKENIZER_ID => Err(LiveError::InvalidRequest {
             code: "lane_context_state".to_owned(),
-            message: "the byte-counting lane measures whole-request bytes itself and \
+            message: "the host-counted lane measures the whole request itself and \
                       never consumes harness snapshots; requested one anyway"
                 .to_owned(),
         }),
@@ -332,7 +367,7 @@ pub fn verify_lane_state(
     })
 }
 
-/// Byte lanes enforce measured context plus input and reserve against the window.
+/// Host-counted lanes enforce measured context plus input and reserve against the window.
 /// Native lanes require a verified planning estimate and reject unsupported media;
 /// their final extension checks enforce size on the assembled request, not this estimate.
 pub fn lane_context_decision(
@@ -342,7 +377,7 @@ pub fn lane_context_decision(
     incoming_tokens: u64,
     image_tokens: u64,
 ) -> Result<(), LiveError> {
-    if budget.byte_policy() {
+    if budget.host_counted() {
         let Some(watermark) = watermark else {
             // No settled turn yet: the byte lane has no measured
             // accumulated context, and inventing one is forbidden. The
@@ -619,7 +654,7 @@ impl BridgeControl {
         Ok((text, images))
     }
 
-    /// Fetches fresh native-lane identity and planning usage; byte lanes use measured bytes.
+    /// Fetches fresh native-lane identity and planning usage; host-counted lanes use their own count.
     async fn verified_lane_state(
         &self,
         lane: Option<&LaneContextBudget>,
@@ -627,7 +662,7 @@ impl BridgeControl {
         let Some(budget) = lane else {
             return Ok(None);
         };
-        if budget.byte_policy() {
+        if budget.host_counted() {
             return Ok(None);
         }
         let state = self.bridge.state().await.map_err(|error| {
@@ -1035,25 +1070,32 @@ impl ControlExecutor {
                 message: "an ended session cannot receive messages".to_owned(),
             });
         }
-        let (message, owner_text, follow_up) = match &command.body {
+        let (message, owner_text, wake, follow_up) = match &command.body {
             LiveCommandBody::Prompt {
                 message,
                 owner_text,
-            } => (message, owner_text.as_deref(), false),
+                wake,
+            } => (message, owner_text.as_deref(), *wake, false),
             LiveCommandBody::FollowUp {
                 message,
                 owner_text,
-            } => (message, owner_text.as_deref(), true),
+                wake,
+            } => (message, owner_text.as_deref(), *wake, true),
             _ => return self.apply(&command.body, state).await.map(Some),
         };
         if let Some(delivered) = self.backend.message_outcome(&command.command_id).await? {
             return Ok(delivered.then(ControlEffect::unchanged));
         }
-        if !self
-            .backend
-            .dispatch_message(&command.command_id, message, owner_text, follow_up)
-            .await?
-        {
+        let dispatched = if wake {
+            self.backend
+                .dispatch_wake(&command.command_id, message, owner_text, follow_up)
+                .await?
+        } else {
+            self.backend
+                .dispatch_message(&command.command_id, message, owner_text, follow_up)
+                .await?
+        };
+        if !dispatched {
             return Ok(None);
         }
         let mut effect = ControlEffect::unchanged();
@@ -1081,17 +1123,31 @@ impl ControlExecutor {
             LiveCommandBody::Prompt {
                 message,
                 owner_text,
+                wake,
             } => {
-                self.backend.prompt(message, owner_text.as_deref()).await?;
+                if *wake {
+                    self.backend
+                        .prompt_wake(message, owner_text.as_deref(), false)
+                        .await?;
+                } else {
+                    self.backend.prompt(message, owner_text.as_deref()).await?;
+                }
                 effect.state = Some(LiveSessionState::Running);
             }
             LiveCommandBody::FollowUp {
                 message,
                 owner_text,
+                wake,
             } => {
-                self.backend
-                    .follow_up(message, owner_text.as_deref())
-                    .await?
+                if *wake {
+                    self.backend
+                        .prompt_wake(message, owner_text.as_deref(), true)
+                        .await?
+                } else {
+                    self.backend
+                        .follow_up(message, owner_text.as_deref())
+                        .await?
+                }
             }
             LiveCommandBody::Steer { message } => self.backend.steer(message).await?,
             LiveCommandBody::Pause => {
@@ -1456,10 +1512,10 @@ mod lane_context_tests {
                 "{detail} mismatch is a typed unavailability, never a guessed plan: {error:?}"
             );
         }
-        // Byte lanes measure the request directly and must not consume harness snapshots.
+        // Host-counted lanes measure the request directly and must not consume harness snapshots.
         let byte = byte_lane(16_384, 6_144);
-        assert!(byte.byte_policy());
-        assert!(!lane.byte_policy());
+        assert!(byte.host_counted());
+        assert!(!lane.host_counted());
         assert!(
             verify_lane_state(&byte, &exact).is_err(),
             "a byte lane never consumes harness token snapshots"

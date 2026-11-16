@@ -53,7 +53,7 @@ async fn failed_tool_call(plane: &FakePlane, session: &LiveSessionId, call: &str
                     tool_use_id: call.to_owned(),
                     is_error: true,
                     content: Vec::new(),
-                    details: Some(json!({"details": {"errorKind": "schema"}})),
+                    details: Some(json!({"details": {"errorKind": "arguments"}})),
                 },
             }),
         )
@@ -78,6 +78,7 @@ async fn repeated_typed_tool_failures_move_the_next_turn_up_a_class() {
     config.class_route = Some(ClassRoute {
         class: "fast",
         gateway: "unused".to_owned(),
+        escalation: None,
     });
     let root = ConversationRoot::open(config).expect("root composes");
     root.initialize().await.expect("initialize");
@@ -100,4 +101,58 @@ async fn repeated_typed_tool_failures_move_the_next_turn_up_a_class() {
         .expect("the second failure moves the turn");
     assert_eq!(moved.model.as_str(), NEXT_MODEL);
     assert_eq!(plane.model_of(&session), NEXT_MODEL);
+}
+
+async fn routed_root(
+    dir: &std::path::Path,
+    escalation: Option<&str>,
+) -> (Arc<ConversationRoot>, Arc<FakePlane>, LiveSessionId) {
+    let plane = Arc::new(FakePlane::new(dir).await);
+    let mut config = root_config(
+        dir,
+        Arc::clone(&plane) as Arc<dyn ConversationPlane>,
+        Arc::new(FakeEgress::new()),
+        Arc::new(FakeApprovals::empty()),
+        fake_authority(1, 1),
+        Default::default(),
+        None,
+    );
+    config.class_route = Some(ClassRoute {
+        class: "fast",
+        gateway: "unused".to_owned(),
+        escalation: escalation.map(str::to_owned),
+    });
+    let root = ConversationRoot::open(config).expect("root composes");
+    root.initialize().await.expect("initialize");
+    let session = root.current_vehicle_session().await.unwrap().unwrap();
+    (root, plane, session)
+}
+
+/// the owner asking her to think hard moves the turn up a class, like a redo.
+#[tokio::test(start_paused = true)]
+async fn think_hard_moves_the_turn_up_a_class() {
+    let dir = scratch_dir();
+    let (root, plane, session) = routed_root(dir.path(), None).await;
+    let summary = root.find_session(session, false).await.unwrap().unwrap();
+    root.route_with_reading(
+        &summary,
+        "Think hard about this one",
+        Some("m1"),
+        Ok(reading()),
+    )
+    .await
+    .expect("think hard escalates");
+    assert_eq!(plane.model_of(&session), NEXT_MODEL);
+}
+
+/// A declared escalation lane with room is taken instead of the next class's first lane.
+#[tokio::test(start_paused = true)]
+async fn an_escalation_goes_to_the_declared_lane() {
+    let dir = scratch_dir();
+    let (root, plane, session) = routed_root(dir.path(), Some("model")).await;
+    let summary = root.find_session(session, false).await.unwrap().unwrap();
+    root.route_with_reading(&summary, "redo", Some("m1"), Ok(reading()))
+        .await
+        .expect("redo escalates");
+    assert_eq!(plane.model_of(&session), "model");
 }

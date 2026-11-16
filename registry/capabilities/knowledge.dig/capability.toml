@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "knowledge"
+expose = "on_demand"
+op = "dig"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Searches the raw sources. Mail, chats, docs, AI exports, scope odin for past sessions, scope web for research, parsed PDFs (a hit names the PDF), newest first; only for originals or what was said on a day. since/until, path, case, word narrow it; source=index ranks the reference text (papers, manuals) in about a second."
+handler = { id = "knowledge_dig" }
+input_schema = "schemas/capability/knowledge.dig.input.json"
+output_schema = "schemas/capability/knowledge.dig.output.json"
+effect_class = "R0"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_knowledge_dig_evidence" }
+tests = [
+  "odin-hermes runtime::knowledge::tests::each_declared_knowledge_tool_forwards_its_arguments_and_the_seat",
+]

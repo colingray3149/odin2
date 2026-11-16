@@ -4,6 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use odin_adapter_core::dispatch::{
+    ProjectRecorder, ProjectValidator, ValueRecorder, ValueValidator,
+};
 use odin_atlas::AtlasScope;
 use odin_brain::config::EffectiveBrainPolicy;
 use odin_brain::retrieval::LaneEmbeddingProvider;
@@ -252,6 +255,16 @@ pub struct ProductionBridgeRuntimeConfig {
     /// The cross-encoder every seat's turns rerank by (`[brain.rerank]`).
     pub brain_rerank: Option<odin_brain::retrieval::rerank::Reranker>,
     pub artifact_root: PathBuf,
+    /// Controller-owned verification of a promotion against the science verdict store.
+    pub promotion_verifier: Option<ValueValidator>,
+    /// Canonical campaign approval validation before backend dispatch.
+    pub campaign_validator: Option<ValueValidator>,
+    /// Canonical rental approval validation before backend dispatch.
+    pub spend_validator: Option<ProjectValidator>,
+    /// Durable campaign approval accounting after a successful backend response.
+    pub campaign_recorder: Option<ValueRecorder>,
+    /// Durable spend approval accounting after a successful backend response.
+    pub spend_recorder: Option<ProjectRecorder>,
     /// Where injected-context traces are written (`context_trace::root`);
     /// `None` records nothing.
     pub context_trace_root: Option<PathBuf>,
@@ -315,6 +328,8 @@ pub struct ProductionBridgeRuntimeConfig {
     pub task_grants: Option<Arc<crate::host_tools::task_grants::TaskGrantStore>>,
     /// Where gated calls wait for the owner's yes; `None` parks nothing, so no yes can run a call.
     pub approved_calls: Option<Arc<crate::host_tools::approved_calls::ApprovedCalls>>,
+    /// Trusted owner-consent request route for unaccepted root plans.
+    pub root_plan_consent: Option<crate::host_tools::operations::RootPlanConsent>,
     /// The conversation seat's background jobs; `None` runs every call in the foreground.
     pub jobs: Option<Arc<crate::host_tools::jobs::JobBoard>>,
     /// Receipts acknowledged only after their inline transport delivery succeeds.
@@ -365,6 +380,8 @@ pub struct ProductionBridgeRuntimeConfig {
     pub conversation_guidance: BTreeMap<SeatId, DeclaredGuidance>,
     /// Declared toolsets of the published registry, whose examples each listing shows.
     pub toolsets: BTreeMap<String, odin_registry::schema::ToolsetToml>,
+    /// Each seat's deferred toolsets (`[tools].deferred`), listed through one `more` tool.
+    pub deferred_toolsets: BTreeMap<String, std::collections::BTreeSet<String>>,
     /// Workload settings by published profile ID; missing profiles fail launch.
     pub workload_sessions: BTreeMap<String, WorkloadSessionLaw>,
     /// The admitted remote carrier resolver for workload sessions. `None`
@@ -386,6 +403,9 @@ pub struct ProductionBridgeRuntimeConfig {
     pub hermes_internal_bindings: Vec<(&'static str, Arc<dyn crate::host_tools::HostTool>)>,
     /// Declared `[sandbox]` tables, keyed by seat.
     pub seat_sandboxes: BTreeMap<SeatId, odin_registry::schema::SeatSandboxToml>,
+    /// Each seat's file roots on this host: bound read-only into its process bubble, where `read`
+    /// may open them.
+    pub seat_read_roots: BTreeMap<SeatId, Vec<std::path::PathBuf>>,
     /// Declared project spheres, keyed by project. A lane of a listed
     /// project binds that sphere instead of the seat's path roles.
     pub project_spheres: BTreeMap<ProjectId, crate::process::SphereProjection>,

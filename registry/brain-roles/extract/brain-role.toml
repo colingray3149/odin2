@@ -1,0 +1,13 @@
+schema = "odin.registry.v1"
+kind = "brain-role"
+enabled = true
+description = "Conversation windows, mail threads and document sections to dated facts."
+role = "extract"
+engine = "lane"
+lanes = ["luna", "glm-flash", "terra"]
+[params]
+max_output = 4096
+effort = "low"
+temperature = 0
+max_parallel = 4
+passes = 1

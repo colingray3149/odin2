@@ -6,7 +6,7 @@
 //! silently dropped. The authority compiles that source with docs.render's
 //! research template; this module does not run Typst.
 
-use std::{fmt::Write as _, time::Duration};
+use std::{collections::BTreeSet, fmt::Write as _, time::Duration};
 
 use odin_domain::RunId;
 use odin_omp::host_tools::pod_exec::{ExportedFile, PodWorkerExec, WorkerExecFault};
@@ -202,11 +202,14 @@ pub(crate) fn content_gaps(
             figures.join(", ")
         ));
     }
-    let evidence: Vec<&str> = files
+    // A recon run is one piece of evidence: the report names its folder, not each step's files.
+    let evidence: BTreeSet<&str> = files
         .iter()
-        .filter(|file| is_evidence(file, files, report_pdf) && !body.contains(&file.path))
-        .map(|file| file.path.as_str())
+        .filter(|file| is_evidence(file, files, report_pdf))
+        .map(|file| recon_run(&file.path).unwrap_or(file.path.as_str()))
+        .filter(|path| !body.contains(path))
         .collect();
+    let evidence: Vec<&str> = evidence.into_iter().collect();
     if !evidence.is_empty() {
         gaps.push(format!(
             "these evidence files are not described in the report; say what each is and what it \
@@ -381,7 +384,11 @@ fn is_figure(file: &ExportedFile, files: &[ExportedFile]) -> bool {
 }
 
 fn is_evidence(file: &ExportedFile, files: &[ExportedFile], report_pdf: Option<&str>) -> bool {
-    if file.bytes == 0 || is_figure(file, files) {
+    let hidden = file
+        .path
+        .split('/')
+        .any(|part| part.starts_with('.') && part != ".");
+    if file.bytes == 0 || hidden || is_figure(file, files) {
         return false;
     }
     let name = file_name(&file.path);
@@ -401,6 +408,14 @@ fn is_evidence(file: &ExportedFile, files: &[ExportedFile], report_pdf: Option<&
         return false;
     }
     report_pdf != Some(file.path.as_str()) && report_pdf != Some(name)
+}
+
+/// `recon/<run>` for a file a recon run wrote.
+fn recon_run(path: &str) -> Option<&str> {
+    let path = path.trim_start_matches("./");
+    let rest = path.strip_prefix("recon/")?;
+    let run = rest.split('/').next().filter(|run| !run.is_empty())?;
+    Some(&path[..7 + run.len()])
 }
 
 fn file_name(path: &str) -> &str {
@@ -643,7 +658,7 @@ fn render_inline(
     files: &[ExportedFile],
 ) {
     match event {
-        Event::Text(text) => out.push_str(&text_call(text)),
+        Event::Text(text) => out.push_str(&linked_text(text)),
         Event::Code(code) => out.push_str(&format!("#raw({})", string(code))),
         Event::InlineMath(math) | Event::DisplayMath(math) => {
             out.push_str(&text_call(&format!("${math}$")))
@@ -664,7 +679,7 @@ fn render_inline(
         }
         Event::Start(Tag::Link { dest_url, .. }) => {
             out.push_str(&format!("#link({})[", string(dest_url)));
-            inline_into(events, out, files, TagEnd::Link);
+            link_body(events, out, files);
             out.push(']');
         }
         Event::Start(Tag::Image { dest_url, .. }) => {
@@ -814,7 +829,7 @@ fn stray_inline(
         Tag::Strikethrough => wrap(events, document, files, TagEnd::Strikethrough, "#strike"),
         Tag::Link { dest_url, .. } => {
             document.push_str(&format!("#link({})[", string(&dest_url)));
-            inline_into(events, document, files, TagEnd::Link);
+            link_body(events, document, files);
             document.push(']');
         }
         _ => {}
@@ -1000,6 +1015,48 @@ fn text_call(text: &str) -> String {
     format!("#text({})", string(text))
 }
 
+/// A link's own text: its runs stay text, so a URL written as the link text never nests a link.
+fn link_body(
+    events: &mut std::iter::Peekable<Parser<'_>>,
+    out: &mut String,
+    files: &[ExportedFile],
+) {
+    while let Some(event) = events.next() {
+        match event {
+            Event::End(TagEnd::Link) => return,
+            Event::Text(text) => out.push_str(&text_call(&text)),
+            other => render_inline(events, &other, out, files),
+        }
+    }
+}
+
+/// A text run whose bare web addresses are links, the way Markdown readers show them.
+fn linked_text(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = ["https://", "http://"]
+        .iter()
+        .filter_map(|scheme| rest.find(scheme))
+        .min()
+    {
+        let tail = &rest[start..];
+        let end = tail
+            .find(|c: char| c.is_whitespace() || "<>\"'`".contains(c))
+            .unwrap_or(tail.len());
+        // Closing punctuation belongs to the sentence, not the address.
+        let url = tail[..end].trim_end_matches(|c: char| ".,;:!?)]".contains(c));
+        if start > 0 {
+            out.push_str(&text_call(&rest[..start]));
+        }
+        out.push_str(&format!("#link({})", string(url)));
+        rest = &tail[url.len()..];
+    }
+    if !rest.is_empty() || out.is_empty() {
+        out.push_str(&text_call(rest));
+    }
+    out
+}
+
 /// A Typst string literal: `\\`, `\"` and control characters escaped, so any
 /// page or tool output renders as text and never as markup.
 fn string(text: &str) -> String {
@@ -1089,6 +1146,29 @@ mod tests {
                 false
             ),
             ReportCompletion::Owed
+        );
+    }
+
+    #[test]
+    fn bare_addresses_become_links_and_a_link_keeps_its_own_text() {
+        let source = fallback_typst(
+            "Sources: https://ppvcorp.com/vessels/. Also [the shop](https://ppvcorp.com) \
+             and [https://ppvcorp.com/contact](https://ppvcorp.com/contact).",
+            &[],
+        );
+        assert!(
+            source.contains(r#"#link("https://ppvcorp.com/vessels/")#text(". Also ")"#),
+            "{source}"
+        );
+        assert!(
+            source.contains(r#"#link("https://ppvcorp.com")[#text("the shop")]"#),
+            "{source}"
+        );
+        assert!(
+            source.contains(
+                r#"#link("https://ppvcorp.com/contact")[#text("https://ppvcorp.com/contact")]"#
+            ),
+            "{source}"
         );
     }
 

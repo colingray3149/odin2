@@ -40,12 +40,15 @@ background() {
   log=$(mktemp)
   bg_names+=("$name")
   bg_logs+=("$log")
+  # Job control gives each background step its own process group, including its descendants.
+  set -m
   (
     began=$(now_ms)
     trap 'bg_finish "$name" "$began" $?' EXIT
     set -e
     "${@:2}" >"$log" 2>&1
   ) &
+  set +m
   bg_pids+=("$!")
 }
 # join [step...] waits for the named background steps (all of them without names). Each failure prints its log and
@@ -72,10 +75,10 @@ junit=$PWD/target/nextest/gate/junit.xml
 rm -f "$junit"
 on_exit() {
   if [ "$1" = 0 ]; then finish pass; else finish fail; fi
-  # A background step still running when the gate stops is killed with its command and not recorded.
+  # Kill the entire owned group before reaping its leader, so descendants cannot retain the gate lock.
   touch "$outcomes.stopped"
   for pid in "${bg_pids[@]}"; do
-    [ -z "$pid" ] || { pkill -TERM -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null; } || true
+    [ -z "$pid" ] || kill -KILL -- "-$pid" 2>/dev/null || true
   done
   wait 2>/dev/null || true
   python3 tools/gate-results.py "$start" "$1" "$outcomes" "${STEPS[*]}" "$junit"
@@ -111,8 +114,9 @@ check_extension() {
 # Every Python suite in the tree; a new *_test.py or test_*.py is picked up without editing this list.
 check_python() {
   local suites
-  mapfile -t suites < <(git ls-files '*_test.py' '*/test_*.py')
-  python3 -m unittest "${suites[@]}"
+  mapfile -t suites < <(git ls-files '*_test.py' '*/test_*.py' ':!voice/')
+  # A hard stop: timeout kills the suite's whole process group, so a hung test cannot hold the gate.
+  timeout --kill-after=10 900 python3 -m unittest "${suites[@]}"
 }
 # The Nix package deploy ships has its own source filter (it excludes registry/); the cargo steps never build it.
 # Pin nixpkgs and omp to the revisions dotfiles' flake.lock gives them, as deploy does, so the derivation is deploy's.

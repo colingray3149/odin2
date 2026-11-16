@@ -130,7 +130,38 @@ pub(crate) fn arm_retention_pump(
     });
 }
 
+/// Closes the runs of ended live sessions, and of sessions whose row is
+/// gone for over a day, so dead runs stop reading as open work.
+pub(crate) fn close_ended_runs(ledger: &Path) -> Result<usize, String> {
+    let mut connection = Connection::open(ledger).map_err(|error| error.to_string())?;
+    connection
+        .busy_timeout(LEDGER_BUSY_TIMEOUT)
+        .map_err(|error| error.to_string())?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    let now = time::OffsetDateTime::now_utc();
+    let closed =
+        odin_ledger::lane_run::close_ended_live_runs(&transaction, now - time::Duration::DAY, now)
+            .map_err(|error| format!("closing ended runs: {error}"))?;
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(closed)
+}
+
 pub(crate) async fn retention_pass(ledger: &Path) -> Result<(), String> {
+    let closed = tokio::task::spawn_blocking({
+        let ledger = ledger.to_path_buf();
+        move || close_ended_runs(&ledger)
+    })
+    .await
+    .map_err(|error| format!("run closing did not finish: {error}"))?;
+    match closed {
+        Ok(0) => {}
+        Ok(closed) => {
+            tracing::info!("retention closed {closed} runs whose live session had ended");
+        }
+        Err(error) => tracing::error!("retention could not close ended runs: {error}"),
+    }
     let covered = sessions_with_covered_token_rows(ledger)?;
     let events = tokio::task::spawn_blocking({
         let ledger = ledger.to_path_buf();
@@ -184,6 +215,7 @@ pub(crate) fn arm_approval_expiry_pump(
                                 key: format!("approval-expired:{id}"),
                                 session: Some(session),
                                 source: "approvals",
+                                lane: None,
                                 text: format!(
                                     "Approval for `{capability}` expired unanswered; the call did \
                                      not run. Ask again only if still needed."

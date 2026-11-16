@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.workload.steer.input.json",
+  "title": "kube.workload.steer input",
+  "description": "Writes one control document to a running pod's control map as the next sequence number. The document must satisfy the control schema the run's profile declared when it launched.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "expectedSeq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The control seq last observed (0 before any steer); a stale value is refused."
+    },
+    "document": {
+      "type": "object",
+      "description": "The control values; the profile's [control.schema] decides what is allowed."
+    }
+  },
+  "required": ["runId", "expectedSeq", "document"]
+}

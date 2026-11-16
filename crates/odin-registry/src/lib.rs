@@ -40,6 +40,11 @@ pub const CREATION_CAPABILITIES: &[&str] = &[
     "seat.create",
     "seat.propose",
     "task.grant",
+    // Merging to a project and editing declarations in place change what every seat runs;
+    // a watcher such as the supervisor steers work but never merges or re-grants.
+    "git.branch.merge",
+    "registry.edit",
+    "registry.edit.grant",
 ];
 /// Reject root-equivalent capabilities in every governed seat and pod, even when disabled.
 pub const ROOT_EQUIVALENT_CAPABILITIES: &[&str] = &[
@@ -49,18 +54,21 @@ pub const ROOT_EQUIVALENT_CAPABILITIES: &[&str] = &[
     "secret.read_raw",
 ];
 pub use relational::{validate as validate_relations, AdmittedBinding, RelationContext};
+
 pub use schema::{
-    at_cap, bind_budget_policy, parse_objects, refuse_wall, resolve_provider_policy,
-    resolve_recovery_policy, unix_millis, AccountingWindowToml, BudgetPolicyToml, CommitError,
-    EmbeddingFramingToml, EmbeddingProtocolToml, GatewayProjectionManifest, GatewayProjectionRoute,
-    LaneBudget, LaneBudgetKind, LaneBudgetRaise, LaneBudgetRefusal, LaneDirection, LaneLimitsToml,
-    LaneToml, LaneTransferPolicy, LaneWallLease, ObjectConfig, PayloadKind, ProviderPolicyError,
+    at_cap, bind_budget_policy, parse_objects, refuse_compute, refuse_wall,
+    resolve_provider_policy, resolve_recovery_policy, unix_millis, AccountingWindowToml,
+    BudgetPolicyToml, CommitError, ComputeCharge, ComputeUsage, EmbeddingFramingToml,
+    EmbeddingProtocolToml, GatewayProjectionManifest, GatewayProjectionRoute, LaneBudget,
+    LaneBudgetKind, LaneBudgetRaise, LaneBudgetRefusal, LaneDirection, LaneLimitsToml, LaneToml,
+    LaneTransferPolicy, LaneWallLease, MeteredPod, ObjectConfig, PayloadKind, ProviderPolicyError,
     ProviderPolicyToml, ProviderRouteToml, RaisedLaneBudgets, RecoveryAttemptLimitsToml,
     RecoveryCooldownsToml, RecoveryPolicyError, RecoveryPolicyToml, RecoveryRungToml, RegistryKind,
     RegistryObject, ResolvedBudgetPolicy, ResolvedProviderPolicy, ResolvedProviderRoute,
-    ResolvedRecoveryPolicy, SeatModelToml, SeatToml, BUILD_SLOTS_LIMIT_KEY,
-    GATEWAY_PROJECTION_SCHEMA, LANE_BUDGET_FILE, LANE_WALL_FILE,
-    MAX_EMBEDDING_PROTOCOL_TRUNCATE_TOKENS, MAX_TURN_SECONDS, PODS_LIMIT_KEY, WALL_LIMIT_KEY,
+    ResolvedRecoveryPolicy, SeatModelToml, SeatToml, BUILD_SLOTS_LIMIT_KEY, COMPUTE_BUDGET_REFUSED,
+    COMPUTE_USAGE_FILE, COMPUTE_USD_LIMIT_KEY, CORE_HOURS_LIMIT_KEY, GATEWAY_PROJECTION_SCHEMA,
+    GPU_HOURS_LIMIT_KEY, LANE_BUDGET_FILE, LANE_WALL_FILE, MAX_EMBEDDING_PROTOCOL_TRUNCATE_TOKENS,
+    MAX_TURN_SECONDS, PODS_LIMIT_KEY, WALL_LIMIT_KEY,
 };
 pub use schema::{
     compose_claude_code, ClaudeAccountPolicy, ClaudeCodeToml, ClaudeDriver, ClaudeMcpScope,
@@ -70,25 +78,32 @@ pub use schema::{
 };
 pub use schema::{
     compose_workload_profile, compose_workload_profiles, pod_may_hold, storage_quantity_bytes,
-    valid_id, BrowserEngine, ComposedWorkloadProfile, WorkloadAgentView, WorkloadBriefToml,
-    WorkloadDisplayToml, WorkloadExportToml, WorkloadImageToml, WorkloadLifetimeToml,
-    WorkloadMemoryToml, WorkloadMode, WorkloadMonitoringToml, WorkloadNetworkToml,
-    WorkloadProfileLookupError, WorkloadProfileToml, WorkloadReportToml, WorkloadRuntimeToml,
-    WorkloadScriptToml, WorkloadSeatToml, WorkloadSimulationToml, WorkloadStateToml,
-    WorkloadTransport, MAX_WORKLOAD_DEADLINE_SECONDS, MIN_WORKLOAD_DEADLINE_SECONDS, OMP_HARNESS,
-    PLATFORM_IMAGE, SCRIPT_HARNESS, WORKLOAD_BRIEF_MAX_BYTES,
+    valid_id, BrowserEngine, ComposedWorkloadProfile, OnYield, WorkloadAgentView,
+    WorkloadBriefToml, WorkloadControlToml, WorkloadDataToml, WorkloadDisplayToml,
+    WorkloadExportToml, WorkloadImageToml, WorkloadLifetimeToml, WorkloadMemoryToml, WorkloadMode,
+    WorkloadMonitoringToml, WorkloadNetworkToml, WorkloadProfileLookupError, WorkloadProfileToml,
+    WorkloadReportToml, WorkloadRuntimeToml, WorkloadScriptToml, WorkloadSeatToml,
+    WorkloadSimulationToml, WorkloadStateToml, WorkloadTransport, FORBIDDEN_DATA_HOST_ROOTS,
+    MAX_WORKLOAD_DEADLINE_SECONDS, MIN_WORKLOAD_DEADLINE_SECONDS, OMP_HARNESS, PLATFORM_IMAGE,
+    RESERVED_POD_PATHS, SCRIPT_HARNESS, WORKLOAD_BRIEF_MAX_BYTES,
 };
 pub use schema::{
     context_profiles, foreign_account_paths, valid_account_name, AccountKind, AccountLayout,
-    ContextProfileToml, EnvironmentObservationToml, EnvironmentPodToml, EnvironmentPosture,
-    EnvironmentSandboxToml, EnvironmentToml, EnvironmentTransport, EnvironmentWatchdogToml,
-    HarnessGovernance, HarnessOutput, HarnessPrompt, HarnessProtocol, HarnessStopToml, HarnessToml,
-    ObservationChannel, DEFAULT_ACCOUNT, GIT_MIRROR_PORT,
+    BrainRoleName, BrainRoleToml, ComputeExecutor, ComputeOfferToml, ComputeProviderApi,
+    ComputeProviderToml, ComputeTargetToml, ContextProfileToml, EnvironmentObservationToml,
+    EnvironmentPodToml, EnvironmentPosture, EnvironmentSandboxToml, EnvironmentToml,
+    EnvironmentTransport, EnvironmentWatchdogToml, HarnessGovernance, HarnessOutput, HarnessPrompt,
+    HarnessProtocol, HarnessStopToml, HarnessToml, LeaseJoin, LeaseTargetToml, ObservationChannel,
+    OffloadRuntime, WorkloadGpuToml, WorkloadOffloadToml, DEFAULT_ACCOUNT, GIT_MIRROR_PORT,
 };
 pub use schema::{
-    ModelCardToml, ModelThinkingToml, ModelWindowToml, AGY_ROUTE, CHAT_CAPABILITY, CLAUDE_ROUTE,
-    EMBEDDING_CAPABILITY, EVERYDAY_TIER, FAST_CHEAP_TIER, FRONTIER_TIER, GATEWAY_ROUTE,
-    LOCAL_ACCOUNT, MODELS_AVAILABLE, MODEL_ROUTES, MODEL_TIERS,
+    ModelCardToml, ModelThinkingToml, ModelTokenizer, ModelWindowToml, AGY_ROUTE, CHAT_CAPABILITY,
+    CLAUDE_ROUTE, EMBEDDING_CAPABILITY, EVERYDAY_TIER, FAST_CHEAP_TIER, FRONTIER_TIER,
+    GATEWAY_ROUTE, LOCAL_ACCOUNT, MODELS_AVAILABLE, MODEL_ROUTES, MODEL_TIERS,
+};
+pub use schema::{
+    RentalApproval, RentalApprovals, RentalEnrollment, RentalLease, RentalLeaseGuard,
+    RentalLeaseState, RentalLeases, RentalTargets,
 };
 pub use snapshot::{
     CompositionDigest, PublicationOutcome, PublicationReceipt, PublicationResult,

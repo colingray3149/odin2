@@ -135,19 +135,6 @@ impl State {
         Ok(())
     }
 
-    pub(super) fn bump_control_revision(&mut self, at: OffsetDateTime) -> Result<(), SessionError> {
-        let next_control_revision = self.next_control_revision()?;
-        let takeover = self.takeover.clone();
-        self.persist_control_snapshot(
-            next_control_revision,
-            &takeover,
-            self.takeover_lease_token,
-            at,
-        )?;
-        self.control_revision = next_control_revision;
-        Ok(())
-    }
-
     /// Fences a replaced host before any worker-backed mutation. The durable
     /// row must still be the exact generation this session owns.
     fn require_durable_current(&self) -> Result<(), SessionError> {

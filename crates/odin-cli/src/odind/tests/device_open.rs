@@ -701,6 +701,8 @@ async fn internally_provisioned_workload_open_leaves_paired_device_grants_empty(
         inputs: Vec::new(),
         launching_run: None,
         unresolved_hosts: Default::default(),
+        limits: None,
+        seeds: Vec::new(),
     };
     let opened = fixture
         .gate

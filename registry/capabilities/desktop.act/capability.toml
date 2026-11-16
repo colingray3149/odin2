@@ -4,7 +4,7 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Used on the desktop only when the owner asks. Controls windows, apps, typing, keys, closing, structural fill and paste, drawing, audio, media and save files; the ask window and physical stop remain."
+description = "Does named steps on the owner's desktop when he asks: audio, media, windows by app name, launch, type, keys, click, save; prefer a named step, click only when none fits. Controls windows, apps, typing, keys, closing, structural fill and paste, drawing, audio, media and save files; the ask window and physical stop remain."
 handler = { id = "desktop_act" }
 input_schema = "schemas/capability/desktop.act.input.json"
 output_schema = "schemas/capability/desktop.act.output.json"

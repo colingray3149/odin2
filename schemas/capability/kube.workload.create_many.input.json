@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.workload.create_many.input.json",
+  "title": "kube.workload.create_many input",
+  "description": "Queue labeled launches of one published profile. Every item is validated before any launch is held; artifacts must be shared with the launching seat or project.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "profile": {"type": "string", "minLength": 1, "maxLength": 128},
+    "campaignId": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Optional approved campaign authorizing this batch; omit for generic noncampaign work."},
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {"type": "string", "minLength": 1, "maxLength": 60, "description": "Printable run label shown in views."},
+          "prompt": {"type": "string", "minLength": 1},
+          "inputs": {"type": "array", "items": {"type": "string", "pattern": "^blake3:[0-9a-f]{64}$"}}
+        },
+        "required": ["label"]
+      }
+    },
+    "targetNode": {"type": "string", "pattern": "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$"},
+    "limits": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "deadlineSeconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+        "outputReserveTokens": {"type": "integer", "minimum": 1},
+        "checkpointPercent": {"type": "integer", "minimum": 1, "maximum": 99},
+        "maxRollovers": {"type": "integer", "minimum": 0, "maximum": 16},
+        "toolResultBytes": {"type": "integer", "minimum": 1}
+      },
+      "description": "Overrides may only lower values declared by the profile."
+    }
+  },
+  "required": ["profile", "items"]
+}

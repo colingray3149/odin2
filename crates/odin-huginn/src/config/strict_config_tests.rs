@@ -55,6 +55,7 @@ fn fixture_config() -> OdindConfig {
                 idle_seconds: None,
             }),
             web_save: None,
+            recon: None,
         },
         catalogs: OdindCatalogsConfig {
             gateway_projection: PathDigestRef {
@@ -496,8 +497,7 @@ recovery = { allowed_rungs = ["retry", "restart_worker", "checkpoint", "rehome",
              description = \"adoption fixture project\"\n\
              source_root = \"{source_root}\"\n\
              default_seat = \"gungnir\"\n\
-             memory_namespaces = []\n\
-             artifact_policy = \"standard\"\n"
+             memory_namespaces = []\n"
         )
     };
     write("projects", "odin", "project.toml", project(""));
@@ -514,9 +514,7 @@ recovery = { allowed_rungs = ["retry", "restart_worker", "checkpoint", "rehome",
              enabled = true\n\
              description = \"adoption fixture lane for {project}\"\n\
              project = \"{project}\"\n\
-             family = \"engine\"\n\
              default_seat = \"gungnir\"\n\
-             queue = \"interactive\"\n\
              requires_independent_review = false\n"
         )
     };
@@ -669,6 +667,7 @@ fn populated_config() -> OdindConfig {
         exit_socket: PathBuf::from("/run/odin-research/exit.sock"),
         state: PathBuf::from("/var/lib/odin/research"),
         adapters: vec!["mcp-time".to_owned()],
+        pool: Vec::new(),
     });
     config.hermes = Some(OdindHermesConfig {
         consult: None,
@@ -872,6 +871,33 @@ fn a_seat_listing_a_non_seat_lane_is_refused_by_name() {
         text.contains(&format!("gateway/{lane}")),
         "the refusal names the lane: {text}"
     );
+}
+
+#[test]
+fn the_agent_lane_must_be_a_declared_model_lane() {
+    let mut config = fixture_config();
+    config.models.lanes.insert(
+        "zai-glm".to_owned(),
+        OdindModelLaneConfig {
+            seats: true,
+            strengths: "Agent work.".to_owned(),
+            tier: None,
+            display_name: "GLM".to_owned(),
+            context_window: 200_000,
+            cost: OdindModelCost {
+                input: "1".to_owned(),
+                output: "2".to_owned(),
+            },
+            billing: "api".to_owned(),
+        },
+    );
+    let error = config.check_agent_lane("ghost").unwrap_err().to_string();
+    assert!(
+        error.contains("\"ghost\" is not a declared model lane"),
+        "{error}"
+    );
+    let error = config.check_agent_lane("zai-glm").unwrap_err().to_string();
+    assert!(error.contains("not a gateway launch option"), "{error}");
 }
 
 #[test]

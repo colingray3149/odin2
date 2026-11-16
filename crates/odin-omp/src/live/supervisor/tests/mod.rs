@@ -141,6 +141,55 @@ async fn a_slow_launch_holds_its_slot_but_not_the_gate() {
     assert_eq!(supervisor.summaries().await.expect("summaries").len(), 2);
 }
 
+struct Watched(std::sync::Mutex<String>);
+
+impl crate::live::service::HeartbeatWatched for Watched {
+    fn digest(&self, seat: &odin_domain::SeatId) -> String {
+        format!("{seat}:{}", self.0.lock().expect("watched"))
+    }
+}
+
+#[tokio::test]
+async fn an_unchanged_digest_skips_the_heartbeat() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let ledger: Arc<dyn LiveLedger> =
+        Arc::new(super::super::ledger::fs::FsLiveLedger::open(root.path()).expect("ledger"));
+    let supervisor = LiveSupervisor::new(ledger, Arc::new(SucceedLaunch), 256, None);
+    let watched = Arc::new(Watched(std::sync::Mutex::new(
+        "workload a Running".to_owned(),
+    )));
+    supervisor.set_heartbeat_watched(watched.clone());
+    let (changed, always) = (
+        SeatId::new("supervisor").unwrap(),
+        SeatId::new("kubert").unwrap(),
+    );
+    supervisor.set_heartbeat_when(&changed, crate::live::rollover::HeartbeatWhen::Changed);
+    let session = LiveSessionId::new(uuid::Uuid::new_v4()).expect("session");
+
+    assert!(
+        supervisor.heartbeat_changed(&changed, session).await,
+        "the first fires"
+    );
+    assert!(
+        !supervisor.heartbeat_changed(&changed, session).await,
+        "nothing moved"
+    );
+    assert!(
+        supervisor.heartbeat_changed(&always, session).await,
+        "always fires"
+    );
+    *watched.0.lock().expect("watched") = "workload a Succeeded".to_owned();
+    assert!(
+        supervisor.heartbeat_changed(&changed, session).await,
+        "a workload moved"
+    );
+    supervisor.clear_heartbeat(session);
+    assert!(
+        supervisor.heartbeat_changed(&changed, session).await,
+        "a cleared fire is due again"
+    );
+}
+
 #[derive(Default)]
 struct CancellationWitnessLaunch {
     entered: tokio::sync::Notify,
@@ -270,6 +319,7 @@ fn parked_prompt(session_id: LiveSessionId, parked: &LiveSessionSummary) -> Live
             )])
             .expect("message"),
             owner_text: None,
+            wake: false,
         },
     }
 }
@@ -353,6 +403,21 @@ async fn discover_restores_exactly_and_explicit_reclaim_publishes_the_epoch_at_t
     let recovered = LiveSupervisor::discover(Arc::clone(&reopened), recording.clone(), 256, None)
         .await
         .expect("discover");
+    let missing = recovered
+        .reclaim(opened.session_id)
+        .await
+        .expect_err("unbound seat refuses");
+    assert!(matches!(missing, LiveError::NotFound { .. }));
+    assert_eq!(
+        reopened
+            .session(opened.session_id)
+            .await
+            .expect("session")
+            .epoch
+            .get(),
+        1
+    );
+    bound_seat(&recovered, 4).await;
     assert!(
         recording.opens().is_empty(),
         "load-only discovery must never launch a bridge"
@@ -399,7 +464,7 @@ async fn discover_restores_exactly_and_explicit_reclaim_publishes_the_epoch_at_t
 }
 
 #[tokio::test]
-async fn reclaim_recovers_the_recorded_manifest_launch_not_the_rebound_declaration() {
+async fn reclaim_uses_current_declared_lead_instead_of_persisted_launch() {
     let root = tempfile::tempdir().expect("tempdir");
     let ledger: Arc<dyn LiveLedger> =
         Arc::new(super::super::ledger::fs::FsLiveLedger::open(root.path()).expect("ledger"));
@@ -407,15 +472,14 @@ async fn reclaim_recovers_the_recorded_manifest_launch_not_the_rebound_declarati
     let request = bound_seat(&supervisor, 4).await;
     let slice_id = request.slice_id.clone();
     let opened = supervisor.open(request).await.expect("open");
-    assert_eq!(opened.provider.as_str(), "openai-codex");
-    assert_eq!(opened.model.as_str(), "gpt-6-astra");
+    let original_provider = opened.provider.clone();
+    let original_model = opened.model.clone();
+    let new_model = ModelName::new("fixture-new-lead").expect("fixture model");
+    assert_ne!(original_model, new_model);
 
-    // The daemon restarts, and while it was down the operator rebound
-    // the seat so its declared launch options now name a DIFFERENT
-    // default model. Recovery must still launch the session's own
-    // durable manifest — declaration order is composition policy for
-    // NEW sessions, never a reason to move a durable session onto
-    // another model.
+    // The daemon restarts with a different lead, while the former model
+    // remains declared as an alternative. The same durable transcript must
+    // resume under the current lead, not the saved launch pair.
     drop(supervisor);
     let reopened: Arc<dyn LiveLedger> =
         Arc::new(super::super::ledger::fs::FsLiveLedger::open(root.path()).expect("reopen ledger"));
@@ -423,16 +487,28 @@ async fn reclaim_recovers_the_recorded_manifest_launch_not_the_rebound_declarati
     let recovered = LiveSupervisor::discover(Arc::clone(&reopened), recording.clone(), 256, None)
         .await
         .expect("discover");
+    let persisted = reopened
+        .session(opened.session_id)
+        .await
+        .expect("persisted session");
+    assert_eq!(persisted.manifest.provider, original_provider);
+    assert_eq!(persisted.manifest.model, original_model);
     let rebound: LiveLaunchOption = serde_json::from_value(serde_json::json!({
-        "provider":"gateway", "model":"other-model", "skeletonRef":"omp", "containerId":"omp"
+        "provider": original_provider.as_str(), "model": new_model.as_str(),
+        "skeletonRef":"omp", "containerId":"omp"
     }))
     .expect("rebound launch option");
+    let former: LiveLaunchOption = serde_json::from_value(serde_json::json!({
+        "provider": original_provider.as_str(), "model": original_model.as_str(),
+        "skeletonRef":"omp", "containerId":"omp"
+    }))
+    .expect("former launch option");
     recovered
         .bind(LiveSeatBinding {
             seat_id: opened.seat_id.clone(),
             slice_id,
             display_name: "Architect".to_owned(),
-            launch_options: vec![rebound],
+            launch_options: vec![rebound, former],
             allowed_nodes: vec![NodeId::new("laptop").expect("node id")],
             max_sessions: 4,
             turn_budget: None,
@@ -440,7 +516,9 @@ async fn reclaim_recovers_the_recorded_manifest_launch_not_the_rebound_declarati
         })
         .await
         .expect("rebind");
-    recovered.reclaim(opened.session_id).await.expect("reclaim");
+    let summary = recovered.reclaim(opened.session_id).await.expect("reclaim");
+    assert_eq!(summary.provider, original_provider);
+    assert_eq!(summary.model, new_model);
     let launches = recording.opens();
     assert_eq!(launches.len(), 1, "the reclaim launches exactly one bridge");
     let (session_id, epoch, reclaim, provider, model) = &launches[0];
@@ -455,14 +533,141 @@ async fn reclaim_recovers_the_recorded_manifest_launch_not_the_rebound_declarati
         "the parked recovery reclaims with a fresh incarnation"
     );
     assert_eq!(
-        provider.as_str(),
-        "openai-codex",
-        "the durable manifest provider wins"
+        provider, &original_provider,
+        "the provider remains unchanged"
     );
+    assert_eq!(model, &new_model, "the current declared lead wins");
+    let durable = recovered
+        .durable_summary(opened.session_id)
+        .await
+        .expect("summary")
+        .expect("session");
+    assert_eq!(durable.provider, original_provider);
+    assert_eq!(durable.model, new_model);
+    drop(recovered);
+    drop(reopened);
+    let ledger: Arc<dyn LiveLedger> = Arc::new(
+        super::super::ledger::fs::FsLiveLedger::open(root.path()).expect("reopen after reclaim"),
+    );
+    let rediscovered = LiveSupervisor::discover(ledger, Arc::new(SucceedLaunch), 256, None)
+        .await
+        .expect("rediscover");
+    let summary = rediscovered
+        .durable_summary(opened.session_id)
+        .await
+        .expect("summary")
+        .expect("session");
+    assert_eq!(summary.provider, original_provider);
+    assert_eq!(summary.model, new_model);
+}
+
+#[tokio::test]
+async fn durable_summary_replays_applied_switches_after_reclaim_but_not_failures() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let ledger: Arc<dyn LiveLedger> = Arc::new(FsLiveLedger::open(root.path()).expect("ledger"));
+    let supervisor = LiveSupervisor::new(Arc::clone(&ledger), Arc::new(SucceedLaunch), 256, None);
+    let request = bound_seat(&supervisor, 4).await;
+    let opened = supervisor.open(request).await.expect("open");
+    let reclaimed_provider = ProviderName::new("reclaimed-provider").unwrap();
+    let reclaimed_model = ModelName::new("reclaimed-model").unwrap();
+    ledger
+        .append(
+            opened.epoch,
+            NewLiveEvent {
+                session_id: opened.session_id,
+                event_id: EventId::new("replay-reclaim").unwrap(),
+                occurred_at: time::OffsetDateTime::now_utc(),
+                body: LiveEventBody::ModelReclaimed(odin_domain::huginn::ModelReclaimed {
+                    provider: reclaimed_provider.clone(),
+                    model: reclaimed_model.clone(),
+                }),
+            },
+        )
+        .await
+        .unwrap();
+    let durable = supervisor
+        .durable_summary(opened.session_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
-        model.as_str(),
-        "gpt-6-astra",
-        "the durable manifest model wins"
+        (durable.provider, durable.model),
+        (reclaimed_provider, reclaimed_model)
+    );
+
+    let selected_provider = ProviderName::new("selected-provider").unwrap();
+    let selected_model = ModelName::new("selected-model").unwrap();
+    for (id, provider, model, applied) in [
+        (
+            "switch-applied",
+            selected_provider.clone(),
+            selected_model.clone(),
+            true,
+        ),
+        (
+            "switch-failed",
+            ProviderName::new("failed-provider").unwrap(),
+            ModelName::new("failed-model").unwrap(),
+            false,
+        ),
+    ] {
+        let command = LiveCommand {
+            command_id: odin_domain::CommandId::new(id).unwrap(),
+            session_id: opened.session_id,
+            expected_epoch: opened.epoch,
+            expected_event_head: None,
+            body: LiveCommandBody::SetModel {
+                provider,
+                model,
+                route: None,
+            },
+        };
+        ledger.append_command(&command).await.unwrap();
+        let outcome = if applied {
+            CommandOutcome::Applied {
+                command_id: command.command_id.clone(),
+            }
+        } else {
+            CommandOutcome::Failed {
+                command_id: command.command_id.clone(),
+                error: odin_domain::huginn::CommandFailure {
+                    code: "control_failed".to_owned(),
+                    message: "refused".to_owned(),
+                    retryable: false,
+                },
+            }
+        };
+        ledger
+            .complete_command(command.command_id.clone(), outcome.clone())
+            .await
+            .unwrap();
+        ledger
+            .append(
+                opened.epoch,
+                NewLiveEvent {
+                    session_id: opened.session_id,
+                    event_id: EventId::new(id).unwrap(),
+                    occurred_at: time::OffsetDateTime::now_utc(),
+                    body: LiveEventBody::ControlCompleted(outcome),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    drop(supervisor);
+    drop(ledger);
+    let reopened: Arc<dyn LiveLedger> = Arc::new(FsLiveLedger::open(root.path()).unwrap());
+    let rediscovered = LiveSupervisor::discover(reopened, Arc::new(SucceedLaunch), 256, None)
+        .await
+        .unwrap();
+    let summary = rediscovered
+        .durable_summary(opened.session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (summary.provider, summary.model),
+        (selected_provider, selected_model)
     );
 }
 
@@ -1189,6 +1394,7 @@ fn parked_message_crash_window(follow_up: bool, stage: u8) {
             command.body = LiveCommandBody::FollowUp {
                 message,
                 owner_text: None,
+                wake: false,
             };
         }
         let submitted = command.clone();
@@ -1356,6 +1562,8 @@ async fn a_pod_agent_session_neither_takes_nor_waits_for_an_interactive_slot() {
         inputs: Vec::new(),
         launching_run: None,
         unresolved_hosts: Default::default(),
+        limits: None,
+        seeds: Vec::new(),
     };
     let pod = supervisor
         .open_workload(pod, binding)
@@ -1917,6 +2125,8 @@ async fn ambiguous_workload_start_failure_never_authorizes_carrier_release() {
                 inputs: Vec::new(),
                 launching_run: None,
                 unresolved_hosts: Default::default(),
+                limits: None,
+                seeds: Vec::new(),
             },
         )
         .await
@@ -2240,6 +2450,7 @@ async fn parked_report_missing_admission_refuses_old_intent_then_delivers_fresh_
     )
     .await
     .expect("discover");
+    bound_seat(&recovered, 4).await;
     assert!(recovered
         .parked(opened.session_id)
         .await
@@ -2371,6 +2582,7 @@ async fn failed_fresh_launch_can_resume_the_original_command_after_restart() {
         body: LiveCommandBody::Prompt {
             message: LiveMessage::new(vec![LiveContentBlock::Text(owner.to_owned())]).unwrap(),
             owner_text: Some(owner.to_owned()),
+            wake: false,
         },
     };
     let policy = RolloverPolicy {

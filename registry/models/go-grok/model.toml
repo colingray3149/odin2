@@ -14,3 +14,5 @@ order = 4
 account = "opencode-go"
 # One line naming when this card is the right pick.
 strengths = "Grok reasoning on the Go subscription; extra everyday depth."
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"

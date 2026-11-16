@@ -267,6 +267,7 @@ async fn say_and_wait(
         command_id: authority_provision::random_command_uuid()?,
         text: text.to_owned(),
         terminal: true,
+        images: Vec::new(),
     };
     let command_id = request.command_id.as_str().to_owned();
     loop {
@@ -431,6 +432,7 @@ fn take_line(
             command_id: authority_provision::random_command_uuid()?,
             text: text.to_owned(),
             terminal: true,
+            images: Vec::new(),
         }),
     }
     Ok(true)

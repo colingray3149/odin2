@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::live::rollover::{
-    RolloverChildState, RolloverChildrenSource, RolloverPolicy, RolloverRuntimeConfig,
+    PodRollover, RolloverChildState, RolloverChildrenSource, RolloverPolicy, RolloverRuntimeConfig,
 };
 
 pub(super) struct NoDelegatedChildren;
@@ -367,5 +367,212 @@ async fn a_rejected_reinjection_is_typed_evidence_not_a_silent_completion() {
         epoch_after, 2,
         "the fresh incarnation still advanced one epoch"
     );
+    bridge.stop().await.unwrap();
+}
+
+/// A pod's rollover contract: the checkpoint at 70% of the card window, the
+/// given budget, and one staged launch input.
+fn pod_config(max_rollovers: Option<u8>) -> RolloverRuntimeConfig {
+    let policy = RolloverPolicy {
+        window_fraction: Some(70),
+        ..RolloverPolicy::default()
+    };
+    let pod = PodRollover {
+        max_rollovers,
+        launch_inputs: vec!["/var/run/odin/staging/input-1".to_owned()],
+    };
+    RolloverRuntimeConfig::for_pod(policy, pod).unwrap()
+}
+
+/// The session's durable journal bodies, oldest first.
+fn journal(context: &crate::probe::CaseContext) -> Vec<Value> {
+    let ledger = context.ledger();
+    let guard = ledger.lock().expect("case ledger lock");
+    let session = context.ids().session.clone();
+    let head = guard.reconnect_head(&session).unwrap();
+    guard
+        .live_event_history(&session, 0, head)
+        .unwrap()
+        .into_iter()
+        .map(|event| event.body)
+        .collect()
+}
+
+/// The journaled prompt or steer frames of one command name.
+fn commands_named(bodies: &[Value], command: &str) -> Vec<Value> {
+    bodies
+        .iter()
+        .filter(|body| {
+            body.get("kind").and_then(Value::as_str) == Some("command_issued")
+                && body.get("command").and_then(Value::as_str) == Some(command)
+        })
+        .filter_map(|body| body.get("frame").cloned())
+        .collect()
+}
+
+/// A pod's mid-loop usage past its checkpoint steers its running turn, once
+/// per context epoch, to write its notes; the turn itself is left running.
+#[tokio::test]
+#[cfg(unix)]
+async fn a_pod_checkpoint_steers_its_running_turn_once_per_epoch() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let context = super::prompt_open_loop::context_with_prompt_handler(
+        root_dir.path(),
+        "pod-checkpoint",
+        // Two mid-loop frames past the checkpoint and no terminal frame.
+        concat!(
+            "        emit({'type':'response','id':command['id'],'command':'prompt',",
+            "'success':True,'data':{}})\n",
+            "        answered = True\n",
+            "        emit({'type':'agent_start'})\n",
+            "        emit({'type':'turn_end','message':{'role':'assistant',",
+            "'usage':{'input':9000,'output':10}}})\n",
+            "        emit({'type':'turn_end','message':{'role':'assistant',",
+            "'usage':{'input':9100,'output':10}}})\n",
+        ),
+        Vec::new(),
+    )
+    .await;
+    let mut config = context.bridge_config(context.session_descriptor()).unwrap();
+    config.rollover = Some(pod_config(Some(4)));
+    config.rollover_children = Some(Arc::new(NoDelegatedChildren));
+    let bridge = OmpBridge::start(config).await.expect("bridge starts");
+    bridge
+        .bind_rollover_card(10_000, 9_000)
+        .expect("the card window binds");
+    bridge
+        .prompt_open_loop(Prompt::text("work the brief"))
+        .await
+        .expect("the turn starts");
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while commands_named(&journal(&context), "steer").is_empty() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the checkpoint steer is journaled");
+    // The second mid-loop frame stays in the same epoch: no second steer.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let steers = commands_named(&journal(&context), "steer");
+    assert_eq!(steers.len(), 1, "one steer per epoch: {steers:?}");
+    let message = steers[0]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("/export/notes.md") && message.contains("90%"),
+        "the steer names the notes and the context share: {message}"
+    );
+    bridge.stop().await.unwrap();
+}
+
+/// An authenticated window refusal in a pod is one rollover: a fresh
+/// incarnation resumes from the notes and the launch input.
+#[tokio::test]
+#[cfg(unix)]
+async fn a_pod_window_refusal_rolls_over_once_with_the_notes_continuation() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let context = super::prompt_open_loop::context_with_prompt_handler(
+        root_dir.path(),
+        "pod-rollover",
+        "        pass\n",
+        Vec::new(),
+    )
+    .await;
+    let mut config = context.bridge_config(context.session_descriptor()).unwrap();
+    config.rollover = Some(pod_config(Some(2)));
+    config.rollover_children = Some(Arc::new(NoDelegatedChildren));
+    let bridge = OmpBridge::start(config).await.expect("bridge starts");
+
+    let epoch_before = bridge.binding().unwrap().epoch;
+    let epoch_after = bridge
+        .rollover_context_refusal(209, None)
+        .await
+        .expect("the pod rolls over its window refusal");
+    assert_eq!(epoch_after, epoch_before + 1);
+
+    let bodies = journal(&context);
+    let triggered = bodies
+        .iter()
+        .filter(|body| body.get("kind").and_then(Value::as_str) == Some("rollover_triggered"))
+        .count();
+    assert_eq!(triggered, 1, "one rollover_triggered: {bodies:?}");
+    let prompts = commands_named(&bodies, "prompt");
+    assert_eq!(prompts.len(), 1, "ONE reinjection: {prompts:?}");
+    let message = prompts[0]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.starts_with("[ODIN ROLLOVER")
+            && message.contains("/export/notes.md")
+            && message.contains("/var/run/odin/staging/input-1")
+            && !message.contains("ready."),
+        "the pod continuation names its notes and input, and orders work: {message}"
+    );
+    assert!(
+        !message.contains("/export/report.md"),
+        "the first of two rollovers does not order the report: {message}"
+    );
+    bridge.stop().await.unwrap();
+}
+
+/// A pod whose rollover budget is spent is not rolled over again. The last
+/// allowed rollover orders the report; the refusal after it changes nothing.
+#[tokio::test]
+#[cfg(unix)]
+async fn a_pod_past_its_rollover_budget_is_not_rolled_over() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let context = super::prompt_open_loop::context_with_prompt_handler(
+        root_dir.path(),
+        "pod-budget",
+        // The reinjection turn answers and settles, as a real turn does.
+        concat!(
+            "        emit({'type':'response','id':command['id'],'command':'prompt',",
+            "'success':True,'data':{}})\n",
+            "        answered = True\n",
+            "        emit({'type':'agent_end','usage':{'input':10,'output':1}})\n",
+        ),
+        Vec::new(),
+    )
+    .await;
+    let mut config = context.bridge_config(context.session_descriptor()).unwrap();
+    config.rollover = Some(pod_config(Some(1)));
+    config.rollover_children = Some(Arc::new(NoDelegatedChildren));
+    let bridge = OmpBridge::start(config).await.expect("bridge starts");
+
+    let last = bridge
+        .rollover_context_refusal(209, None)
+        .await
+        .expect("the one allowed rollover runs");
+    let prompts = commands_named(&journal(&context), "prompt");
+    assert!(
+        prompts[0]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("/export/report.md"),
+        "the last allowed rollover orders the report: {prompts:?}"
+    );
+
+    // A real second refusal arrives a whole turn later; retry until the
+    // reinjection turn settles and releases its in-flight prompt.
+    let refused = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match bridge.rollover_context_refusal(210, None).await {
+                Err(error) if error.to_string().contains("in flight") => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                other => break other,
+            }
+        }
+    })
+    .await
+    .expect("the reinjection turn settles")
+    .expect_err("the spent budget refuses the next rollover");
+    assert!(
+        refused.to_string().contains("budget spent"),
+        "the refusal names the spent budget: {refused}"
+    );
+    assert_eq!(bridge.binding().unwrap().epoch, last, "no respawn happened");
+    let triggered = journal(&context)
+        .iter()
+        .filter(|body| body.get("kind").and_then(Value::as_str) == Some("rollover_triggered"))
+        .count();
+    assert_eq!(triggered, 1, "the refused rollover is not admitted");
     bridge.stop().await.unwrap();
 }

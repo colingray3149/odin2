@@ -135,7 +135,7 @@ impl super::BridgeRoute {
             DeclarationCompile::Failed(failure) => return Err(failure),
         };
         let (digest, rendered) = Self::declaration_digest(&compiled)?;
-        // Published ids are immutable; reject different content while a new id can still be chosen.
+        // Drafting creates; an existing profile changes in place with registry.edit.
         if let Some(published) = snapshot.objects.iter().find(|object| {
             object.kind() == odin_registry::RegistryKind::Workload
                 && object.id == request.profile_id
@@ -150,8 +150,8 @@ impl super::BridgeRoute {
             if !same {
                 return Err(Failure::InvalidDeclaration {
                     issues: vec![format!(
-                        "workload profile {:?} is already published with different content; \
-                         published profiles are immutable, so draft this one under a new id",
+                        "workload profile {:?} exists: change it with registry.edit (e.g. set \
+                         resources.memory), which the next launch picks up; draft only new profiles",
                         request.profile_id
                     )],
                 });
@@ -861,10 +861,18 @@ impl super::BridgeRoute {
             });
         }
         let admitted = Self::admitted_bindings();
+        let values = match Self::fill_values(answers, self.deployment.as_ref()) {
+            Ok(values) => values,
+            Err(issue) => {
+                return DeclarationCompile::Failed(Failure::InvalidDeclaration {
+                    issues: vec![issue],
+                });
+            }
+        };
         let fill = odin_registry::FillRequest {
             skeleton: odin_registry::SkeletonKind::NewWorkload,
             destination_id: profile_id.to_owned(),
-            values: odin_registry::FillValues(Self::fill_values(answers, self.deployment.as_ref())),
+            values: odin_registry::FillValues(values),
         };
         // What a pod must declare depends on what it is:
         // an agent its model lane, memory and display; a script its image
@@ -1052,7 +1060,7 @@ impl super::BridgeRoute {
     fn fill_values(
         answers: &odin_hermes::runtime::WorkloadDraftAnswers,
         deployment: Option<&crate::kube::WorkloadDeploymentFacts>,
-    ) -> toml::Table {
+    ) -> Result<toml::Table, String> {
         // A script pod states its own image and runs no
         // agent: the deployment's agent facts (launcher, browser, display)
         // are never filled for it. An agent pod runs the platform image.
@@ -1165,6 +1173,38 @@ impl super::BridgeRoute {
         {
             values.insert("monitoring_recovery".to_owned(), recovery);
         }
+        if let Some(limits) = answers.limits {
+            // The lifetime is the declaration's [lifetime] deadline, never a limit.
+            if limits.deadline_seconds.is_some() {
+                return Err(
+                    "limits.deadlineSeconds is the run lifetime; draft it as deadlineSeconds"
+                        .to_owned(),
+                );
+            }
+            let declared = [
+                (
+                    "output_reserve_tokens",
+                    limits.output_reserve_tokens.map(i64::from),
+                ),
+                (
+                    "checkpoint_percent",
+                    limits.checkpoint_percent.map(i64::from),
+                ),
+                ("max_rollovers", limits.max_rollovers.map(i64::from)),
+                ("tool_result_bytes", limits.tool_result_bytes.map(i64::from)),
+            ];
+            let table = declared
+                .into_iter()
+                .filter_map(|(name, value)| Some((name.to_owned(), toml::Value::from(value?))))
+                .collect();
+            values.insert("limits".to_owned(), toml::Value::Table(table));
+        }
+        // A table the caller sent that TOML cannot carry is refused, never dropped.
+        if let Some(resources) = answers.resources.as_ref() {
+            let table = toml::Value::try_from(resources)
+                .map_err(|error| format!("resources is not a typed table: {error}"))?;
+            values.insert("resources".to_owned(), table);
+        }
         if let Some(watchdogs) = answers.watchdogs.as_deref() {
             // JSON objects become TOML tables verbatim; anything the alert
             // grammar refuses is the skeleton compiler's typed issue.
@@ -1193,7 +1233,7 @@ impl super::BridgeRoute {
                 ),
             );
         }
-        values
+        Ok(values)
     }
 
     /// Report enabled gateway chat routes and alternatives, not session lanes;

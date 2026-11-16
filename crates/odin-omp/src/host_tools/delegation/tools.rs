@@ -449,6 +449,9 @@ impl TaskControlKind {
                     }
                     return Ok((child, TaskControl::RaiseLaneBudget(raise)));
                 }
+                if arguments.get("reaccept").and_then(Value::as_bool) == Some(true) {
+                    return Ok((child, TaskControl::Reaccept));
+                }
                 let message = field("message")?.trim();
                 if message.is_empty() || message.len() > STEER_MESSAGE_BYTES {
                     return Err(invalid(format!(

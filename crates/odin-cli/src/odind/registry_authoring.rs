@@ -5,14 +5,19 @@
 //! onto odin main, validates the whole candidate registry and publishes it.
 //!
 //! A watchdog on a pod is `new-alert` naming a `workload` instead of a
-//! `container`: it is appended to that profile's `[monitoring]`. A profile is
-//! otherwise immutable (a running Job must never change under its pod), but
-//! monitoring is read by odind's monitoring kernel, never by the Job, so a
-//! new watchdog changes nothing a pod runs — it watches the profile's pods
-//! from odind's next idle reload on.
+//! `container`: it is appended to that profile's `[monitoring]`. Other changes
+//! to an existing profile are `registry.edit` (`registry_edit.rs`): a running
+//! Job keeps the snapshot revision it launched with, so a new revision reaches
+//! only the next launch. Monitoring is read by odind's monitoring kernel, never
+//! by the Job, so a new watchdog watches the profile's pods from odind's next
+//! idle reload on.
 
-use odin_hermes::runtime::registry_author::{AuthorChange, AuthorRequest, RegistryAuthorRoute};
-use odin_registry::schema::{ContainerAlertToml, ObjectConfig, RegistryKind, WorkloadProfileToml};
+use odin_hermes::runtime::registry_author::{
+    AuthorChange, AuthorRequest, EditChange, EditRequest, RegistryAuthorRoute,
+};
+use odin_registry::schema::{
+    BrainRoleToml, ContainerAlertToml, ObjectConfig, RegistryKind, WorkloadProfileToml,
+};
 use odin_registry::{
     AuthoringDestination, AuthoringErrors, CompiledDocument, FillRequest, SkeletonCatalog,
     SkeletonKind,
@@ -28,6 +33,8 @@ const DEFAULT_CADENCE_SECONDS: i64 = 30;
 /// The grant-tier edit that turns on a declared capability that is off and
 /// grants it to one seat.
 const ENABLE_CAPABILITY: &str = "enable-capability";
+/// The grant-tier edit that replaces one declared brain role's whole file.
+const EDIT_BRAIN_ROLE: &str = "edit-brain-role";
 /// The grant-tier removal verb: one declared environment goes away in one
 /// validated, tombstoned commit.
 const REMOVE_ENVIRONMENT: &str = "remove-environment";
@@ -177,6 +184,21 @@ impl DaemonProjectRoute {
                 "capabilitiesOff": off,
             }));
         }
+        if skeleton == EDIT_BRAIN_ROLE {
+            let editable: Vec<String> = self
+                .pin
+                .current()
+                .objects
+                .iter()
+                .filter(|object| matches!(object.config, ObjectConfig::BrainRole(_)))
+                .map(|object| object.id.clone())
+                .collect();
+            return Ok(serde_json::json!({
+                "skeleton": skeleton,
+                "destination": "an existing role under registry/brain-roles",
+                "editable": editable,
+            }));
+        }
         if skeleton == REMOVE_ENVIRONMENT {
             let declared: Vec<serde_json::Value> = self
                 .pin
@@ -241,6 +263,9 @@ impl DaemonProjectRoute {
         }
         if request.skeleton == REMOVE_ENVIRONMENT {
             return self.remove_environment(caller, request);
+        }
+        if request.skeleton == EDIT_BRAIN_ROLE {
+            return self.edit_brain_role(caller, request);
         }
         let kind = skeleton_kind(&request.skeleton)?;
         let id = request.id.trim();
@@ -331,7 +356,7 @@ impl DaemonProjectRoute {
         })
     }
 
-    /// Publish the tool, its schema, seat/slice grants and both research profiles together.
+    /// Publish the tool, its schema, seat/slice grants and the research profiles together.
     /// The research workload declares the recipient seat and its declaration supplies the path.
     fn research_tool_grants(&self, id: &str) -> Result<Vec<Edit>, String> {
         let pinned = self.pin.current();
@@ -374,6 +399,10 @@ impl DaemonProjectRoute {
                 "registry/workloads/research-deep/profile.toml".to_owned(),
                 "tools",
             ),
+            (
+                "registry/workloads/research-browser/profile.toml".to_owned(),
+                "tools",
+            ),
         ] {
             let id = id.to_owned();
             edits.push(Edit::new(path.clone(), path, move |text: &str| {
@@ -381,6 +410,34 @@ impl DaemonProjectRoute {
             }));
         }
         Ok(edits)
+    }
+
+    /// `edit-brain-role`: one commit replaces a declared role's whole file.
+    /// The shared transaction validates the candidate registry (the role's
+    /// shape, every lane naming a model card) before anything publishes.
+    fn edit_brain_role(
+        &self,
+        caller: &odin_domain::SeatId,
+        request: &AuthorRequest,
+    ) -> Result<AuthorChange, String> {
+        let id = request.id.trim().to_owned();
+        let path = brain_role_edit(&self.pin.current().objects, &id, &request.values)?;
+        let values = request.values.clone();
+        let edits = vec![Edit::new(path.clone(), path.clone(), move |_old: &str| {
+            Ok(values.clone())
+        })];
+        let message = format!("registry-author edit-brain-role id={id} by={caller}");
+        let (published_revision, commit) = self.transact(&message, Vec::new(), edits, &[])?;
+        tracing::info!(
+            "registry-author edit-brain-role id={id} by={caller} revision={published_revision}"
+        );
+        Ok(AuthorChange {
+            skeleton: request.skeleton.clone(),
+            id,
+            path,
+            published_revision,
+            commit,
+        })
     }
 
     /// `enable-capability`: one commit turns the declared capability on (if
@@ -593,11 +650,84 @@ impl RegistryAuthorRoute for DaemonProjectRoute {
         }
         outcome
     }
+
+    fn edit(
+        &self,
+        caller: &odin_domain::SeatId,
+        request: EditRequest,
+    ) -> Result<EditChange, String> {
+        let outcome = crate::project_authoring::blocking(|| self.edit_object(caller, &request));
+        if let Err(reason) = &outcome {
+            tracing::error!(
+                "registry-edit refused kind={} id={} seat={caller} reason={reason}",
+                request.kind,
+                request.id
+            );
+        }
+        outcome
+    }
+}
+
+/// The file an `edit-brain-role` request replaces, once the role exists and
+/// the new text is a whole brain-role.toml for that same role.
+fn brain_role_edit(
+    objects: &[odin_registry::RegistryObject],
+    id: &str,
+    values: &str,
+) -> Result<String, String> {
+    let declared = objects
+        .iter()
+        .any(|object| object.id == id && matches!(object.config, ObjectConfig::BrainRole(_)));
+    if !declared {
+        return Err(format!(
+            "there is no brain role {id}; the roles are parse ocr transcribe extract distil \
+             compile review consolidate caption embed rerank"
+        ));
+    }
+    let role: BrainRoleToml = toml::from_str(values)
+        .map_err(|error| format!("values are not a valid brain-role.toml: {error}"))?;
+    if role.role.as_str() != id {
+        return Err(format!(
+            "role must stay {id}; send the complete file for that role"
+        ));
+    }
+    Ok(format!("registry/brain-roles/{id}/brain-role.toml"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const EXTRACT: &str = "schema = \"odin.registry.v1\"\nkind = \"brain-role\"\nenabled = true\n\
+                           description = \"Facts.\"\nrole = \"extract\"\nengine = \"lane\"\n\
+                           lanes = [\"luna\", \"terra\"]\n[params]\nmax_output = 4096\n";
+
+    #[test]
+    fn edit_brain_role_replaces_only_a_declared_role_with_its_own_file() {
+        let extract = odin_registry::schema::parse_object_toml(
+            RegistryKind::BrainRole,
+            "extract",
+            "registry/brain-roles/extract/brain-role.toml",
+            EXTRACT,
+        )
+        .expect("the extract role parses");
+        let objects = vec![extract];
+        let changed = EXTRACT.replace("[\"luna\", \"terra\"]", "[\"terra\", \"luna\"]");
+        assert_eq!(
+            brain_role_edit(&objects, "extract", &changed).unwrap(),
+            "registry/brain-roles/extract/brain-role.toml"
+        );
+        assert!(brain_role_edit(&objects, "nosuch", &changed)
+            .unwrap_err()
+            .starts_with("there is no brain role nosuch"));
+        let other = changed.replace("role = \"extract\"", "role = \"compile\"");
+        assert!(brain_role_edit(&objects, "extract", &other)
+            .unwrap_err()
+            .starts_with("role must stay extract"));
+        assert!(brain_role_edit(&objects, "extract", "role = 3")
+            .unwrap_err()
+            .starts_with("values are not a valid brain-role.toml"));
+    }
 
     #[test]
     fn enabling_flips_only_the_flag() {

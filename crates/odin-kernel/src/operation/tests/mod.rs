@@ -30,6 +30,7 @@ mod invoke;
 mod lease;
 mod lifecycle;
 mod midflight;
+mod recovery_cfd;
 mod stop;
 mod uncertainty;
 

@@ -1,6 +1,8 @@
-//! The copy stage of a report's settlement: each deliverable saved to the laptop's downloads
-//! and, on the personal deployment, to Drive, with what each copy came to recorded so a retried
-//! settlement finds the copies already made.
+//! The copy stage of a report's settlement: the report's PDF and its markdown saved to the
+//! laptop's downloads and, on the personal deployment, to Drive, with what each copy came to
+//! recorded so a retried settlement finds the copies already made. The rest of the export is
+//! shared with the launching seat and stays in its export folder: copied one by one, an
+//! 804-file export was still copying after two hours.
 
 use super::*;
 use std::io::Write;
@@ -37,6 +39,7 @@ pub(super) fn copy_destinations(
     subject_source: &str,
     files: &[ExportedFile],
     stem: &str,
+    pdf: &str,
 ) -> (String, bool) {
     let laptop_folder = format!("business/{subject}");
     let drive_folder = format!("Agentic Business/Profiles/{subject}");
@@ -46,7 +49,12 @@ pub(super) fn copy_destinations(
     let mut lines = Vec::new();
     let mut durable = true;
     let mut any = false;
-    for file in files.iter().filter(|file| is_deliverable(file, files)) {
+    let report = |file: &&ExportedFile| file.path == pdf || file.path == COMPANION;
+    for file in files
+        .iter()
+        .filter(report)
+        .filter(|file| is_deliverable(file, files))
+    {
         any = true;
         let name = copy_name(&file.path, stem, &mut used);
         let record = records
@@ -73,7 +81,9 @@ pub(super) fn copy_destinations(
                     durable = false;
                 }
             }
-            // A file the downloads folder does not take (a tool's .jsonl log) is left out of it, not a failed copy.
+            // A file the downloads folder does not take (a type its policy
+            // refuses, though the OSINT tools' JSONL evidence classifies as
+            // JSON) is left out of it, not a failed copy.
             Err(error) if error.contains("its type is not one") => {
                 record.laptop = NOT_TAKEN.to_owned();
             }
@@ -209,6 +219,13 @@ pub(super) fn delivery_note(directory: &Path) -> Option<String> {
     parsed["note"].as_str().map(str::to_owned)
 }
 
+/// The unmet items a recorded delivery left undone; empty when it delivered the whole report.
+pub(super) fn delivery_unmet(directory: &Path) -> Vec<String> {
+    read_record(directory, DELIVERED)
+        .map(|parsed| strings(&parsed["unmet"]))
+        .unwrap_or_default()
+}
+
 pub(super) fn read_copies(directory: &Path) -> Vec<CopyRecord> {
     let Some(parsed) = read_record(directory, COPIES) else {
         return Vec::new();
@@ -253,7 +270,14 @@ pub(super) fn write_copies(directory: &Path, records: &[CopyRecord]) -> Result<(
 }
 
 pub(super) fn is_deliverable(file: &ExportedFile, files: &[ExportedFile]) -> bool {
-    file.bytes > 0 && !is_report_machinery(&file.path) && !is_page_raster(file, files)
+    // A hidden file is a tool's own marker (recon's once-per-pod `.seeds`), not evidence.
+    file.bytes > 0
+        && !file
+            .path
+            .split('/')
+            .any(|part| part.starts_with('.') && part != ".")
+        && !is_report_machinery(&file.path)
+        && !is_page_raster(file, files)
 }
 
 fn is_report_machinery(path: &str) -> bool {

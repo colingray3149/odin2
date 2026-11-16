@@ -33,7 +33,9 @@ core_tokens = 2048
 prefetch_tokens = 512
 tool_result_tokens = 16384
 tool_schema_tokens = 16384
-max_item_tokens = 8192
+# Carries the supervisor seat's 24_576-byte rollover brief as one item,
+# plus the 64-byte marker margin (brief_fits_item_ceiling).
+max_item_tokens = 24640
 
 [tools]
 deny = []

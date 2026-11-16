@@ -6,6 +6,7 @@
 //! Reads admit declared URI schemes and staged input files only.
 
 import { createHash, randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { countTokens, Encoding } from "@oh-my-pi/pi-natives";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
@@ -41,15 +42,33 @@ const CONTEXT_BUDGET_ENV = "ODIN_CONTEXT_BUDGET";
  * import: the pinned omp binary always carries pi-natives in-process, so the
  * extension and the harness share one exact engine). A native lane whose engine
  * refuses the text is refused, never approximated with bytes or any ratio.
+ * Estimate lanes count bytes times a per-lane tokens-per-byte ratio (see
+ * `ESTIMATE_TOKENS_PER_BYTE`), calibrated from provider usage.
  */
-type RequestCounter = { kind: "bytes" } | { kind: "native"; family: string; encoding: Encoding };
+type RequestCounter =
+	| { kind: "bytes" }
+	| { kind: "estimate" }
+	| { kind: "native"; family: string; encoding: Encoding };
+
+/**
+ * The estimate counter's tokens per byte until a response on its lane reports
+ * usage (one token per four bytes, as the brain's `ESTIMATE_BYTES_PER_TOKEN`).
+ * Each later response replaces its lane's ratio with the provider's own count.
+ */
+const ESTIMATE_TOKENS_PER_BYTE = 1 / 4;
 
 /// Tokenizer identities must match the brain's declared counters; unknown identities are refused.
 /// A native family must match the harness's Model.tokenizer mapping.
 const COUNTERS = new Map<string, RequestCounter>([
 	["odin.tokenizer.utf8-bytes.v1", { kind: "bytes" }],
+	["odin.tokenizer.estimate.v1", { kind: "estimate" }],
 	["odin.tokenizer.qwen3.v1", { kind: "native", family: "qwen3", encoding: Encoding.Qwen3 }],
 ]);
+
+/// The unit a refusal names the counted tokens in.
+function counterUnit(counter: RequestCounter): string {
+	return counter.kind === "bytes" ? "byte" : counter.kind === "estimate" ? "estimated" : counter.family;
+}
 
 interface ContextBudget {
 	provider: string;
@@ -111,10 +130,24 @@ const TRANSPORT_INJECTED_TOOLS = new Set(["write"]);
  * Match tool names at the top level or under `function`, depending on the provider.
  * Preserve unknown shapes and return the original payload when nothing is pruned.
  */
-function pruneTransportInjectedTools(payload: Record<string, unknown>): Record<string, unknown> {
+function pruneTransportInjectedTools(payload: Record<string, unknown>, readDescription?: string): Record<string, unknown> {
 	const tools = payload.tools;
 	if (!Array.isArray(tools)) return payload;
-	const kept = tools.filter((tool) => {
+	let described = false;
+	const listed = readDescription === undefined ? tools : tools.map((tool) => {
+		// The harness's read text teaches coding-session paths; a seat reads what its own description says.
+		if (!isRecord(tool)) return tool;
+		if (tool.name === URI_READ_TOOL && typeof tool.description === "string") {
+			described = true;
+			return { ...tool, description: readDescription };
+		}
+		if (isRecord(tool.function) && tool.function.name === URI_READ_TOOL) {
+			described = true;
+			return { ...tool, function: { ...tool.function, description: readDescription } };
+		}
+		return tool;
+	});
+	const kept = listed.filter((tool) => {
 		if (!isRecord(tool)) return true;
 		const name = typeof tool.name === "string"
 			? tool.name
@@ -123,14 +156,50 @@ function pruneTransportInjectedTools(payload: Record<string, unknown>): Record<s
 				: undefined;
 		return name === undefined || !TRANSPORT_INJECTED_TOOLS.has(name);
 	});
-	if (kept.length === tools.length) return payload;
+	if (kept.length === tools.length && !described) return payload;
 	return { ...payload, tools: kept };
+}
+
+/**
+ * The real file a read targets inside one of the seat's own folders (`ODIN_READ_ROOTS`, the
+ * bubble's seat mounts), or null. Symlinks are resolved first, so a link cannot lead out of a
+ * folder; a line selector (`notes.md:40-80`) or query (`data.json?q=.x`) after the file is kept.
+ */
+export function readRootTarget(input: unknown, roots: string[]): string | null {
+	if (roots.length === 0) return null;
+	if (typeof input !== "object" || input === null || Array.isArray(input)) return null;
+	const raw = (input as Record<string, unknown>).path;
+	if (typeof raw !== "string" || !raw.startsWith("/")) return null;
+	let file = raw.replace(/\?.*$/, "");
+	for (let strip = 0; strip < 3; strip++) {
+		let real: string | null = null;
+		try {
+			real = realpathSync(file);
+		} catch {
+			real = null;
+		}
+		if (real !== null) {
+			return roots.some((root) => real === root || real.startsWith(`${root}/`)) ? raw : null;
+		}
+		const selector = file.lastIndexOf(":");
+		if (selector <= 0) return null;
+		file = file.slice(0, selector);
+	}
+	return null;
 }
 
 function asCount(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
 		? value
 		: undefined;
+}
+
+// A response's provider input: fresh input plus cached reads and writes; absent without an input count.
+function providerInputTokens(usage: unknown): number | undefined {
+	if (!isRecord(usage)) return undefined;
+	const input = asCount(usage.input);
+	if (input === undefined) return undefined;
+	return input + (asCount(usage.cacheRead) ?? 0) + (asCount(usage.cacheWrite) ?? 0);
 }
 
 // Malformed output limits must be refused, not treated as missing and replaced by the reserve.
@@ -490,6 +559,7 @@ function tracedImages(api: string | undefined, payload: Record<string, unknown>)
 function countRequest(
 	counter: RequestCounter,
 	payload: unknown,
+	tokensPerByte: number,
 ): { inputTokens: number; requestBytes: number } | { error: string } {
 	if (!isRecord(payload)) {
 		return { error: "provider request payload is not a JSON object" };
@@ -506,6 +576,9 @@ function countRequest(
 	const requestBytes = Buffer.byteLength(serialized, "utf8");
 	if (counter.kind === "bytes") {
 		return { inputTokens: requestBytes, requestBytes };
+	}
+	if (counter.kind === "estimate") {
+		return { inputTokens: Math.ceil(requestBytes * tokensPerByte), requestBytes };
 	}
 	try {
 		return { inputTokens: countTokens(serialized, counter.encoding), requestBytes };
@@ -562,12 +635,17 @@ function hostUriTarget(input: unknown, schemes: Set<string>): string | null {
 	return raw;
 }
 
+// The harness's read selectors on a staged path: `:raw`, `:N`, `:N-M`, and
+// `:raw:N-M` or `:N-M:raw` (N, M decimal line numbers). Nothing else.
+const READ_SELECTOR = /:(?:raw|\d+|\d+-\d+|raw:\d+-\d+|\d+-\d+:raw)$/;
+
 /**
  * The one staged launch-input file a workload pod's read call may target,
  * or null: EXACTLY one of the pod's declared input paths
  * (`ODIN_READ_PATHS`, staged only for workload sessions with launch
  * inputs; each a read-only file under the pod's staging mount), optionally
- * with the harness's `:raw` selector. Nothing else on the pod's filesystem.
+ * with one read selector so a long file can be paged. Nothing else on the
+ * pod's filesystem.
  */
 function readPathTarget(input: unknown, paths: Set<string>): string | null {
 	if (paths.size === 0) return null;
@@ -576,7 +654,7 @@ function readPathTarget(input: unknown, paths: Set<string>): string | null {
 	if (keys.length !== 1 || keys[0] !== "path") return null;
 	const raw = (input as Record<string, unknown>).path;
 	if (typeof raw !== "string") return null;
-	const file = raw.endsWith(":raw") ? raw.slice(0, -":raw".length) : raw;
+	const file = raw.replace(READ_SELECTOR, "");
 	return paths.has(file) ? raw : null;
 }
 
@@ -700,10 +778,28 @@ export default function (pi: ExtensionAPI) {
 	for (const path of readPaths) {
 		if (!path.startsWith(STAGING_MOUNT)) throw new Error(`fail-closed: ODIN_READ_PATHS names ${path}, outside ${STAGING_MOUNT}`);
 	}
+	// The seat's own folders, resolved once: a root that does not resolve is not readable.
+	const readRoots = (process.env.ODIN_READ_ROOTS ?? "")
+		.split(":")
+		.filter((root) => root.startsWith("/"))
+		.flatMap((root) => {
+			try {
+				return [realpathSync(root)];
+			} catch {
+				return [];
+			}
+		});
 	const governed = new Set(allowed);
-	if (hostUriSchemes.size > 0 || readPaths.size > 0) {
+	if (hostUriSchemes.size > 0 || readPaths.size > 0 || readRoots.length > 0) {
 		governed.add(URI_READ_TOOL);
 	}
+	const webRead = governed.has("research") ? " Web pages: research {op: read}." : "";
+	const readDescription =
+		`Reads one Odin link (${[...hostUriSchemes].map((scheme) => `${scheme}://`).join(", ")})` +
+		(readRoots.length > 0 ? ` or a file in your folders: ${readRoots.join(", ")}` : "") +
+		(readPaths.size > 0 ? `, or a launch input: ${[...readPaths].join(", ")}` : "") +
+		". Line ranges go in the path (notes.md:40-80, notes.md:-20 for the last 20); PDFs and documents come back as text." +
+		webRead;
 	const listed = governed;
 
 	// The declared complete-request budget of the bound lane, when the seat
@@ -794,7 +890,7 @@ export default function (pi: ExtensionAPI) {
 		if (contextBudgets === undefined) {
 			// No window to guard, but the model still sees only the governed tool surface.
 			if (!isRecord(event.payload)) return undefined;
-			const pruned = pruneTransportInjectedTools(event.payload);
+			const pruned = pruneTransportInjectedTools(event.payload, readDescription);
 			await recordModelRequest(ctx, pruned);
 			return pruned === event.payload ? undefined : pruned;
 		}
@@ -822,6 +918,8 @@ export default function (pi: ExtensionAPI) {
 			);
 		}
 		const { counter } = budget;
+		const laneKey = `${budget.provider}/${budget.model}`;
+		const tokensPerByte = estimateRatios.get(laneKey) ?? ESTIMATE_TOKENS_PER_BYTE;
 		// A declared NATIVE identity additionally requires the resolved
 		// model's catalog tokenizer family to match exactly: an unresolved or
 		// foreign family means the lane's counting engine is not this
@@ -846,7 +944,7 @@ export default function (pi: ExtensionAPI) {
 		// transport-injected tools are pruned before anything is counted
 		// or sent, so the model never sees — and never calls — host
 		// transport machinery. Dispatch still refuses them if named.
-		const payload = pruneTransportInjectedTools(event.payload);
+		const payload = pruneTransportInjectedTools(event.payload, readDescription);
 		// Inline images (vision lanes) count a fixed IMAGE_TOKENS each on a
 		// byte lane; a native text counter cannot bound them.
 		const text = withoutInlineImages(current.api, payload);
@@ -896,7 +994,7 @@ export default function (pi: ExtensionAPI) {
 			// stands as the output allowance, payload untouched.
 			outputCap = requested.tokens;
 		}
-		const countedText = countRequest(counter, withoutInlineImages(current.api, outgoing ?? payload).payload);
+		const countedText = countRequest(counter, withoutInlineImages(current.api, outgoing ?? payload).payload, tokensPerByte);
 		if ("error" in countedText) {
 			return refuseContextRequest(ctx, "payload_uncountable", `provider request is uncountable: ${countedText.error}`, {});
 		}
@@ -919,7 +1017,7 @@ export default function (pi: ExtensionAPI) {
 			return refuseContextRequest(
 				ctx,
 				"window_exceeded",
-				`request requires ${required} ${counter.kind === "bytes" ? "byte" : counter.family} tokens ` +
+				`request requires ${required} ${counterUnit(counter)} tokens ` +
 					`(${counted.inputTokens} input tokens over ${counted.requestBytes} serialized bytes + ` +
 					`${outputCap} output allowance` +
 					(requested === undefined
@@ -931,10 +1029,17 @@ export default function (pi: ExtensionAPI) {
 				details,
 			);
 		}
+		if (counter.kind === "estimate") {
+			pendingEstimate = { lane: laneKey, requestBytes: counted.requestBytes, tokensPerByte };
+		}
 		await recordModelRequest(ctx, outgoing ?? payload);
 		return outgoing;
 	});
 
+	// Per lane: the tokens-per-byte the estimate counter uses, calibrated from the provider's usage.
+	const estimateRatios = new Map<string, number>();
+	// The estimate-lane request in flight, settled by its response's usage.
+	let pendingEstimate: { lane: string; requestBytes: number; tokensPerByte: number } | undefined;
 	let seenBlocks = new Set<string>();
 	let previousHistory = new Map<string, { digest: string; items: unknown[] }>();
 	let openAttempt: { callId: string; payloadDigest: string } | null = null;
@@ -1017,6 +1122,13 @@ export default function (pi: ExtensionAPI) {
 			: [];
 		const attempt = completedAttempt;
 		completedAttempt = null;
+		// Calibrate the estimate lane from this response's provider usage: its input, cached reads and writes.
+		const estimate = pendingEstimate;
+		pendingEstimate = undefined;
+		const observedInput = providerInputTokens(event.message.usage);
+		if (estimate !== undefined && observedInput !== undefined && estimate.requestBytes > 0) {
+			estimateRatios.set(estimate.lane, observedInput / estimate.requestBytes);
+		}
 		if (attempt === null) {
 			await journal(MODEL_REQUEST_LINK, {
 				v: 1,
@@ -1041,6 +1153,10 @@ export default function (pi: ExtensionAPI) {
 			tool_call_ids: toolIds,
 			usage: event.message.usage,
 			stop_reason: event.message.stopReason,
+			estimate:
+				estimate === undefined
+					? undefined
+					: { lane: estimate.lane, request_bytes: estimate.requestBytes, tokens_per_byte: estimate.tokensPerByte, observed_input_tokens: observedInput },
 			trace_error: traceError,
 		});
 	});
@@ -1093,7 +1209,7 @@ export default function (pi: ExtensionAPI) {
 				window,
 				reserve,
 				tokenizer,
-				counter: counter.kind === "bytes" ? "bytes" : counter.family,
+				counter: counter.kind === "native" ? counter.family : counter.kind,
 			});
 		}
 	});
@@ -1132,10 +1248,17 @@ export default function (pi: ExtensionAPI) {
 		if (
 			event.toolName === URI_READ_TOOL &&
 			hostUriTarget(event.input, hostUriSchemes) === null &&
-			readPathTarget(event.input, readPaths) === null
+			readPathTarget(event.input, readPaths) === null &&
+			readRootTarget(event.input, readRoots) === null
 		) {
 			// The native reader follows redirects unchecked; web_read re-checks every hop.
-			const web = governed.has("web_read") ? " Read web pages with web_read." : "";
+			const web = governed.has("web_read")
+				? " Read web pages with web_read."
+				: governed.has("research")
+					? " Read web pages with research {op: read, url}."
+					: "";
+			const folders =
+				readRoots.length > 0 ? ` Files can be read inside your folders only: ${readRoots.join(", ")}.` : "";
 			// An artifact reference reads through the files tool's artifact op, not the native reader.
 			const artifacts = governed.has("files")
 				? " Read an artifact reference (artifact://…) with the files tool's artifact op."
@@ -1148,6 +1271,7 @@ export default function (pi: ExtensionAPI) {
 				block: true,
 				reason:
 					"fail-closed: only one canonical host URI of the schemes this session registered can be read; local paths, URLs, and multi-target reads are outside the governed Odin surface." +
+					folders +
 					web +
 					artifacts +
 					inputs,

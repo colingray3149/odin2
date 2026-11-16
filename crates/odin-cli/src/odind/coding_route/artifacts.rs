@@ -3,13 +3,23 @@
 use std::path::{Path, PathBuf};
 
 use odin_domain::Scope;
+use odin_hermes::runtime::coding::MAX_ARTIFACT_TEXT;
 
 use super::DaemonCodingRoute;
 
 const MAX_ARTIFACT_BYTES: u64 = 32 * 1024 * 1024;
+/// The in-pod export mount that research profiles declare as `[export] pod_path`.
+const POD_EXPORT_ROOT: &str = "/export";
 impl DaemonCodingRoute {
     /// The bytes of one file inside the calling session's workspace.
     pub(super) fn workspace_file(&self, scope: &Scope, path: &str) -> Result<Vec<u8>, String> {
+        if Path::new(path).starts_with(POD_EXPORT_ROOT) {
+            return Err(format!(
+                "{path:?} is inside the pod's export folder, which lives in the pod until its run \
+                 settles and is then delivered; to hand over its content now, pass the text \
+                 (up to {MAX_ARTIFACT_TEXT} bytes) as `text` instead"
+            ));
+        }
         let workspace = self.workspace(scope)?;
         let relative = Path::new(path);
         if relative.is_absolute()

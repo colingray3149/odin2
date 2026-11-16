@@ -8,7 +8,10 @@ use time::OffsetDateTime;
 
 use super::artifact::ArtifactRef;
 use super::control::{CommandOutcome, CommandReceipt, PermissionDecision};
-use super::ids::{EventSeq, LiveSessionId, PermissionRequestId, SessionEpoch, TerminalSeq};
+use super::ids::{
+    EventSeq, LiveSessionId, ModelName, PermissionRequestId, ProviderName, SessionEpoch,
+    TerminalSeq,
+};
 use super::render::RenderManifest;
 use super::roster::LiveSessionState;
 use super::session::SessionManifest;
@@ -317,6 +320,8 @@ pub enum LiveEventBody {
     ControlCompleted(CommandOutcome),
     /// A SetModel route decision and its application result in the existing turn journal.
     ModelRouted(ModelRouted),
+    /// The model selected when a durable session was reclaimed.
+    ModelReclaimed(ModelReclaimed),
     ArtifactPublished(ArtifactRef),
     TerminalSnapshot(TerminalSnapshotRef),
     TerminalDelta(TerminalDeltaRef),
@@ -333,6 +338,14 @@ pub struct ModelRouted {
     pub model: String,
     pub decision: super::control::ClassRouteDecision,
     pub applied: bool,
+}
+
+/// The actual provider and model used by a reclaimed session.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelReclaimed {
+    pub provider: ProviderName,
+    pub model: ModelName,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

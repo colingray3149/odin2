@@ -11,7 +11,7 @@ use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, DynamicImage, Image
 use serde_json::{json, Value};
 
 /// Images one turn carries; more are named but not attached.
-pub(crate) const MAX_TURN_IMAGES: usize = 4;
+pub const MAX_TURN_IMAGES: usize = 4;
 /// Base64 bytes of one turn image: four fit a prompt frame beside its text.
 pub const TURN_IMAGE_BASE64: usize = 160 * 1024;
 /// Longest edge and JPEG quality, tried in order until the image fits.

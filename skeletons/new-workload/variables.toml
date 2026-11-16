@@ -196,4 +196,16 @@ meaning = "Anti-stuck ladder: {max_attempts {retry, restart_worker, checkpoint, 
 name = "tools"
 type = "optional<array<string>>"
 required = false
-meaning = "Host capabilities the pod's agent may call (a subset of its seat's tools, e.g. memory.remember); never launch, delegate or create. Omitted: none."
+meaning = "Host capabilities the pod's agent may call (a subset of its seat's tools, e.g. knowledge.search); never launch, delegate or create. Omitted: none."
+
+[[variable]]
+name = "limits"
+type = "optional<table>"
+required = false
+meaning = "Declared run limits {output_reserve_tokens, checkpoint_percent 1..99, max_rollovers 0..16, tool_result_bytes}; a launch may lower each one, never raise it."
+
+[[variable]]
+name = "resources"
+type = "optional<table>"
+required = false
+meaning = "Worker reservation {cpu: whole CPUs, memory: binary quantity such as 4Gi}; omitted: the platform defaults."

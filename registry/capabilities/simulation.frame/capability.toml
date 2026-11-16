@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "simulation"
+op = "frame"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Shows the newest PNG or safe SVG frame from a mission or renderer, and shares it as an artifact discord.file.send and files.drop can send unchanged."
+handler = { id = "simulation_frame" }
+input_schema = "schemas/capability/simulation.frame.input.json"
+output_schema = "schemas/capability/simulation.frame.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator", "operator"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_simulation_frame_evidence" }
+tests = [
+  "odin-cli::bin/odind simulation::tests::a_render_line_completes_the_running_request",
+]

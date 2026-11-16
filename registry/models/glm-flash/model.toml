@@ -21,3 +21,5 @@ fallbacks = ["terra", "kimi-k31", "zai-glm"]
 brain_review = true
 # The Z.ai flash route rejects OpenAI reasoning_effort.
 reasoning_effort = false
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"

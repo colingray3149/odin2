@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "One place to look anything up: the web, his brain, mail, Drive, photos, project code."
+lead = "query"
+examples = [
+  'lookup {op: web, query: "farmers market hours near me"}',
+  'lookup {op: brain, query: "who is Zilan"}',
+]

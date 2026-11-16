@@ -1,9 +1,8 @@
 //! Persist execution inputs so reconciliation cannot substitute a newer contract or handler.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 use odin_domain::knowledge::ToolSchema;
 use odin_domain::operation::{EffectState, Grant, RequestCost};
@@ -383,6 +382,16 @@ pub trait OperationExecutor: Send + Sync {
     ) -> Result<Option<Digest>, ExecutorFault>;
 
     fn execute(&self, effect: PreparedEffect) -> Result<EffectOutcome, ExecutorFault>;
+
+    /// Recover a recorded CFD receipt without repeating the original effect.
+    fn recover_cfd(
+        &self,
+        _row: &odin_ledger::operation::OperationRow,
+    ) -> Result<Digest, ExecutorFault> {
+        Err(ExecutorFault::Rejected {
+            detail: "CFD recovery is not supported by this executor".to_owned(),
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -686,57 +695,17 @@ pub(super) fn validate_input_payload(
     schema: &ToolSchema,
     payload: &Payload,
 ) -> AuthorityResult<()> {
-    let validator = input_validator(schema)?;
+    let validator =
+        crate::schema::validator(schema).map_err(|error| OperationRejection::SchemaInvalid {
+            detail: format!("declared input schema is not a valid schema: {error}"),
+        })?;
     // Return schema violations so callers can correct the rejected payload.
-    let violations: Vec<String> = validator
-        .iter_errors(&payload.arguments)
-        .take(3)
-        .map(|error| {
-            let at = error.instance_path.to_string();
-            if at.is_empty() {
-                error.to_string()
-            } else {
-                format!("{at}: {error}")
-            }
-        })
-        .collect();
-    if violations.is_empty() {
-        Ok(())
-    } else {
-        Err(OperationRejection::SchemaInvalid {
-            detail: format!(
-                "arguments rejected by the capability input schema: {}",
-                violations.join("; ")
-            ),
-        })
+    match crate::schema::violations(&validator, &payload.arguments) {
+        None => Ok(()),
+        Some(violations) => Err(OperationRejection::SchemaInvalid {
+            detail: format!("arguments rejected by the capability input schema: {violations}"),
+        }),
     }
-}
-
-/// Compiled validators keyed by schema digest; a hit never serves a different schema.
-static INPUT_VALIDATORS: LazyLock<Mutex<HashMap<Digest, Arc<jsonschema::Validator>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-fn input_validator(schema: &ToolSchema) -> AuthorityResult<Arc<jsonschema::Validator>> {
-    let digest = schema.digest();
-    if let Some(validator) = INPUT_VALIDATORS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&digest)
-    {
-        return Ok(Arc::clone(validator));
-    }
-    let validator = Arc::new(
-        jsonschema::options()
-            .build(schema.canonical_json())
-            .map_err(|error| OperationRejection::SchemaInvalid {
-                detail: format!("declared input schema is not a valid schema: {error}"),
-            })?,
-    );
-    INPUT_VALIDATORS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(digest, Arc::clone(&validator));
-    Ok(validator)
 }
 
 pub(super) fn utc(now_ms: u64) -> AuthorityResult<OffsetDateTime> {

@@ -1,7 +1,7 @@
-brain_scope = ["atlas.code", "atlas.codemap", "state.repos", "memory.forseti"]
+brain_scope = ["atlas.code", "atlas.codemap", "state.repos"]
 categories = ["judge"]
 # Launch choices (provider/model); the first is the default: reviews run on Astra.
-models = ["gateway/astra", "gateway/zai-glm"]
+models = ["gateway/sol", "gateway/astra", "gateway/zai-glm"]
 description = "Independent code review: reads a builder's exact diff and test report, checks what it doubts, and records approve or changes."
 enabled = true
 kind = "seat"
@@ -17,7 +17,7 @@ How you think through a review: start from the exact change — code_navigate sh
 
 Your fixed toolsets take op plus the fields named for that operation. Rare operations take args; op help with operation returns the exact member schema as a result. MCP tools and skills are native capabilities behind these same operations.
 
-Your tools: code navigation, diagnostics and tests on the change; the review artifact; the verdict; the brain, the registry and your memory; Sinmara for a question.
+Your tools: code navigation, diagnostics and tests on the change; the review artifact; the verdict; the knowledge tools (search and read; add for project notes), the registry and your own page (read brain/agents/forseti.md once at the start of a session: standing prompts and lessons; record a lesson or decision with knowledge.add as=note about your project); Sinmara for a question.
 
 The harness: the checkout is read-only to you, and your verdict is bound to the exact diff it reviewed."""
 tool_refs = [
@@ -28,10 +28,10 @@ tool_refs = [
   "test.run",
   "code.review.verdict",
   "seat.ask.sinmara",
-  "memory.remember",
-  "brain.search",
-  "brain.read",
-  "memory.forget",
+  "knowledge.search",
+  "knowledge.read",
+  "knowledge.add",
+  "knowledge.status",
   "incident.raise",
   "codemap.get_architecture",
   "codemap.list_projects",
@@ -45,15 +45,15 @@ tool_refs = [
   "codemap.check_index_coverage",
   "artifact.write",
   "models.read",
+  "simulation.read",
 ]
 
 [context]
 max_bundle_tokens = 24576
 profile = "medium"
-review_lane = "glm-flash"
 
 [knowledge]
-atlas_sources = ["atlas.code", "atlas.codemap", "state.repos", "memory.forseti"]
+atlas_sources = ["atlas.code", "atlas.codemap", "state.repos"]
 denied_tags = []
 required_tags = []
 top_k = 16

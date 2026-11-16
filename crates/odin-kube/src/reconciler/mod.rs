@@ -17,9 +17,7 @@ mod create;
 mod orphans;
 pub use orphans::{orphan_verdict, OrphanVerdict, ORPHAN_ENDED_GRACE, ORPHAN_STARTED_GRACE};
 mod recreation;
-pub(crate) use create::{
-    bounded_resources, worker_pod_security, worker_security, WORKER_RESERVATION,
-};
+pub(crate) use create::{bounded_resources, worker_pod_security, worker_security};
 
 use crate::artifacts::ArtifactStore;
 use crate::client::{KubeClient, KubeError};
@@ -38,6 +36,9 @@ const FIELD_MANAGER: &str = "odin";
 // Limit retries when controller updates race with command admission.
 const LIVE_VERSION_ATTEMPTS: u32 = 5;
 const LIVE_VERSION_BACKOFF: std::time::Duration = std::time::Duration::from_millis(200);
+/// Live non-Kubernetes projections, in core-seconds, GPU-seconds and dollars.
+pub type ExternalComputeProjection =
+    Arc<dyn Fn(&odin_domain::LaneId, Option<&RunId>) -> (f64, f64, f64) + Send + Sync>;
 
 pub struct JobReconciler {
     client: KubeClient,
@@ -46,12 +47,29 @@ pub struct JobReconciler {
     artifacts: ArtifactStore,
     commands: Arc<crate::pod_worker::PodLifecycle>,
     /// Unset in tests that do not launch through the cell.
-    seat_limits: Option<Arc<odin_registry::Snapshot>>,
+    seat_limits: Option<Arc<odin_registry::SnapshotHandle>>,
     /// Parent of `lane-budgets.json`. Unset in tests.
     huginn_root: Option<std::path::PathBuf>,
+    external_compute: Option<ExternalComputeProjection>,
 }
 
 impl JobReconciler {
+    pub fn client(&self) -> &KubeClient {
+        &self.client
+    }
+
+    /// Writes a run's next control document; the caller has checked it against the run's schema.
+    pub async fn steer_control(
+        &self,
+        run_id: &RunId,
+        expected_seq: u64,
+        document: serde_json::Value,
+        operation: &str,
+        by: &str,
+    ) -> Result<crate::control::SteerApplied, KubeError> {
+        crate::control::steer(&self.client, run_id, expected_seq, document, operation, by).await
+    }
+
     /// Queue only a proven pre-open refusal; the applied result pins the Job UID.
     pub fn request_refused_release(&self, operation: &str, run: &RunId) -> Result<(), KubeError> {
         self.journal.request_refused_release(operation, run)
@@ -63,6 +81,12 @@ impl JobReconciler {
 
     pub fn complete_refused_release(&self, operation: &str) -> Result<(), KubeError> {
         self.journal.complete_refused_release(operation)
+    }
+
+    /// Whether the run was cancelled by an applied authority operation: the
+    /// run was withdrawn on purpose, not lost.
+    pub fn run_cancelled(&self, run: &RunId) -> Result<bool, KubeError> {
+        self.journal.run_cancelled(run)
     }
 
     pub fn applied_observation(
@@ -96,6 +120,15 @@ impl JobReconciler {
         self.journal.staged_paths(run)
     }
 
+    /// A launch's staged inputs as `(input-<n>, bytes)`, verified like a Job's staging, for an
+    /// executor that stages files itself (offload) rather than through a ConfigMap.
+    pub fn staged_files(&self, launch: &JobLaunch) -> Result<Vec<(String, Vec<u8>)>, KubeError> {
+        Ok(self
+            .artifacts
+            .prepare_stage(&launch.labels, &launch.staging, launch.checkpoint.as_ref())?
+            .into_files())
+    }
+
     pub fn stored_launch(&self, run: &RunId) -> Result<Option<JobLaunch>, KubeError> {
         self.journal.load_launch(run)
     }
@@ -111,7 +144,15 @@ impl JobReconciler {
         pod_lifecycle: Arc<crate::pod_worker::PodLifecycle>,
         artifact_root: PathBuf,
     ) -> Result<Self, KubeError> {
-        stops.register_job_backend(crate::job_worker_backend(client.clone())?);
+        let release_journal = Journal::new(
+            Arc::clone(&ledger),
+            client.config.cluster.clone(),
+            client.config.namespace.clone(),
+        );
+        stops.register_job_backend(Arc::new(
+            crate::backend::KubernetesJobBackend::new(client.clone())?
+                .with_journal(release_journal),
+        ));
         Ok(Self {
             journal: Journal::new(
                 Arc::clone(&ledger),
@@ -124,13 +165,24 @@ impl JobReconciler {
             commands: pod_lifecycle,
             seat_limits: None,
             huginn_root: artifact_root.parent().map(std::path::Path::to_path_buf),
+            external_compute: None,
         })
     }
 
-    /// Binds the pinned snapshot so create can read `limits.max_parallel_runs`.
-    pub fn with_seat_limits(mut self, snapshot: Arc<odin_registry::Snapshot>) -> Self {
+    /// Binds the publication handle so each fresh admission reads current limits.
+    pub fn with_seat_limits(mut self, snapshot: Arc<odin_registry::SnapshotHandle>) -> Self {
         self.seat_limits = Some(snapshot);
         self
+    }
+    /// Supplies projections from the other executor while the shared command lock is held.
+    pub fn with_external_compute(mut self, projection: ExternalComputeProjection) -> Self {
+        self.external_compute = Some(projection);
+        self
+    }
+
+    /// Serializes admission through publication of a Job or an offload run.
+    pub async fn admission_guard(&self) -> tokio::sync::MutexGuard<'_, bool> {
+        self.commands.lock().await
     }
 
     fn operation_reserves(&self, operation: &str) -> Result<bool, KubeError> {
@@ -149,30 +201,58 @@ impl JobReconciler {
         let Some(snapshot) = &self.seat_limits else {
             return Ok(());
         };
-        crate::admit_parallel_run(&self.client, snapshot, &launch.labels.seat_id, exempt).await?;
+        let snapshot = snapshot.current();
+        crate::admit_parallel_run(&self.client, &snapshot, &launch.labels.seat_id, exempt).await?;
         crate::admit_lane_wall(
-            snapshot,
+            &snapshot,
             &launch.labels.lane_id,
             self.huginn_root.as_deref(),
         )?;
-        self.admit_pods(&launch.labels.lane_id, exempt).await?;
+        self.admit_pods(&snapshot, &launch.labels.lane_id, exempt)
+            .await?;
+        self.admit_compute(&snapshot, &launch.labels.lane_id, launch, exempt)
+            .await?;
         if let Some(budget) = &launch.budget_lane {
             if budget != &launch.labels.lane_id {
-                crate::admit_lane_wall(snapshot, budget, self.huginn_root.as_deref())?;
-                self.admit_pods(budget, exempt).await?;
+                crate::admit_lane_wall(&snapshot, budget, self.huginn_root.as_deref())?;
+                self.admit_pods(&snapshot, budget, exempt).await?;
+                self.admit_compute(&snapshot, budget, launch, exempt)
+                    .await?;
             }
         }
         Ok(())
     }
 
+    async fn admit_compute(
+        &self,
+        snapshot: &odin_registry::Snapshot,
+        lane: &odin_domain::LaneId,
+        launch: &JobLaunch,
+        exempt: Option<&RunId>,
+    ) -> Result<(), KubeError> {
+        crate::admission::admit_lane_compute_with_projection(
+            &self.client,
+            snapshot,
+            lane,
+            self.huginn_root.as_deref(),
+            exempt,
+            crate::ComputeLaunchProjection {
+                request: create::launch_reservation(launch),
+                deadline_seconds: launch.deadline_seconds,
+            },
+            self.external_compute
+                .as_ref()
+                .map_or((0.0, 0.0, 0.0), |projection| projection(lane, exempt)),
+        )
+        .await
+    }
+
     async fn admit_pods(
         &self,
+        snapshot: &odin_registry::Snapshot,
         lane: &odin_domain::LaneId,
         exempt: Option<&RunId>,
     ) -> Result<(), KubeError> {
-        let Some(snapshot) = &self.seat_limits else {
-            return Ok(());
-        };
         let pending = self
             .journal
             .pending_pod_reservations()?
@@ -350,6 +430,9 @@ impl JobReconciler {
             .ok_or_else(|| {
                 KubeError::rejected("the run's state volume is not bound to a node yet")
             })?;
+        if !plan.state_carry {
+            return Err(recreation::state_stays(&plan.profile, &node));
+        }
         let tar = crate::state_carry::snapshot(
             &self.client,
             &self.stops,
@@ -395,6 +478,14 @@ impl JobReconciler {
         run: &RunId,
     ) -> Result<Option<crate::workload::WorkloadPlacement>, KubeError> {
         crate::workload::placement(&self.client, run).await
+    }
+
+    /// Why the run's container stopped, read from its pods: `(reason, detail)`, e.g. `OOMKilled`.
+    pub async fn workload_termination(
+        &self,
+        run: &RunId,
+    ) -> Result<Option<(String, String)>, KubeError> {
+        crate::workload::termination(&self.client, run).await
     }
 
     pub async fn list(&self) -> Result<Vec<JobObservation>, KubeError> {

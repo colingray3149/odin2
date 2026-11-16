@@ -1,0 +1,41 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "Finite SSH offload round-trip check on mini."
+seats_offered = ["kubert"]
+harness = "script"
+stop_grace_seconds = 20
+
+[script]
+command = ["/bin/sh", "-c", "set -e; cat \"$ODIN_STAGE/input-0\" > \"$ODIN_EXPORT/result.txt\"; echo 'ODIN-STATUS {\"progress\":1}'"]
+
+[offload]
+targets = ["mini-stub"]
+
+[resources]
+cpu = 1
+memory = "512Mi"
+
+[lifetime]
+deadline_seconds = 300
+
+[image]
+reference = "platform"
+
+[seat]
+seat = "kubert"
+project = "odin"
+
+[network]
+allow_hosts = []
+
+[state]
+path = "/state"
+storage = "64Mi"
+
+[export]
+pod_path = "/export"
+host_folder = "/srv/odin/export"
+
+[brief]
+text = "Copies the staged input to the export folder and emits one status line."

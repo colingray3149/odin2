@@ -1,8 +1,8 @@
 schema = "odin.registry.v1"
 kind = "toolset"
 enabled = true
-description = "Long-term memory: notes, records and past conversations; search by meaning, read by citation."
+description = "Task notes: pin a short note to an open task, job, run or session while it is open."
 examples = [
-  'brain {op: search, query: "beach trip"}',
-  'brain {op: read, url}',
+  'brain {op: "note", task: "job:4", note: "waiting on the reviewer; tests pass"}',
+  'brain {op: "note", task: "run:17", note: "decided: ship after the gate"}',
 ]

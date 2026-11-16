@@ -1037,8 +1037,7 @@ fn write_registry(root: &Path) {
         format!(
             "schema = \"odin.registry.v1\"\nkind = \"project\"\nenabled = true\n\
              description = \"Fixture harbor project.\"\nsource_root = \".\"\n\
-             default_seat = \"{SEAT}\"\nmemory_namespaces = [\"atlas.code\"]\n\
-             artifact_policy = \"standard\"\n"
+             default_seat = \"{SEAT}\"\nmemory_namespaces = [\"atlas.code\"]\n"
         ),
     );
     for (lane, direction, payload) in [
@@ -1051,7 +1050,7 @@ fn write_registry(root: &Path) {
         let mut body = format!(
             "schema = \"odin.registry.v1\"\nkind = \"lane\"\nenabled = true\n\
              description = \"Fixture lane {lane}.\"\nproject = \"{PROJECT}\"\n\
-             family = \"engine\"\ndefault_seat = \"{SEAT}\"\nqueue = \"interactive\"\n\
+             default_seat = \"{SEAT}\"\n\
              requires_independent_review = false\n"
         );
         if let (Some(direction), Some(payload)) = (direction, payload) {

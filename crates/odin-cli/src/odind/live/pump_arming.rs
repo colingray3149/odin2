@@ -11,10 +11,14 @@ use odin_huginn::{NodePosture, OdindConfig};
 use odin_ledger::Ledger;
 use tokio::task::JoinSet;
 
-use super::{brain_bindings, deferred_delegations, repo_watch, workload_monitor, workload_watch};
+use super::{
+    brain_bindings, compute_meter, deferred_delegations, launch_queue, repo_watch,
+    workload_monitor, workload_watch,
+};
 use crate::child_report::arm_child_report_pump;
 use crate::huginn_spend::arm_spend_pump;
 use crate::kube::KubeRuntimeCell;
+use crate::kube_runtime::KubeCommandCoordinator;
 use crate::pumps::{
     arm_brain_warm_pump, arm_device_activity_pump, arm_durable_feed_pump, arm_fleet,
     arm_render_pump, arm_service_pumps, arm_stream_expiry_pump,
@@ -23,10 +27,13 @@ use crate::state_knowledge;
 
 /// What the pump-arming block reads, moved in from `serve_huginn_async`.
 pub(super) struct PumpInputs {
+    pub(super) seed_findings:
+        tokio::sync::mpsc::UnboundedReceiver<crate::live::seed_recon::Findings>,
     pub(super) config: OdindConfig,
     pub(super) posture: NodePosture,
     pub(super) hermes_runtime: Option<Arc<odin_hermes::runtime::HermesRuntime>>,
     pub(super) kube_cell: Option<Arc<KubeRuntimeCell>>,
+    pub(super) launch_coordinator: Arc<KubeCommandCoordinator>,
     pub(super) read_model: Arc<odin_huginn::read_model::MaterializedReadModel>,
     pub(super) snapshot_handle: Arc<odin_registry::SnapshotHandle>,
     pub(super) fleet_ssh: PathBuf,
@@ -46,6 +53,7 @@ pub(super) struct PumpInputs {
     pub(super) brain_warm_targets: Vec<brain_bindings::WarmTarget>,
     pub(super) incident_desk: Arc<crate::incidents::IncidentDesk>,
     pub(super) simulation_desk: Option<Arc<crate::simulation::SimulationDesk>>,
+    pub(super) offload: Option<Arc<super::offload::Offload>>,
     pub(super) omp: Arc<odin_omp::live::service::OmpLiveService>,
     pub(super) conversation_seats: BTreeSet<SeatId>,
     pub(super) conversation_ledger_path: PathBuf,
@@ -53,14 +61,17 @@ pub(super) struct PumpInputs {
     pub(super) session_capsule_authority: Arc<crate::live_authority::SessionAuthorityPool>,
     pub(super) state_heads: Option<state_knowledge::StateRebuildHeads>,
     pub(super) state_rebuild_brains: BTreeMap<SeatId, Arc<odin_brain::service::BrainService>>,
+    pub(super) owner_brains: BTreeMap<SeatId, Arc<odin_brain::service::BrainService>>,
 }
 
 pub(super) fn arm_pumps(pumps: &mut JoinSet<Result<(), String>>, inputs: PumpInputs) {
     let PumpInputs {
+        seed_findings,
         config,
         posture,
         hermes_runtime,
         kube_cell,
+        launch_coordinator,
         read_model,
         snapshot_handle,
         fleet_ssh,
@@ -76,15 +87,29 @@ pub(super) fn arm_pumps(pumps: &mut JoinSet<Result<(), String>>, inputs: PumpInp
         brain_warm_targets,
         incident_desk,
         simulation_desk,
+        offload,
         omp,
         conversation_seats,
         conversation_ledger_path,
         task_owner,
+        node_yield,
         session_capsule_authority,
         state_heads,
         state_rebuild_brains,
+        owner_brains,
     } = inputs;
+    if posture == NodePosture::Authoritative {
+        workload_watch::install_owner_opener(config.clone(), owner_brains);
+    }
     arm_service_pumps(pumps, posture, &hermes_runtime, &kube_cell, &read_model);
+    if posture == NodePosture::Authoritative && hermes_runtime.is_some() {
+        super::root_consent_wake::arm(
+            pumps,
+            Arc::clone(&bridge_ledger),
+            Arc::clone(&omp),
+            Arc::clone(&snapshot_handle),
+        );
+    }
     crate::features::arm_features_pump(
         pumps,
         posture,
@@ -127,23 +152,58 @@ pub(super) fn arm_pumps(pumps: &mut JoinSet<Result<(), String>>, inputs: PumpInp
     );
     arm_brain_warm_pump(pumps, brain_warm_targets);
     crate::unit_failures::arm_unit_failure_pump(pumps, Arc::clone(&incident_desk));
+    crate::plans_watch::arm_plans_pump(
+        pumps,
+        posture,
+        Arc::clone(&read_model),
+        Arc::clone(&bridge_ledger),
+        Arc::clone(&incident_desk),
+    );
+    crate::private_tmp::arm_private_tmp_pump(pumps);
     if let (Some(desk), Some(cell)) = (&simulation_desk, &kube_cell) {
         crate::simulation::arm_simulation_pump(
             pumps,
             Arc::clone(desk),
             Arc::clone(cell),
             Arc::clone(&snapshot_handle),
+            offload.clone(),
+            hermes_runtime.clone(),
         );
+    }
+    if let Some(offload) = &offload {
+        super::offload::arm_offload_pump(
+            pumps,
+            Arc::clone(offload),
+            simulation_desk.clone(),
+            Arc::clone(&incident_desk),
+            task_owner.clone(),
+            hermes_runtime.clone(),
+        );
+    }
+    if posture == NodePosture::Authoritative {
+        if let Some(root) = kube_cell.as_ref().and_then(|cell| cell.huginn_root()) {
+            crate::rental_reaper::arm(
+                pumps,
+                root.to_path_buf(),
+                Arc::clone(&snapshot_handle),
+                offload.clone(),
+                Arc::clone(&incident_desk),
+            );
+        }
     }
     if posture != NodePosture::Follower {
         if posture == NodePosture::Authoritative {
-            if let (Some(cell), Some(runtime)) = (&kube_cell, &hermes_runtime) {
+            if let (Some(cell), Some(runtime), Some(owner)) =
+                (&kube_cell, &hermes_runtime, &task_owner)
+            {
                 super::workload_review::arm(
                     pumps,
                     config.clone(),
                     Arc::clone(cell),
                     Arc::clone(&omp),
                     Arc::clone(runtime),
+                    Arc::clone(owner),
+                    Arc::clone(&incident_desk),
                 );
             }
         }
@@ -227,6 +287,21 @@ pub(super) fn arm_pumps(pumps: &mut JoinSet<Result<(), String>>, inputs: PumpInp
                         Arc::clone(runtime),
                         Arc::clone(&incident_desk),
                         config.paths.state_root.clone(),
+                    );
+                    compute_meter::arm(
+                        pumps,
+                        Arc::clone(cell),
+                        Arc::clone(&snapshot_handle),
+                        Arc::clone(&read_model),
+                        Arc::clone(owner),
+                        Arc::clone(runtime),
+                    );
+                    launch_queue::arm(
+                        pumps,
+                        Arc::clone(&launch_coordinator),
+                        Arc::clone(cell),
+                        Arc::clone(owner),
+                        Arc::clone(runtime),
                     );
                 }
             }

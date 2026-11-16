@@ -102,8 +102,8 @@ pub(super) fn resume_with_unmet(
             text: format!(
                 "Your final answer leaves launch-input items unmet, and {minutes} minutes of \
                  wall time remain. Unmet items:\n{}\nDo them now. For each, use a method you have \
-                 not tried on it yet: another read engine such as Obscura, the browser, a dated \
-                 archive copy or a different search. Answer again when done. End the answer with \
+                 not tried on it yet: another read engine such as Obscura, your browser if you \
+                 have one, a dated archive copy or a different search. Answer again when done. End the answer with \
                  an \"Unmet items\" list of whatever is still not done, each with the methods \
                  tried on it, or with \"Unmet items: none\".",
                 items.join("\n")

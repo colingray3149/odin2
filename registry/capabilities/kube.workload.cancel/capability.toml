@@ -1,15 +1,16 @@
 schema = "odin.registry.v1"
+seat_ops = { sinmara = { toolset = "research", op = "stop" } }
 toolset = "kube"
 kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Cancels one finite Job by run id, given the resourceVersion observed at admission. The stop is recorded before it happens, and the report lists retained checkpoints and leftovers."
+description = "Stops one pod by its runId and the resourceVersion status pods shows. The stop is recorded before it happens, and the report lists retained checkpoints and leftovers."
 handler = { id = "odin_kube.workload.cancel" }
 input_schema = "schemas/capability/kube.workload.cancel.input.json"
 output_schema = "schemas/capability/kube.workload.cancel.output.json"
 effect_class = "R3"
-seat_tags = ["operator"]
+seat_tags = ["coordinator", "operator"]
 # Covers the runtime's actuation bound: the declared 120s teardown window
 # plus 2 bounded 30s request phases and 10s slack (190s).
 timeout_seconds = 190

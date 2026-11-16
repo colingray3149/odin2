@@ -178,19 +178,75 @@ pub enum HostToolOperationError {
     },
 }
 
-/// A refused approval names its cause; every other rejection keeps its typed form.
+/// Every rejection names its cause in words the seat can act on.
 fn rejection_text(rejection: &AuthorizationRejection) -> String {
+    use AuthorizationRejection as R;
     match rejection {
-        AuthorizationRejection::NeedsApproval {
+        R::NeedsApproval {
             capability_id,
             cause: Some(cause),
             ..
         } => format!("`{capability_id}` did not run: {cause}"),
-        other => format!("authorization rejected the invocation: {other:?}"),
+        R::NeedsApproval {
+            capability_id,
+            effect_class,
+            cause: None,
+        } => format!("`{capability_id}` ({effect_class:?}) needs an approval before it runs"),
+        R::NeedsPlan { capability_id } => {
+            format!(
+                "`{capability_id}` needs an accepted plan before it runs: set this session's \
+                 plan and obtain the owner's acceptance, or have the delegator re-accept a \
+                 delegated worker with task steer reaccept"
+            )
+        }
+        R::ApprovalExpired { approval_id } => {
+            format!("approval {approval_id} expired unanswered; ask again")
+        }
+        R::WrongSeat {
+            capability_id,
+            hint,
+        } => {
+            format!("`{capability_id}` is not granted to this seat; seat {hint} holds it")
+        }
+        R::UnknownCapability { capability_id } => {
+            format!("`{capability_id}` is not a published capability")
+        }
+        R::Unavailable {
+            capability_id,
+            reason,
+        } => format!("`{capability_id}` is unavailable: {reason}"),
+        R::VersionMismatch {
+            requested,
+            available,
+        } => format!(
+            "capability version {requested} was requested; version {available} is published"
+        ),
+        R::StaleListing => {
+            "the tool listing changed since this call was made; call again".to_owned()
+        }
+        R::ArgumentDigestMismatch => {
+            "the arguments differ from the ones the approval covers".to_owned()
+        }
+        R::StaleRevision { expected, actual } => {
+            format!("the record moved from revision {expected} to {actual}; read it again")
+        }
+        R::ResourceDenied { reason } => format!("a resource limit refused the call: {reason}"),
+        R::ForgedIdentity => "the call's seat identity does not match its session".to_owned(),
     }
 }
 
 impl HostToolOperationError {
+    /// The call was admitted but the adapter, its site or its credential failed;
+    /// every other variant is an authority or argument refusal.
+    pub(crate) fn is_failure(&self) -> bool {
+        matches!(
+            self,
+            Self::AdapterFailed { .. }
+                | Self::AdapterStatus { .. }
+                | Self::PublishedAuthorityUnavailable { .. }
+        )
+    }
+
     /// Stable class for export. The inner host-tool variant is already flattened
     /// by the operation authority before this error exists.
     pub fn error_kind(&self) -> &'static str {
@@ -257,6 +313,10 @@ pub type ResultTransformer = Arc<
 >;
 /// Host callback invoked only after inline transport delivery succeeds.
 pub type DeliveryAcknowledger = Arc<dyn Fn(&Value) -> Result<(), String> + Send + Sync>;
+/// Trusted daemon route for requesting consent to a root run's exact draft plan.
+pub type RootPlanConsent = Arc<
+    dyn Fn(&odin_domain::RunId, &SessionId, &str, i64, &str) -> Result<(), String> + Send + Sync,
+>;
 #[derive(Clone)]
 /// Combines kernel operation authorization with the catalog, schemas, and executors.
 pub struct HostToolOperations {
@@ -266,6 +326,8 @@ pub struct HostToolOperations {
     toolset_routes: Arc<BTreeMap<(String, String), String>>,
     /// Declared toolsets of the published registry; their examples show in each listing.
     toolsets: Arc<BTreeMap<String, odin_registry::schema::ToolsetToml>>,
+    /// Each seat's deferred toolsets, listed through `more`.
+    deferred: Arc<BTreeMap<String, BTreeSet<String>>>,
     projection_memo: Arc<Mutex<BTreeMap<u64, Arc<toolsets::ProjectionIndex>>>>,
     contract_adapters: Arc<BTreeSet<String>>,
     schemas: Arc<dyn SchemaCatalog + Send + Sync>,
@@ -285,6 +347,7 @@ pub struct HostToolOperations {
     task_grants: Option<Arc<crate::host_tools::task_grants::TaskGrantStore>>,
     /// Where gated calls wait for the owner's yes; `None` parks nothing, so his yes cannot run a call.
     approved_calls: Option<Arc<crate::host_tools::approved_calls::ApprovedCalls>>,
+    root_plan_consent: Option<RootPlanConsent>,
     /// The conversation seat's background jobs; `None` runs every call in
     /// the foreground.
     jobs: Option<Arc<crate::host_tools::jobs::JobBoard>>,
@@ -297,11 +360,30 @@ pub struct HostToolOperations {
 }
 
 impl HostToolOperations {
+    /// Reconcile a recorded CFD effect through this live operation authority.
+    pub fn recover_cfd(
+        &self,
+        correlation: &odin_types::CorrelationId,
+    ) -> Result<odin_kernel::operation::OperationDecision, odin_kernel::operation::OperationRejection>
+    {
+        self.authority.recover_cfd(correlation)
+    }
+
+    pub fn with_root_plan_consent(mut self, request: RootPlanConsent) -> Self {
+        self.root_plan_consent = Some(request);
+        self
+    }
+
     pub fn with_toolsets(
         mut self,
         toolsets: BTreeMap<String, odin_registry::schema::ToolsetToml>,
     ) -> Self {
         self.toolsets = Arc::new(toolsets);
+        self
+    }
+
+    pub fn with_deferred(mut self, deferred: BTreeMap<String, BTreeSet<String>>) -> Self {
+        self.deferred = Arc::new(deferred);
         self
     }
 

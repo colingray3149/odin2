@@ -29,6 +29,8 @@ const PROBE_BOUND: Duration = Duration::from_secs(5);
 /// Re-evaluation cadence when nothing else asks for one.
 const EVALUATE_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const STATUS_ID: &str = "features";
+/// The Brain page's Status id; its value is kb-status's file.
+const KNOWLEDGE_STATUS_ID: &str = "knowledge";
 /// The group a service row sits under, and the group of a capability with no toolset.
 const SERVICES_AREA: &str = "services";
 const NO_TOOLSET_AREA: &str = "other";
@@ -165,11 +167,19 @@ pub(super) fn arm_features_pump(
         loop {
             let now = OffsetDateTime::now_utc();
             let published = match evaluate(&sources, now).await {
-                Ok(value) => publish(&read_model, value, now),
+                Ok(value) => publish(&read_model, STATUS_ID, value, now),
                 Err(error) => Err(error),
             };
             if let Err(error) = &published {
                 tracing::error!("features evaluation failed: {error}");
+            }
+            if let Err(error) = publish(
+                &read_model,
+                KNOWLEDGE_STATUS_ID,
+                knowledge_value(&knowledge_status_path()),
+                now,
+            ) {
+                tracing::error!("brain status not published: {error}");
             }
             evaluated.send_modify(|evaluation| {
                 evaluation.count = evaluation.count.saturating_add(1);
@@ -617,16 +627,34 @@ fn rfc3339(at: OffsetDateTime) -> String {
     at.format(&Rfc3339).unwrap_or_default()
 }
 
-/// Upserts the `Status/features` object. The evaluation time is in the body, so every pass
+/// `~/knowledge/_system/status.json`, written by `kb-status` on mini.
+fn knowledge_status_path() -> PathBuf {
+    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+        .join("knowledge/_system/status.json")
+}
+
+/// The file's JSON, or `{"error": <cause>}` so the Brain tab says why it has nothing to show.
+fn knowledge_value(path: &Path) -> Value {
+    match std::fs::read_to_string(path)
+        .map_err(|error| error.to_string())
+        .and_then(|text| serde_json::from_str::<Value>(&text).map_err(|error| error.to_string()))
+    {
+        Ok(value) => value,
+        Err(cause) => json!({ "error": format!("{} is unreadable: {cause}", path.display()) }),
+    }
+}
+
+/// Upserts a Status object. The evaluation time is in the body, so every pass
 /// is a new revision.
 fn publish(
     read_model: &odin_huginn::read_model::MaterializedReadModel,
+    id: &str,
     value: Value,
     observed_at: OffsetDateTime,
 ) -> Result<(), String> {
     let object = live::ObjectRef {
         kind: live::ObjectKind::Status,
-        id: STATUS_ID.to_owned(),
+        id: id.to_owned(),
     };
     let current = read_model.get(&object).map_err(|error| error.to_string())?;
     let revision = current.map_or(1, |current| current.revision.get().saturating_add(1));
@@ -689,5 +717,25 @@ mod tests {
         );
         let nothing = test_outcome("odin-cli x", &Ok(None));
         assert_eq!(nothing.state, ProbeState::Unknown);
+    }
+
+    #[test]
+    fn the_brain_status_is_the_file_or_the_cause_it_is_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("status.json");
+        let missing = knowledge_value(&path);
+        assert!(missing["error"]
+            .as_str()
+            .expect("error text")
+            .contains("unreadable"));
+        std::fs::write(
+            &path,
+            r#"{"evaluated_at":"2026-11-09T10:00:00Z","parts":[]}"#,
+        )
+        .expect("write");
+        assert_eq!(
+            knowledge_value(&path)["evaluated_at"],
+            "2026-11-09T10:00:00Z"
+        );
     }
 }

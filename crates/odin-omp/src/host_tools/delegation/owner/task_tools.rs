@@ -1,7 +1,8 @@
 //! Task creation, lifecycle reads, controls, and escalation.
 
 use odin_domain::huginn::LiveSessionId;
-use odin_domain::SeatId;
+use odin_domain::{SeatId, SessionId};
+use time::OffsetDateTime;
 
 use super::{GovernedTaskOwner, TaskOwner};
 use crate::host_tools::delegation::contracts::{live_session_id, MAX_DELEGATION_DEPTH};
@@ -65,13 +66,43 @@ impl GovernedTaskOwner {
     }
 }
 impl GovernedTaskOwner {
-    /// Applies one typed raise of the worker's declared lane budget. The
-    /// shared raise store is the admission authority and is updated under
-    /// its lock before this returns, so two simultaneous steers cannot
-    /// both pass a stale cap and a later one cannot lower an earlier one.
-    /// The row records the same raise second, as history, without rewriting
-    /// project or pending_report. An exact-limit, below-floor, or
-    /// undeclared value is refused by the limit key; the worker is not steered.
+    /// `task.steer {reaccept: true}`: the delegating session hands its own currently accepted plan
+    /// down again; a voided parent refuses, so this never accepts more than the owner did.
+    fn reaccept_plan(
+        &self,
+        link: &DelegationLink,
+        caller: &SessionId,
+    ) -> Result<TaskControlReport, TaskToolFailure> {
+        if link.parent != *caller {
+            return Err(TaskToolFailure::new(
+                "not_the_parent",
+                format!(
+                    "only the delegating session {} may re-accept worker {}'s plan",
+                    link.parent, link.child
+                ),
+            ));
+        }
+        self.ledger
+            .lock()
+            .map_err(|error| {
+                TaskToolFailure::new("ledger_poisoned", format!("operation ledger lock: {error}"))
+            })?
+            .inherit_plan_acceptance(&link.parent_run, &link.child_run, OffsetDateTime::now_utc())
+            .map_err(|error| {
+                TaskToolFailure::new(
+                    "plan_inheritance_failed",
+                    format!("your own plan must be accepted to hand it down: {error}"),
+                )
+            })?;
+        Ok(TaskControlReport {
+            child: link.child,
+            before: "Voided".to_owned(),
+            applied: vec!["Reaccept".to_owned()],
+            outcome: "its plan holds your accepted plan again; it can continue".to_owned(),
+        })
+    }
+
+    /// Applies one typed raise using the shared admission store; invalid or lowering raises refuse.
     fn raise_lane_budget(
         &self,
         child: LiveSessionId,
@@ -221,6 +252,9 @@ impl TaskOwner for GovernedTaskOwner {
                 outcome: "already ended; pending task learning capture retried".to_owned(),
             });
         }
+        if request.control == TaskControl::Reaccept {
+            return self.reaccept_plan(&link, &request.caller_session);
+        }
         let snapshot = self
             .control
             .snapshot(child)
@@ -334,6 +368,7 @@ impl TaskOwner for GovernedTaskOwner {
                     Body::Prompt {
                         message: text("Continue the task from where you stopped.".to_owned())?,
                         owner_text: None,
+                        wake: false,
                     },
                 ],
                 "resumed where it stopped",
@@ -350,6 +385,7 @@ impl TaskOwner for GovernedTaskOwner {
                     Body::Prompt {
                         message: instruction(message)?,
                         owner_text: Some(message.clone()),
+                        wake: false,
                     },
                 ],
                 "resumed with the new instruction",
@@ -358,6 +394,7 @@ impl TaskOwner for GovernedTaskOwner {
                 vec![Body::Prompt {
                     message: instruction(message)?,
                     owner_text: Some(message.clone()),
+                    wake: false,
                 }],
                 "it had finished its last step; it continues with the new instruction",
             ),
@@ -365,6 +402,7 @@ impl TaskOwner for GovernedTaskOwner {
                 vec![Body::Prompt {
                     message: text("Continue the task from where you stopped.".to_owned())?,
                     owner_text: None,
+                    wake: false,
                 }],
                 "restarted from the failed turn and continued",
             ),

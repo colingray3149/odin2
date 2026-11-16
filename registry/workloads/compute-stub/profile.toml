@@ -1,0 +1,85 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "Compute stub: a script pod that shows its /dev/shm, its read-only /stage, its stop grace and its control values. For checking the pod runtime, not for work."
+seats_offered = ["kubert", "sinmara"]
+harness = "script"
+on_yield = "pause"
+# A stop gets this long after SIGTERM; the stub prints that it heard it.
+stop_grace_seconds = 20
+
+[script]
+command = ["/bin/bash", "-c", """
+trap 'echo "stub: SIGTERM, stopping cleanly"; exit 0' TERM
+echo "stub: shm $(df -h /dev/shm | tail -1)"
+ls -la /stage
+if touch /stage/.stub-write 2>/dev/null; then echo "stub: /stage WRITABLE"; else echo "stub: /stage read-only"; fi
+tick=0
+while [ "$tick" -lt "$1" ]; do
+  read -r seq value < <(python3 -c 'import json; d = json.load(open("/var/run/odin/control/control.json")); print(d["seq"], (d.get("document") or {}).get("value", 0))')
+  echo "ODIN-STATUS {\\"tick\\": $tick, \\"control_seq\\": $seq, \\"control_value\\": $value}"
+  python3 -c 'import os,struct,sys,zlib; n=int(sys.argv[1]); w=h=64; chunk=lambda t,d: struct.pack(">I",len(d))+t+d+struct.pack(">I",zlib.crc32(t+d)&0xffffffff); raw=b"".join(b"\\x00"+b"".join(bytes(((x*4+n*13)%256,(y*4+n*7)%256,(n*29)%256)) for x in range(w)) for y in range(h)); os.makedirs("/export/frames",exist_ok=True); open("/export/frames/compute-stub.png","wb").write(b"\\x89PNG\\r\\n\\x1a\\n"+chunk(b"IHDR",struct.pack(">IIBBBBB",w,h,8,2,0,0,0))+chunk(b"IDAT",zlib.compress(raw))+chunk(b"IEND",b""))' "$tick"
+  echo "ODIN-RENDER {\\"renderer\\":\\"compute-stub\\",\\"seq\\":$tick,\\"path\\":\\"frames/compute-stub.png\\"}"
+  printf '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="rgb(%s,80,180)"/></svg>' "$((tick * 13 % 256))" > /export/frames/compute-stub.svg
+  echo "ODIN-RENDER {\\"renderer\\":\\"compute-stub-svg\\",\\"seq\\":$tick,\\"path\\":\\"frames/compute-stub.svg\\"}"
+  tick=$((tick + 1))
+  sleep "$2" & wait $!
+done
+""", "compute-stub", "20", "15"]
+
+[resources]
+cpu = 1
+memory = "512Mi"
+shm = "128Mi"
+
+[[data]]
+name = "stage"
+host_path = "/srv/project/stage"
+pod_path = "/stage"
+
+[control]
+max_bytes = 1024
+[control.schema]
+type = "object"
+additionalProperties = false
+properties.value = { type = "number" }
+
+[monitoring]
+cadence_seconds = 30
+# Steers once the stub has ticked a few times: value 7 should read back as control_value.
+[[monitoring.watchdogs]]
+id = "stub-steer"
+condition = "tick >= 4"
+consecutive_hits = 1
+cooldown_seconds = 3600
+severity = "info"
+slice = "kubert-ops"
+action = "steer"
+patch = { value = 7 }
+
+[simulation]
+renderers = ["compute-stub", "compute-stub-svg"]
+
+[lifetime]
+deadline_seconds = 3600
+
+[image]
+reference = "platform"
+
+[seat]
+seat = "kubert"
+project = "odin"
+
+[network]
+allow_hosts = []
+
+[state]
+path = "/state"
+storage = "64Mi"
+
+[export]
+pod_path = "/export"
+host_folder = "/srv/odin/export"
+
+[brief]
+text = "A finite stub for checking the pod runtime, control channel and changing rendered frames. Its script arguments declare tick count and interval in seconds."

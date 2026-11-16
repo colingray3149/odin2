@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "Your to-do list for this job, kept current as you work; the objective is set when you are given the job."
+examples = [
+  'plan {op: set, todos: [{id: "t1", title: "find the file", status: "active"}]}',
+  'plan {op: todo, todoId: "t1", status: "completed"}',
+  'plan {op: get}',
+]

@@ -21,7 +21,6 @@ description = "Device action fixture"
 source_root = "/work"
 default_seat = "builder"
 memory_namespaces = []
-artifact_policy = "standard"
 [sphere]
 scratch = "/scratch/project"
 [[sphere.devices]]

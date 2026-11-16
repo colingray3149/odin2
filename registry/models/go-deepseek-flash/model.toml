@@ -16,6 +16,9 @@ strengths = "Quick DeepSeek turns inside the Go subscription's allowance."
 seats = true
 
 # The Go route accepts medium, though AVAILABLE lists low/high/max.
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"
+
 [thinking]
 default = "medium"
 levels = ["low", "medium", "high"]

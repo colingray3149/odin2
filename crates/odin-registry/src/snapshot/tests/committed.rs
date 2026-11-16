@@ -11,6 +11,47 @@ use crate::snapshot::{
 };
 
 #[test]
+fn committed_discovery_allows_absent_compute_kinds_but_validates_present_entries() {
+    let (fixture, _) = CommittedFixture::new(&[("alpha", true)]);
+    for kind in [RegistryKind::ComputeProvider, RegistryKind::ComputeTarget] {
+        fs::remove_dir_all(fixture.worktree.join("registry").join(kind.directory())).unwrap();
+    }
+    let commit = commit_all(&fixture.worktree, "omit optional compute kinds");
+    fixture.candidate(&commit);
+
+    fs::write(
+        fixture.worktree.join("registry/compute-providers"),
+        b"not a directory",
+    )
+    .unwrap();
+    let invalid_commit = commit_all(&fixture.worktree, "invalid compute kind");
+    let error = ValidatedSnapshotCandidate::from_committed_worktree(
+        &fixture.worktree,
+        &invalid_commit,
+        Vec::<AdmittedBinding>::new(),
+    )
+    .expect_err("present optional kind must be a directory");
+    assert!(
+        matches!(&error, SnapshotError::Invalid(message) if message.contains("registry-kind-type")),
+        "{error:?}"
+    );
+
+    fs::remove_file(fixture.worktree.join("registry/compute-providers")).unwrap();
+    fs::remove_dir_all(fixture.worktree.join("registry/seats")).unwrap();
+    let missing_commit = commit_all(&fixture.worktree, "omit required kind");
+    let error = ValidatedSnapshotCandidate::from_committed_worktree(
+        &fixture.worktree,
+        &missing_commit,
+        Vec::<AdmittedBinding>::new(),
+    )
+    .expect_err("required kind must remain required");
+    assert!(
+        matches!(&error, SnapshotError::Invalid(message) if message.contains("registry-kind-missing") && message.contains("seats")),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn invalid_candidate_retains_active_snapshot() {
     let (fixture, commit) = CommittedFixture::new(&[("alpha", true)]);
     let candidate = fixture.candidate(&commit);
@@ -387,4 +428,47 @@ fn runtime_projection_isolates_pending_registry_and_retains_active_schemas() {
         fs::read(fixture.versioned_receipt(2)).unwrap(),
         receipt_before
     );
+}
+
+#[test]
+fn runtime_projection_accepts_change_already_present_in_active_tree() {
+    let (fixture, anchor) = CommittedFixture::new(&[("alpha", true), ("beta", false)]);
+    let initial = fixture.candidate(&anchor);
+    fixture.store.publish_committed(&initial, 1).unwrap();
+
+    fixture.unpublished_change();
+    fixture.runtime_change("unpublished alpha");
+    let restored = fixture.runtime_change("committed publisher fixture");
+    let candidate = fixture.runtime_candidate(&restored);
+    assert_eq!(candidate.objects(), initial.objects());
+    let published = fixture.store.publish_committed(&candidate, 1).unwrap();
+    assert_eq!(
+        fixture.store.load_verified().unwrap().objects,
+        initial.objects()
+    );
+
+    let replay = fixture.runtime_candidate(&restored);
+    assert_eq!(
+        fixture.store.publish_committed(&replay, 2).unwrap().receipt,
+        published.receipt
+    );
+    let next = fixture.runtime_change("next runtime alpha");
+    let next_candidate = fixture.runtime_candidate(&next);
+    fixture.store.publish_committed(&next_candidate, 3).unwrap();
+}
+
+#[test]
+fn runtime_projection_rejects_conflicting_unpublished_change() {
+    let (fixture, anchor) = CommittedFixture::new(&[("alpha", true), ("beta", false)]);
+    fixture
+        .store
+        .publish_committed(&fixture.candidate(&anchor), 1)
+        .unwrap();
+    fixture.runtime_change("unpublished alpha");
+    let mutation = fixture.runtime_change("different runtime alpha");
+    let error = fixture
+        .store
+        .runtime_candidate(&fixture.worktree, &mutation, Vec::<AdmittedBinding>::new())
+        .unwrap_err();
+    assert!(error.to_string().contains("apply runtime delta"), "{error}");
 }

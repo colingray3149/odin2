@@ -56,6 +56,11 @@ impl OperationAuthority {
         }
     }
 
+    /// The construction-time catalog: handler resolution and operator ownership.
+    pub fn catalog(&self) -> &dyn OperationCatalog {
+        self.catalog.as_ref()
+    }
+
     pub(super) fn now_ms(&self) -> u64 {
         (self.clock)()
     }

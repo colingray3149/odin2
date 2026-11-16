@@ -73,6 +73,7 @@ impl DaemonProjectRoute {
                 matches: request.matches.clone(),
                 lead_minutes: request.lead_minutes,
                 account: request.account.clone(),
+                project: request.project.clone(),
             },
             action: RoutineActionToml {
                 kind,
@@ -158,6 +159,7 @@ fn declaration_trigger_check(
         matches: request.matches.clone(),
         lead_minutes: request.lead_minutes,
         account: request.account.clone(),
+        project: request.project.clone(),
     }
     .check_event(event)
 }

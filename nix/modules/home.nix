@@ -119,6 +119,10 @@ let
     ''}
     exec ${pkgs.bubblewrap}/bin/bwrap --args 3 3< "$ODIN_SEAT_SANDBOX" -- ${stockOmp} "$@"
   '';
+  # The one Python the daemon pins: the capsule tool surface (artifact
+  # analysis, capsule eval) and the seat sandbox share it, so openpyxl
+  # travels with python3 instead of living in an ambient store path.
+  pythonXlsx = pkgs.python3.withPackages (ps: [ ps.openpyxl ]);
   executablesMap = {
     odin = "${cfg.package}/bin/odin";
     odind = "${cfg.package}/bin/odind";
@@ -137,7 +141,7 @@ let
     odin-look = "${odinPackages.odin-look}/bin/odin-look";
     zellij = "${pkgs.zellij}/bin/zellij";
     bun = "${pkgs.bun}/bin/bun";
-    python3 = "${pkgs.python3}/bin/python3";
+    python3 = "${pythonXlsx}/bin/python3";
     browser_node = "${pkgs.nodejs_22}/bin/node";
     nix = "${pkgs.nix}/bin/nix";
     ss = "${pkgs.iproute2}/bin/ss";
@@ -158,6 +162,8 @@ let
     mount = "${pkgs.util-linux}/bin/mount";
     ssh = "${pkgs.openssh}/bin/ssh";
     ssh-keygen = "${pkgs.openssh}/bin/ssh-keygen";
+    # Offload stages runs to compute targets and copies their exports home.
+    rsync = "${pkgs.rsync}/bin/rsync";
     worker_bootstrap = "${cfg.workerBootstrap}/bin/odin-worker-bootstrap";
     unshare = "${pkgs.util-linux}/bin/unshare";
     env = "${pkgs.coreutils}/bin/env";
@@ -526,7 +532,7 @@ in
                 "ODIN_RUNTIME_MANIFEST=${cfg.runtimeManifest}"
                 "ODIN_BWRAP=${pkgs.bubblewrap}/bin/bwrap"
                 "ODIN_BASH=${pkgs.bash}/bin/bash"
-                "ODIN_PYTHON3=${pkgs.python3}/bin/python3"
+                "ODIN_PYTHON3=${pythonXlsx}/bin/python3"
                 "ODIN_PATH_EXTRA=${pkgs.coreutils}/bin:${pkgs.gnugrep}/bin"
                 "ODIN_TOOLS=${toolsFile}"
               ]

@@ -13,6 +13,8 @@ IPTABLES = "@iptables@"
 IP6TABLES = "@ip6tables@"
 GOST = "@gost@"
 DNS = "198.18.0.1"
+# The egress pool's SOCKS listeners on the DNS address, one port per exit (dotfiles pool).
+POOL_PORTS = "1081:1088"
 TUN = "odin-vpn"
 TRANSPORT_MARK = 0x4F440000
 # The public-only workload policy's excluded IPv4 ranges.
@@ -130,6 +132,7 @@ def client(args):
         rule(
             "-A", "ODIN_VPN", "-o", TUN, "-d", DNS, "-p", protocol, "--dport", "53", "-j", "ACCEPT"
         )
+    rule("-A", "ODIN_VPN", "-o", TUN, "-d", DNS, "-p", "tcp", "--dport", POOL_PORTS, "-j", "ACCEPT")
     public_rules("ODIN_PUBLIC", None if args.open else allowed)
     rule("-A", "ODIN_VPN", "-o", TUN, "-j", "ODIN_PUBLIC")
     rule("-A", "ODIN_VPN", "-j", "REJECT")
@@ -182,6 +185,7 @@ def server_filter(args):
             ensure(
                 "INPUT", "-i", interface, "-d", DNS, "-p", protocol, "--dport", "53", "-j", "ACCEPT"
             )
+        ensure("INPUT", "-i", interface, "-d", DNS, "-p", "tcp", "--dport", POOL_PORTS, "-j", "ACCEPT")
         ensure(
             "FORWARD",
             "-i",

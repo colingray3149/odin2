@@ -33,6 +33,18 @@ pub struct ConversationSayRequest {
     /// mirror reads `the owner (from terminal): …` instead of naming the device.
     #[serde(default)]
     pub terminal: bool,
+    /// Photos sent with the line (the phone over ACP): seat-sized JPEGs the
+    /// conversation stages and shows like a Discord photo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ConversationImage>,
+}
+
+/// One photo of an owner line: standard base64 bytes and their media type.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConversationImage {
+    pub mime_type: String,
+    pub data: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

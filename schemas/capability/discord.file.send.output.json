@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://odin.local/schemas/capability/discord.file.send.output.json",
   "title": "discord.file.send output",
-  "description": "The staged file that was sent and the DM message that carries it.",
+  "description": "The staged file that was sent, its PDF if it is an office document, and the DM message that carries them.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -16,6 +16,18 @@
     },
     "note": {
       "type": "string"
+    },
+    "link": {
+      "type": "string"
+    },
+    "pdf": {
+      "type": "string",
+      "description": "The PDF of an office document, sent in the same message."
+    },
+    "pageCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The PDF's page count."
     }
   },
   "required": [

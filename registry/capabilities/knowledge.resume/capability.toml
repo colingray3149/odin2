@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "knowledge"
+expose = "on_demand"
+op = "resume"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Resumes a paused part."
+handler = { id = "knowledge_resume" }
+input_schema = "schemas/capability/knowledge.resume.input.json"
+output_schema = "schemas/capability/knowledge.resume.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_knowledge_resume_evidence" }
+tests = [
+  "odin-hermes runtime::knowledge::tests::each_declared_knowledge_tool_forwards_its_arguments_and_the_seat",
+]

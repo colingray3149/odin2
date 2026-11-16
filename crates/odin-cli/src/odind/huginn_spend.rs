@@ -56,6 +56,19 @@ pub(super) fn view(summary: &Value) -> live::SpendView {
         lanes: lines(summary, "lanes", "lane"),
         seats: lines(summary, "seats", "seat"),
         workloads: lines(summary, "workloads", "workload"),
+        compute: summary
+            .get("compute")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|row| {
+                let mut line = line(row, "label");
+                if let Some(source) = row.get("source").and_then(Value::as_str) {
+                    line.label = format!("{} ({source})", line.label);
+                }
+                line
+            })
+            .collect(),
         untagged_usd_cents: summary
             .get("untagged_usd")
             .map(|usd| cents(&serde_json::json!({ "usd": usd }), "usd"))
@@ -67,6 +80,7 @@ pub(super) fn view(summary: &Value) -> live::SpendView {
 pub(super) async fn read(
     gateway: Option<String>,
     request: live::SpendRequest,
+    huginn_root: Option<&std::path::Path>,
 ) -> Result<live::HuginnResponse, live::HuginnProtocolError> {
     let Some(gateway) = gateway else {
         tracing::error!("huginn spend read refused: hermes.model_gateway is not configured");
@@ -86,7 +100,7 @@ pub(super) async fn read(
         ));
     }
     let days = i64::from(request.days);
-    let summary = tokio::task::spawn_blocking(move || {
+    let mut summary = tokio::task::spawn_blocking(move || {
         odin_hermes::runtime::read_gateway_spend(&gateway, days)
     })
     .await
@@ -95,6 +109,14 @@ pub(super) async fn read(
         tracing::error!("huginn spend read failed days={days}: {error}");
         live::HuginnProtocolError::unavailable("spendUnavailable", error)
     })?;
+    if let Some(root) = huginn_root {
+        let usage = odin_registry::ComputeUsage::load(root)
+            .map_err(|error| live::HuginnProtocolError::unavailable("spendUnavailable", error))?;
+        let now_ms =
+            u64::try_from(time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000)
+                .unwrap_or(0);
+        odin_hermes::runtime::append_compute(&mut summary, &usage, request.days.into(), now_ms);
+    }
     Ok(live::HuginnResponse::Spend(view(&summary)))
 }
 
@@ -151,6 +173,7 @@ pub(super) async fn publish(
         live::SpendRequest {
             days: SPEND_PUBLISH_DAYS,
         },
+        None,
     )
     .await
     .map_err(|error| format!("spend read: {error}"))?;
@@ -287,6 +310,15 @@ pub(super) fn arm_spend_pump(
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    #[test]
+    fn spend_view_shows_compute_rows_apart_from_models() {
+        let view = super::view(&json!({"total": {"usd": 1.0},
+            "compute": [{"label": "lease:box", "usd": 2.5, "source": "declared price"}]}));
+        assert_eq!(view.total.usd_cents, 100);
+        assert_eq!(view.compute[0].usd_cents, 250);
+        assert_eq!(view.compute[0].label, "lease:box (declared price)");
+    }
 
     #[test]
     fn a_spend_summary_reads_as_whole_cents_per_day_lane_seat_and_workload() {

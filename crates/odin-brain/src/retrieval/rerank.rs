@@ -55,10 +55,17 @@ impl Reranker {
             .and_then(|()| stream.write_all(&body))
             .and_then(|()| stream.flush())
             .map_err(|error| unavailable(format!("writing the request: {error}")))?;
-        let (status, body) = super::embedding::read_response(&mut stream, "the reranker")?;
+        // read_response's own errors name the embedding gateway; a rerank fault must not.
+        let peer = format!("the reranker at {}", self.address);
+        let (status, body) =
+            super::embedding::read_response(&mut stream, &peer).map_err(|error| match error {
+                BrainError::EmbeddingUnavailable { reason, .. } => unavailable(reason),
+                other => unavailable(format!("{peer}: {other}")),
+            })?;
         if status != 200 {
             return Err(unavailable(format!(
-                "{RERANK_PATH} answered HTTP {status}: {}",
+                "{} {RERANK_PATH} answered HTTP {status}: {}",
+                self.address,
                 String::from_utf8_lossy(&body)
                     .chars()
                     .take(200)
@@ -152,5 +159,17 @@ mod tests {
         .order("q", &["a", "b"])
         .unwrap_err();
         assert!(short.to_string().contains("1 of 2"), "{short}");
+    }
+
+    #[test]
+    fn a_framing_fault_names_the_reranker_not_the_embedding_gateway() {
+        let reply = b"garbage".to_vec();
+        let broken = Reranker {
+            address: ([127, 0, 0, 1], serve_n(1, reply)).into(),
+            candidates: 32,
+        };
+        let error = broken.order("q", &["a", "b"]).unwrap_err().to_string();
+        assert!(error.contains("the reranker at 127.0.0.1"), "{error}");
+        assert!(!error.contains("embedding"), "{error}");
     }
 }

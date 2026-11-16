@@ -88,6 +88,27 @@ pub struct Prefix {
     pub injected_bytes: u64,
     /// The digest of the system and tool blocks' own digests.
     pub hash: Digest,
+    /// What the request carried and what the provider reported for it,
+    /// where the harness knows: the lane served, the bytes of conversation
+    /// history and of tool results in it, and the provider's prompt and
+    /// cached prompt tokens.
+    #[serde(default, flatten)]
+    pub measured: Measured,
+}
+
+/// A request's measured history and the provider's own token counts.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Measured {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_result_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u64>,
 }
 
 impl Prefix {
@@ -120,6 +141,7 @@ impl Prefix {
             tool_bytes: tools,
             injected_bytes: injected,
             hash: Digest::hash(stable.as_bytes()),
+            measured: Measured::default(),
         })
     }
 }

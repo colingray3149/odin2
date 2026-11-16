@@ -123,6 +123,7 @@ fn suite_config() -> KubeConfig {
         cluster: env_string("ODIN_KUBE_CLUSTER", DEFAULT_CLUSTER),
         namespace: env_string("ODIN_KUBE_NAMESPACE", DEFAULT_NAMESPACE),
         allowed_nodes: declared_workload_nodes(),
+        node_data_roots: Default::default(),
         request_timeout: Duration::from_secs(env_seconds(
             "ODIN_KUBE_REQUEST_TIMEOUT_SECONDS",
             DEFAULT_REQUEST_TIMEOUT_SECONDS,
@@ -374,12 +375,18 @@ fn suite_launch(image: &str, run: RunId, script: &str) -> JobLaunch {
         args: vec![script.to_owned()],
         node_selector: BTreeMap::new(),
         initial_target_node: None,
+        admitted_node: None,
+        campaign_reservation: None,
         gpu_count: 0,
+        gpu_min_vram_gib: None,
+        gpu_vram_gib: None,
+        tolerate: Default::default(),
         deadline_seconds: Some(SUITE_DEADLINE_SECONDS),
         service: false,
         workload: None,
         extension: None,
         models_config: None,
+        continue_from: None,
         operation_id: operation_id_of(&format!("create-{script}")),
         idempotency_digest: digest_of(script.as_bytes()),
     }
@@ -1405,6 +1412,11 @@ async fn workload_state_claim_survives_stop_and_restart() {
     // Use the existing /tmp directory so exports need no host-side fixture setup.
     let plan = odin_kube::WorkloadPodPlan {
         resources: None,
+        termination_grace_seconds: None,
+        data: Vec::new(),
+        control: None,
+        keep_finished_seconds: None,
+        on_yield: Default::default(),
         script_gateway: None,
         profile: "continuity-fixture".to_owned(),
         state_mount: "/state".to_owned(),
@@ -1412,6 +1424,7 @@ async fn workload_state_claim_survives_stop_and_restart() {
         export_host_folder: "/tmp".to_owned(),
         state_storage: "128Mi".to_owned(),
         state_storage_class: None,
+        state_carry: true,
         allow_hosts: vec!["example.com".to_owned()],
         network_open: false,
         transport: odin_registry::WorkloadTransport::Direct,
@@ -1609,7 +1622,11 @@ async fn the_watch_delivers_a_completion() {
     let cluster = runtime.client.config.cluster.clone();
     let mut stream = guarded(
         &cluster,
-        odin_kube::watch::job_observations(runtime.client.clone()).await,
+        odin_kube::watch::job_observations(
+            runtime.client.clone(),
+            odin_kube::watch::JobCache::default(),
+        )
+        .await,
     );
     let run = unique_run("watched");
     let created = guarded(

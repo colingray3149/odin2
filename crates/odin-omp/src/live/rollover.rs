@@ -109,6 +109,44 @@ pub fn continuation_prompt(header: &str, brief: &str) -> String {
     instructed_prompt(header, ROLLOVER_CONTINUE_INSTRUCTION, brief)
 }
 
+/// The notes file a pod writes at its checkpoint and reads after a rollover.
+pub const POD_NOTES_PATH: &str = "/export/notes.md";
+/// The report a pod writes on its last allowed rollover, then finishes.
+pub const POD_REPORT_PATH: &str = "/export/report.md";
+
+/// The mid-turn checkpoint steer of a pod: its context crossed the declared
+/// checkpoint while the turn runs on, so it writes its notes now and keeps working.
+pub fn pod_checkpoint_prompt(percent: u64) -> String {
+    format!(
+        "Your context is at {percent}% of its window. Write your working notes now to \
+         {POD_NOTES_PATH}: findings with their sources, and which brief items are done and which \
+         are still open. Keep working after that; when the window fills you continue in a fresh \
+         context that starts from those notes."
+    )
+}
+
+/// A pod's reinjection after a rollover: the notes and the launch inputs to read first.
+/// On the last allowed rollover it orders the report instead.
+pub fn pod_continuation_prompt(header: &str, brief: &str, inputs: &[String], last: bool) -> String {
+    let launch = match inputs.is_empty() {
+        true => String::new(),
+        false => format!(" and the launch input is at {}", inputs.join(", ")),
+    };
+    let instruction = match last {
+        true => format!(
+            "Continuity context from your previous session. This is your last context: your \
+             notes are in {POD_NOTES_PATH}{launch}; read them, then write {POD_REPORT_PATH} now \
+             from them and finish. Report unfinished items as unmet."
+        ),
+        false => format!(
+            "Continuity context from your previous session. Your notes are in \
+             {POD_NOTES_PATH}{launch}; read them first, then continue the open items. Finished \
+             work stays done."
+        ),
+    };
+    instructed_prompt(header, &instruction, brief)
+}
+
 /// Bounded wait for the reinjection turn to settle before the usage record.
 pub const ROLLOVER_REINJECTION_SETTLE_BUDGET: Duration = Duration::from_secs(300);
 /// Settled terminal turns required after a rollover before the next trigger.
@@ -123,8 +161,6 @@ pub const ROLLOVER_WINDOW_FRACTION_HALF: u8 = 50;
 /// before the next one retires it and opens a fresh session.
 pub const ROLLOVER_FRESH_AFTER_MIN: u8 = 1;
 pub const ROLLOVER_FRESH_AFTER_MAX: u8 = 16;
-/// Two same-session rollovers, then a fresh session.
-pub const ROLLOVER_FRESH_AFTER_DEFAULT: u8 = 2;
 /// Slow heartbeat bounds, in minutes. Five minutes is the routine floor;
 /// a day is the ceiling. Thirty minutes is the declared backstop.
 pub const ROLLOVER_HEARTBEAT_MINUTES_MIN: u16 = 5;
@@ -158,10 +194,29 @@ pub struct RolloverPolicy {
     /// the seat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heartbeat_minutes: Option<u16>,
+    /// `changed` skips a heartbeat when nothing the seat watches moved.
+    #[serde(default, skip_serializing_if = "HeartbeatWhen::is_always")]
+    pub heartbeat_when: HeartbeatWhen,
     /// A prompt is new information: retire and open fresh instead of
     /// injecting into the running session. Absent keeps injection.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fresh_on_new_information: bool,
+}
+
+/// When a declared heartbeat fires: every interval, or only when what the
+/// seat watches moved since the last one.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartbeatWhen {
+    #[default]
+    Always,
+    Changed,
+}
+
+impl HeartbeatWhen {
+    pub fn is_always(&self) -> bool {
+        *self == Self::Always
+    }
 }
 
 impl Default for RolloverPolicy {
@@ -173,6 +228,7 @@ impl Default for RolloverPolicy {
             window_fraction: None,
             fresh_after_rollovers: None,
             heartbeat_minutes: None,
+            heartbeat_when: HeartbeatWhen::Always,
             fresh_on_new_information: false,
         }
     }
@@ -268,24 +324,74 @@ impl RolloverPolicy {
     }
 }
 
+/// A workload pod's rollover contract. Its checkpoint is the policy's window
+/// fraction; this carries the rollover budget and the launch inputs the
+/// continuation names.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PodRollover {
+    /// Rollovers the run may begin before it stops; `None` is unbounded.
+    pub max_rollovers: Option<u8>,
+    /// The staged launch input paths, named to every continuation.
+    pub launch_inputs: Vec<String>,
+}
+
+impl PodRollover {
+    /// Admits one more rollover after `begun` have begun. `Ok(true)` names the
+    /// last one the budget allows; `Err` names a spent budget.
+    pub fn admit(&self, begun: u32) -> Result<bool, String> {
+        let Some(max) = self.max_rollovers.map(u32::from) else {
+            return Ok(false);
+        };
+        if begun < max {
+            return Ok(begun + 1 == max);
+        }
+        Err(format!(
+            "pod rollover budget spent: {begun} of {max} rollovers begun; the run settles \
+             with the report it has"
+        ))
+    }
+}
+
 /// Composed rollover configuration carried by
 /// [`crate::bridge::OmpBridgeConfig`] and
 /// [`crate::live::runtime::ProductionBridgeRuntimeConfig`]. Constructed
-/// only through [`Self::new`], which validates the policy.
+/// only through [`Self::new`] or [`Self::for_pod`], which validate the policy.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RolloverRuntimeConfig {
     policy: RolloverPolicy,
+    pod: Option<PodRollover>,
 }
 
 impl RolloverRuntimeConfig {
     /// Validates and assembles one configuration.
     pub fn new(policy: RolloverPolicy) -> Result<Self, String> {
         policy.validate()?;
-        Ok(Self { policy })
+        Ok(Self { policy, pod: None })
+    }
+
+    /// Validates and assembles one workload pod's configuration.
+    pub fn for_pod(policy: RolloverPolicy, pod: PodRollover) -> Result<Self, String> {
+        policy.validate()?;
+        Ok(Self {
+            policy,
+            pod: Some(pod),
+        })
     }
 
     pub fn policy(&self) -> RolloverPolicy {
         self.policy.clone()
+    }
+
+    /// The pod contract, or `None` for a seat session.
+    pub fn pod(&self) -> Option<&PodRollover> {
+        self.pod.as_ref()
+    }
+
+    /// Whether a settled turn past the threshold rolls the session. A pod's
+    /// settled turn is its answer, which its report settles; it rolls only when
+    /// its window refuses a request, from the notes its checkpoint asked for.
+    pub fn rolls_at_settled_turns(&self) -> bool {
+        self.pod.is_none()
     }
 
     /// Re-validates; used by composition-time guards.
@@ -559,6 +665,70 @@ pub struct RolloverPendingApproval {
     pub issuer: String,
     pub requested_at_ms: i64,
     pub expires_at_ms: i64,
+}
+
+/// The durable rows every context restart carries: the run's task plan
+/// with its acceptance, and the approvals still pending on the session or its run.
+/// OMP's rollover brief and loom's summary both read them here.
+pub fn durable_rows(
+    ledger: &odin_ledger::Ledger,
+    session_id: &SessionId,
+    run_id: &odin_domain::RunId,
+) -> Result<(Option<RolloverPlanRecord>, Vec<RolloverPendingApproval>), odin_ledger::LedgerError> {
+    use odin_ledger::LedgerError;
+    let plan = match ledger
+        .plan(run_id)
+        .map_err(|error| LedgerError::invalid_data_caused_by("plan load failed", error))?
+    {
+        Some(plan) => {
+            let accepted = ledger.plan_is_accepted(run_id).map_err(|error| {
+                LedgerError::invalid_data_caused_by("plan acceptance load failed", error)
+            })?;
+            Some(RolloverPlanRecord {
+                revision: plan.revision,
+                objective: plan.objective.clone(),
+                todos: plan
+                    .todos
+                    .iter()
+                    .map(|todo| {
+                        json!({
+                            "id": todo.id,
+                            "ordinal": todo.ordinal,
+                            "title": todo.title,
+                            "status": todo.status,
+                        })
+                    })
+                    .collect(),
+                accepted,
+            })
+        }
+        None => None,
+    };
+    let unix_ms = |at: time::OffsetDateTime| (at.unix_timestamp_nanos() / 1_000_000).max(0) as i64;
+    let pending_approvals = ledger
+        .approvals()
+        .map_err(|error| LedgerError::invalid_data_caused_by("approval load failed", error))?
+        .into_iter()
+        .filter(|approval| {
+            // Gated calls target the session's run; other requests the session itself.
+            matches!(approval.status, odin_domain::ApprovalStatus::Requested)
+                && match approval.scope.target_kind.as_str() {
+                    "session" => approval.scope.target_id == session_id.as_str(),
+                    "run" => approval.scope.target_id == run_id.as_str(),
+                    _ => false,
+                }
+        })
+        .map(|approval| RolloverPendingApproval {
+            approval_id: approval.approval_id.to_string(),
+            capability_id: approval.scope.capability_id.to_string(),
+            target_kind: approval.scope.target_kind.clone(),
+            target_id: approval.scope.target_id.clone(),
+            issuer: approval.issuer.clone(),
+            requested_at_ms: unix_ms(approval.requested_at),
+            expires_at_ms: unix_ms(approval.expires_at),
+        })
+        .collect();
+    Ok((plan, pending_approvals))
 }
 
 /// Everything the durable brief is rendered from. Every field is host-read
@@ -1171,30 +1341,35 @@ mod tests {
 }
 
 #[test]
-fn half_of_the_selected_card_window_is_the_trigger_and_the_cap_holds() {
+fn a_window_fraction_follows_the_card_and_an_absolute_threshold_holds() {
+    let fresh_after = 3;
     let policy = RolloverPolicy {
-        threshold_tokens: 180_000,
         window_fraction: Some(ROLLOVER_WINDOW_FRACTION_HALF),
-        fresh_after_rollovers: Some(ROLLOVER_FRESH_AFTER_DEFAULT),
+        fresh_after_rollovers: Some(fresh_after),
         ..RolloverPolicy::default()
     };
     policy.validate().expect("half-window policy");
-    // 50% of the selected card, exactly. The 180k absolute field and
-    // the lane ceiling do not apply in fractional mode.
-    assert_eq!(policy.threshold_for_window(200_000, 180_000), Some(100_000));
-    assert_eq!(policy.threshold_for_window(500_000, 400_000), Some(250_000));
-    assert_eq!(
-        policy.threshold_for_window(1_000_000, 40_000),
-        Some(500_000)
-    );
+    // The declared share of the selected card; the absolute field and the
+    // lane ceiling do not apply in fractional mode.
+    let half = u64::from(ROLLOVER_WINDOW_FRACTION_HALF);
+    for (window, ceiling) in [(200_000, 180_000), (1_000_000, 40_000)] {
+        assert_eq!(
+            policy.threshold_for_window(window, ceiling),
+            Some(window * half / 100)
+        );
+    }
     assert!(policy.threshold_for_window(0, 100).is_none());
-    assert!(!policy.fresh_due(1));
-    assert!(policy.fresh_due(2));
-    let absolute = RolloverPolicy::default();
+    assert!(!policy.fresh_due(u32::from(fresh_after) - 1));
+    assert!(policy.fresh_due(u32::from(fresh_after)));
+    let absolute = RolloverPolicy {
+        window_fraction: None,
+        fresh_after_rollovers: None,
+        ..RolloverPolicy::default()
+    };
     assert!(!absolute.fresh_due(99));
     assert_eq!(
         absolute.threshold_for_window(500_000, 400_000),
-        Some(180_000)
+        Some(absolute.threshold_tokens.min(400_000))
     );
 }
 

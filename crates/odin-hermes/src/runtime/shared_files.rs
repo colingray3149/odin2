@@ -61,6 +61,17 @@ pub trait HostFileRoute: Send + Sync {
         original: Option<&RootSource>,
     ) -> Result<Value, String>;
     fn save_status(&self, seat: &str, id: &str) -> Result<Value, String>;
+    /// Writes `source` as the new file `name` at the top of a writable root
+    /// on this host; a taken name is refused, never numbered or overwritten.
+    fn save_new(
+        &self,
+        _seat: &str,
+        _root: &str,
+        _name: &str,
+        _source: &mut std::fs::File,
+    ) -> Result<Value, String> {
+        Err("this daemon cannot copy into a declared root".to_owned())
+    }
 }
 
 fn seat_of(scope: &Scope, tool: &'static str) -> Result<String, HostToolError> {
@@ -350,5 +361,70 @@ pub(super) fn shared_file_tools(runtime: &Arc<HermesRuntime>, tools: &mut Vec<Ar
         ).with_scoped_parameters(move |scope| root_parameters(
             &parameters_runtime, scope, capability_parameters!("files.save"),
         ))));
+    }
+    {
+        const TOOL: &str = "intake_copy";
+        let parameters_runtime = Arc::clone(runtime);
+        let runtime = Arc::clone(runtime);
+        tools.push(Arc::new(
+            CapabilityTool::plain_without_prerequisites(
+                RpcHostToolDefinition {
+                    name: TOOL.into(),
+                    label: "Copy an attachment into a declared folder".into(),
+                    description: "Copies the complete original of one file the owner sent (its \
+                    intake id) into a writable declared root as the new file name, e.g. a \
+                    dataset into cfd-incoming. name is one plain file name; an existing file \
+                    is refused, never overwritten or renamed."
+                        .into(),
+                    parameters: capability_parameters!("intake.copy"),
+                    hidden: false,
+                    load_mode: ToolLoadMode::Discoverable,
+                },
+                Box::new(move |scope: Scope, arguments: Value| {
+                    let seat = seat_of(&scope, TOOL)?;
+                    let field = |key: &str| {
+                        arguments
+                            .get(key)
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .ok_or_else(|| HostToolError::Arguments {
+                                tool: TOOL,
+                                detail: format!("{key} is required"),
+                            })
+                    };
+                    let (intake, root, name) = (field("intake")?, field("root")?, field("name")?);
+                    if name.contains('/') || name.contains("..") {
+                        return Err(HostToolError::Arguments {
+                            tool: TOOL,
+                            detail: format!(
+                                "name {name:?} must be one plain file name, without / or .."
+                            ),
+                        });
+                    }
+                    let route = runtime.host_file_route().ok_or_else(|| {
+                        HostToolError::unavailable(TOOL, "host folders are not composed here")
+                    })?;
+                    let (path, _) = super::files::staged_file(
+                        &runtime.settings().state_dir.join("intake"),
+                        Some(intake),
+                        None,
+                    )
+                    .map_err(|reason| HostToolError::unavailable(TOOL, reason))?;
+                    let mut file = std::fs::File::open(&path)
+                        .map_err(|error| HostToolError::unavailable(TOOL, error))?;
+                    route
+                        .save_new(&seat, root, name, &mut file)
+                        .map_err(|reason| HostToolError::unavailable(TOOL, reason))
+                }),
+            )
+            .with_scoped_parameters(move |scope| {
+                root_parameters(
+                    &parameters_runtime,
+                    scope,
+                    capability_parameters!("intake.copy"),
+                )
+            }),
+        ));
     }
 }

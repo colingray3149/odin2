@@ -1,0 +1,23 @@
+schema = "odin.registry.v1"
+toolset = "kube"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Writes a schema-checked control document to a running pod's control map as the next seq, without stopping the pod."
+handler = { id = "odin_kube.workload.steer" }
+input_schema = "schemas/capability/kube.workload.steer.input.json"
+output_schema = "schemas/capability/kube.workload.steer.output.json"
+effect_class = "R3"
+seat_tags = ["operator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_kube.workload.steer_evidence" }
+tests = [
+  "odin-kube control::tests::a_control_profile_publishes_a_mutable_run_map_reaped_with_the_run",
+  "odin-cli::bin/odind kube_runtime::steer::tests::steer_refuses_a_document_outside_the_profile_schema",
+  "odin-kube control::tests::steer_with_a_stale_seq_is_refused",
+  "odin-kube control::tests::steer_replays_by_operation_id",
+]

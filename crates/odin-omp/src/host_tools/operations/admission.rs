@@ -4,10 +4,10 @@
 use std::sync::Arc;
 
 use odin_domain::knowledge::ResourceConstraint;
-use odin_kernel::{validate_input_arguments, OperationRejection};
+use odin_kernel::{validate_input_arguments, CapabilityContract, OperationRejection};
 use serde_json::Value;
 
-use super::dispatch::{delegates_beyond_depth, normalize_capability_arguments};
+use super::dispatch::normalize_capability_arguments;
 use super::{HostToolOperationError, HostToolOperations, SessionOperationContext};
 
 pub(super) struct CheckedDispatchPrefix {
@@ -72,6 +72,7 @@ impl HostToolOperations {
         );
         let arguments = normalize_capability_arguments(
             contract,
+            Some(context.scope),
             narrowing.map_or(&serde_json::Value::Null, |narrowing| {
                 narrowing.canonical_json()
             }),
@@ -128,4 +129,16 @@ impl HostToolOperations {
             arguments,
         })
     }
+}
+
+/// Asking a conversation seat is an escalation, not a nested worker delegation.
+pub(super) fn delegates_beyond_depth(
+    contract: &CapabilityContract,
+    escalation_targets: &std::collections::BTreeSet<odin_domain::SeatId>,
+) -> bool {
+    contract.id.as_str() == crate::host_tools::delegation::TASK_CREATE_CAPABILITY
+        || contract
+            .delegate_to
+            .as_ref()
+            .is_some_and(|target| !escalation_targets.contains(target))
 }

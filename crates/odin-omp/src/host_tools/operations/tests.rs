@@ -10,8 +10,6 @@ mod argument_seams;
 mod authority_provider;
 #[path = "tests/authorization.rs"]
 mod authorization;
-#[path = "tests/dispatch_brain.rs"]
-mod dispatch_brain;
 #[path = "tests/dispatch_core.rs"]
 mod dispatch_core;
 #[path = "tests/fixture.rs"]

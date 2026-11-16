@@ -26,6 +26,7 @@ odin-brain.workspace = true
 odin-strict-json = { version = "0.0.0", path = "../odin-strict-json" }
 odin-types = { version = "0.0.0", path = "../odin-types" }
 odin-process = { version = "0.0.0", path = "../odin-process" }
+reqwest.workspace = true
 rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true

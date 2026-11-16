@@ -121,3 +121,92 @@ evidence_extractor = { id = "example.extract" }
         );
     }
 }
+
+/// A card that names its title and fields as JSON pointers on an owner card approval.
+fn card_findings(preview: &str, approval_card: &str) -> Vec<String> {
+    let capability = toml::from_str::<CapabilityToml>(&format!(
+        r#"
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "fixture"
+version = 1
+description = "Approve one thing."
+handler = {{ id = "odin_adapter.operation" }}
+input_schema = "schemas/capability/fixture.approve.input.json"
+output_schema = "schemas/capability/fixture.approve.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = {{ max_attempts = 0 }}
+approval_policy = "operator"
+{preview}
+approval_card = {approval_card}
+evidence_extractor = {{ id = "odin_adapter.receipt" }}
+"#
+    ))
+    .expect("approval-card capability");
+    validate_object(&RegistryObject {
+        id: "fixture.approve".to_owned(),
+        relative_config: PathBuf::from("capabilities/fixture.approve/capability.toml"),
+        config: ObjectConfig::Capability(Box::new(capability)),
+    })
+    .into_iter()
+    .filter(|finding| finding.code == "capability-approval-card")
+    .map(|finding| finding.message)
+    .collect()
+}
+
+#[test]
+fn an_approval_card_needs_the_card_preview_and_pointers() {
+    let lawful = r#"{ title = "Run {/campaign}", fields = ["/box", "/nodes/0"] }"#;
+    assert!(card_findings(r#"preview = "card""#, lawful).is_empty());
+    assert_eq!(card_findings("", lawful).len(), 1);
+    let nonsense = card_findings(
+        r#"preview = "card""#,
+        r#"{ title = "Run {campaign}", fields = ["box", "/rung"] }"#,
+    );
+    assert_eq!(nonsense.len(), 2, "{nonsense:?}");
+    assert!(nonsense
+        .iter()
+        .any(|message| message.contains("\"campaign\"")));
+    assert!(nonsense.iter().any(|message| message.contains("\"box\"")));
+}
+
+/// Every checked-in capability that declares an approval card validates.
+#[test]
+fn every_checked_in_approval_card_validates() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry/capabilities");
+    let mut cards = 0;
+    for entry in std::fs::read_dir(&root).expect("registry/capabilities") {
+        let dir = entry.expect("entry").path();
+        let id = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let Ok(source) = std::fs::read_to_string(dir.join("capability.toml")) else {
+            continue;
+        };
+        let object = crate::schema::parse_object_toml(
+            crate::RegistryKind::Capability,
+            &id,
+            format!("registry/capabilities/{id}/capability.toml"),
+            &source,
+        )
+        .unwrap_or_else(|error| panic!("{id}: {error:?}"));
+        let ObjectConfig::Capability(capability) = &object.config else {
+            continue;
+        };
+        if capability.approval_card.is_none() {
+            continue;
+        }
+        let failing: Vec<_> = validate_object(&object)
+            .into_iter()
+            .filter(|finding| finding.severity == crate::FindingSeverity::Fail)
+            .collect();
+        assert!(failing.is_empty(), "{id}: {failing:?}");
+        cards += 1;
+    }
+    assert!(
+        cards > 0,
+        "no checked-in capability declares an approval card"
+    );
+}

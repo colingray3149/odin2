@@ -2,7 +2,7 @@ schema = "odin.registry.v1"
 kind = "harness"
 enabled = "__enabled__"
 description = "__description__"
-# Agent interface: acp, process, terminal, or observe.
+# Agent interface: process, terminal, or observe.
 protocol = "__protocol__"
 # governed routes every tool through the kernel; observed only watches.
 governance = "__governance__"
@@ -10,7 +10,7 @@ governance = "__governance__"
 command = "__command__"
 # Prompt delivery: argv, stdin, rpc, keys, or none.
 prompt = "__prompt__"
-# Output format: acp, claude-stream-json, codex-json, text, or environment.
+# Output format: claude-stream-json, text, or environment.
 output = "__output__"
 # Optional model-selection flag, such as --model.
 model_arg = "__model_arg__"

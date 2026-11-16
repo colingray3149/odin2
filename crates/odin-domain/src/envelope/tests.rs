@@ -166,6 +166,32 @@ fn event_and_command_envelopes_refuse_what_the_schema_forbids() {
     assert!(serde_json::from_value::<CommandEnvelope>(undotted_capability).is_err());
 }
 
+#[test]
+fn reclaimed_model_event_round_trips_and_validates_names() {
+    use crate::huginn::{LiveEventBody, ModelName, ModelReclaimed, ProviderName};
+
+    let body = LiveEventBody::ModelReclaimed(ModelReclaimed {
+        provider: ProviderName::new("gateway").expect("provider"),
+        model: ModelName::new("model-a").expect("model"),
+    });
+    let wire = json!({
+        "kind": "modelReclaimed",
+        "payload": {"provider": "gateway", "model": "model-a"}
+    });
+    assert_eq!(serde_json::to_value(&body).expect("serialize"), wire);
+    assert_eq!(
+        serde_json::from_value::<LiveEventBody>(wire.clone()).expect("deserialize"),
+        body
+    );
+
+    let mut invalid = wire.clone();
+    invalid["payload"]["model"] = json!("");
+    assert!(serde_json::from_value::<LiveEventBody>(invalid).is_err());
+    let mut unknown = wire;
+    unknown["payload"]["extra"] = json!(true);
+    assert!(serde_json::from_value::<LiveEventBody>(unknown).is_err());
+}
+
 /// Huginn event and command nesting through the public request surface.
 #[test]
 fn huginn_events_and_commands_nest_through_the_request_surface() {
@@ -234,6 +260,7 @@ fn huginn_events_and_commands_nest_through_the_request_surface() {
         body: LiveCommandBody::Prompt {
             message: message_body(),
             owner_text: None,
+            wake: false,
         },
     };
     let request = HuginnRequest::SessionCommand(live_command.clone());

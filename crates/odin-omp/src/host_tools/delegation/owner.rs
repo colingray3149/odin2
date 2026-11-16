@@ -190,7 +190,8 @@ pub struct SettledPod {
     pub failed: bool,
     /// The journaled cause of the failure — the last typed `Error` event's
     /// code and bounded message — present only when `failed`; a failure
-    /// whose journal names no cause is `None`, never invented.
+    /// whose journal names no cause is `None`, never invented (the authority
+    /// may fill it from the pod status's container stop, e.g. `OOMKilled`).
     pub failure: Option<SessionFailure>,
 }
 
@@ -718,11 +719,13 @@ impl GovernedTaskOwner {
             odin_domain::huginn::LiveCommandBody::FollowUp {
                 message,
                 owner_text: None,
+                wake: false,
             }
         } else {
             odin_domain::huginn::LiveCommandBody::Prompt {
                 message,
                 owner_text: None,
+                wake: false,
             }
         }
     }
@@ -762,6 +765,9 @@ impl GovernedTaskOwner {
         let now = Self::clock_ms();
         let mut settled = Vec::new();
         for (session, operation, rest) in self.control.resting_workload_sessions()? {
+            if matches!(rest, WorkloadRest::Failed { .. }) && self.roll_refused_pod(session) {
+                continue;
+            }
             let failed = match rest {
                 WorkloadRest::Idle => false,
                 WorkloadRest::Failed { since_ms }
@@ -836,6 +842,11 @@ impl GovernedTaskOwner {
     /// Delivers one message to a delegated child session through the
     /// supervisor — the kernel's route for findings about the child's own
     /// work. A session that is not a delegated child is refused.
+    /// Whether `child` is a delegated child this owner launched.
+    pub fn is_child(&self, child: LiveSessionId) -> bool {
+        matches!(self.links.load(&child), Ok(Some(_)))
+    }
+
     pub fn notify_child(&self, child: LiveSessionId, message: &str) -> Result<(), String> {
         if self.links.load(&child)?.is_none() {
             return Err(format!("{child} is not a delegated child session"));

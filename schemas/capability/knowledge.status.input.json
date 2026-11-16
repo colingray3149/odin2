@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/knowledge.status.input.json",
+  "title": "knowledge.status input",
+  "properties": {
+    "part": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "area": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "recent": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50
+    }
+  },
+  "required": []
+}

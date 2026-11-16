@@ -561,7 +561,7 @@ fn hybrid_lane_unavailable_serves_lexical_with_explicit_posture() {
                 "posture must report why the vector leg is out"
             );
         }
-        RetrievalPosture::Full => panic!("an unavailable lane must be reported, never silent"),
+        other => panic!("an unavailable lane must be reported, never silent: {other:?}"),
     }
     // The backlog is observable and durable.
     let status = service.archive_status(&source).unwrap();

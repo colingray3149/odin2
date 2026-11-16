@@ -5,5 +5,4 @@ description = "rig — a dedicated Rust merge fixture: one src/lib.rs whose shar
 source_root = "/home/owner/valhalla/rig"
 default_seat = "gungnir"
 memory_namespaces = ["memory.project.rig"]
-artifact_policy = "standard"
 review_verdict = "code.review.verdict"

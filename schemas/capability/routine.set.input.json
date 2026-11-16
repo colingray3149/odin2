@@ -28,7 +28,9 @@
         "mail_arrived",
         "calendar_event",
         "file_received",
-        "repo_push"
+        "repo_push",
+        "simulation_stage",
+        "project_event"
       ]
     },
     "profile": {
@@ -50,6 +52,11 @@
       "type": "string",
       "minLength": 3,
       "maxLength": 254
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
     },
     "action": {
       "enum": [

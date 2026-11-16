@@ -25,22 +25,10 @@ required = true
 meaning = "Existing project."
 
 [[variable]]
-name = "family"
-type = "id"
-required = true
-meaning = "Descriptive family identifier; does not select a scheduler."
-
-[[variable]]
 name = "default_seat"
 type = "id"
 required = true
 meaning = "Existing seat."
-
-[[variable]]
-name = "queue"
-type = "id"
-required = true
-meaning = "Descriptive queue identifier; does not control scheduling."
 
 [[variable]]
 name = "independent_review"

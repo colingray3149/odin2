@@ -227,6 +227,7 @@ impl Ledger {
         exit: LiveSessionExit,
         at: OffsetDateTime,
     ) -> LedgerResult<LiveSession> {
+        let now = at;
         let at = encode_utc(at)?;
         let state = exit.as_str();
         self.with_tx(|tx| {
@@ -248,6 +249,11 @@ impl Ledger {
                     return Err(stale_session(tx, id, expected_epoch)?);
                 }
                 return session(tx, id);
+            }
+            // Ended is final: the session's run closes with it. A failed
+            // session can be resumed, so its run stays open.
+            if matches!(exit, LiveSessionExit::Ended) {
+                crate::lane_run::close_live_run(tx, id.as_str(), now)?;
             }
             session(tx, id)
         })

@@ -377,8 +377,8 @@ impl DaemonProjectRoute {
                 format!("registry/lanes/{lane}/lane.toml"),
                 format!(
                     "schema = \"{schema}\"\nkind = \"lane\"\nenabled = true\n\
-                     description = {}\nproject = \"{project}\"\nfamily = \"engine\"\n\
-                     default_seat = \"{seat}\"\nqueue = \"interactive\"\n\
+                     description = {}\nproject = \"{project}\"\n\
+                     default_seat = \"{seat}\"\n\
                      requires_independent_review = false\n",
                     quoted(&format!("{seat} work on {project}")),
                     schema = odin_registry::schema::REGISTRY_SCHEMA,

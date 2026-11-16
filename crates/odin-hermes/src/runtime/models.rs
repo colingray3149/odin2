@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use odin_domain::Scope;
 use odin_kernel::provider::class::{pick, ClassLane, Needs};
 use odin_omp::capability_parameters;
+use odin_omp::host_tools::delegation::ProviderFaultKind;
 use odin_omp::host_tools::{HostTool, HostToolError, RpcHostToolDefinition, ToolLoadMode};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -41,6 +42,14 @@ const READINESS_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 const LOG_PAGE: u32 = 1000;
 /// The local model list (`[models] local_list`), set once when odind starts.
 static LOCAL_LIST: OnceLock<PathBuf> = OnceLock::new();
+/// Told when an account runs out (`Some(cause)`) and when it comes back (`None`), with its lanes.
+pub type OutNotice = Arc<dyn Fn(&str, &[String], Option<&str>) + Send + Sync>;
+static OUT_NOTICE: OnceLock<OutNotice> = OnceLock::new();
+
+/// Where the daemon hears that an account ran out or came back; set once at composition.
+pub fn set_out_notice(notice: OutNotice) {
+    let _ = OUT_NOTICE.set(notice);
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub(crate) struct Window {
@@ -487,6 +496,8 @@ pub(crate) struct Reading {
     pub book: Book,
     pub used: BTreeMap<String, Vec<(Window, Used)>>,
     pub holds: BTreeMap<String, String>,
+    /// The accounts out now, with why: a subset of `holds`.
+    out: BTreeMap<String, String>,
     sources: sources::Collected,
     attribution: Option<Value>,
 }
@@ -497,6 +508,7 @@ struct Last {
     at: Instant,
     reading: Result<Arc<Reading>, String>,
     held: BTreeSet<String>,
+    out: BTreeSet<String>,
 }
 
 static LAST: parking_lot::Mutex<Option<Last>> = parking_lot::Mutex::new(None);
@@ -524,23 +536,72 @@ fn refusal(account: &str) -> Option<String> {
 
 /// The model book with its usage, read at most once a minute per gateway.
 pub(crate) fn read_book(gateway: &str) -> Result<Arc<Reading>, String> {
-    let held = match LAST.lock().as_ref().filter(|last| last.gateway == gateway) {
+    let (held, was_out) = match LAST.lock().as_ref().filter(|last| last.gateway == gateway) {
         Some(last) if last.at.elapsed() < READING_TTL => return last.reading.clone(),
-        Some(last) => last.held.clone(),
-        None => BTreeSet::new(),
+        Some(last) => (last.held.clone(), last.out.clone()),
+        None => (BTreeSet::new(), BTreeSet::new()),
     };
     let reading = read_gateway(gateway, &held).map(Arc::new);
-    let held = match &reading {
-        Ok(reading) => reading.holds.keys().cloned().collect(),
-        Err(_) => held,
+    let (held, out) = match &reading {
+        Ok(reading) => {
+            tell_out(reading, &was_out);
+            (
+                reading.holds.keys().cloned().collect(),
+                reading.out.keys().cloned().collect(),
+            )
+        }
+        Err(_) => (held, was_out),
     };
     *LAST.lock() = Some(Last {
         gateway: gateway.to_owned(),
         at: Instant::now(),
         reading: reading.clone(),
         held,
+        out,
     });
     reading
+}
+
+/// Tells the daemon about each account that ran out since the last reading, or came back.
+fn tell_out(reading: &Reading, was_out: &BTreeSet<String>) {
+    let Some(notice) = OUT_NOTICE.get() else {
+        return;
+    };
+    let lanes = |account: &str| -> Vec<String> {
+        reading
+            .book
+            .lanes
+            .iter()
+            .filter(|(_, lane)| lane.account == account)
+            .map(|(name, _)| name.clone())
+            .collect()
+    };
+    for (account, cause) in &reading.out {
+        if !was_out.contains(account) {
+            notice(account, &lanes(account), Some(cause));
+        }
+    }
+    for account in was_out.difference(&reading.out.keys().cloned().collect()) {
+        notice(account, &lanes(account), None);
+    }
+}
+
+/// Why an account is out now: its provider refused it over its usage limit, or one of its
+/// provider readings has nothing left. Nearing a limit holds an account; it is not out.
+fn ran_out(account: &str, usages: &[&sources::Usage]) -> Option<String> {
+    refusal(account)
+        .filter(|cause| cause == ProviderFaultKind::UsageLimit.plain())
+        .or_else(|| {
+            usages
+                .iter()
+                .filter(|row| {
+                    row.routing
+                        && !row.estimate
+                        && (row.used_fraction.is_some_and(|used| used >= 1.0)
+                            || row.remaining.is_some_and(|left| left <= 0.0))
+                })
+                .find_map(|row| row.hold(false))
+        })
 }
 
 fn read_gateway(gateway: &str, held: &BTreeSet<String>) -> Result<Reading, String> {
@@ -603,6 +664,7 @@ fn read_gateway(gateway: &str, held: &BTreeSet<String>) -> Result<Reading, Strin
     }
     let mut usage_by_account = BTreeMap::new();
     let mut holds = BTreeMap::new();
+    let mut out = BTreeMap::new();
     for (id, account) in &book.accounts {
         let groups = book.groups_of(id);
         // Every declared window with its gateway estimate; an unreadable estimate stays Err.
@@ -624,17 +686,11 @@ fn read_gateway(gateway: &str, held: &BTreeSet<String>) -> Result<Reading, Strin
             .iter()
             .filter(|row| row.account == *id)
             .collect();
-        // Only the host-local readers' errors reach the hold decision; the
-        // gateway-estimate errors pushed above surface as window holds and board errors.
-        let errors: Vec<_> = sources
-            .errors
-            .iter()
-            .filter(|error| {
-                error.account.as_ref() == Some(id) && error.source != "gateway-estimate"
-            })
-            .collect();
-        for hold in account_holds(account, &usages, &errors, &estimates, held.contains(id)) {
+        for hold in account_holds(account, &usages, &estimates, held.contains(id)) {
             holds.entry(id.clone()).or_insert(hold);
+        }
+        if let Some(cause) = ran_out(id, &usages) {
+            out.insert(id.clone(), cause);
         }
         usage_by_account.insert(
             id.clone(),
@@ -653,22 +709,22 @@ fn read_gateway(gateway: &str, held: &BTreeSet<String>) -> Result<Reading, Strin
         book,
         used: usage_by_account,
         holds,
+        out,
         sources,
         attribution,
     })
 }
 
 /// Why one account is held, strongest reason first: no key, its provider readings' own
-/// limits, a failed provider read, then its declared windows' gateway estimates.
+/// limits, then its declared windows' gateway estimates.
 ///
-/// A failed provider read holds outright only while the gateway estimate does not cover
-/// the declared windows (an unreadable window, or none declared); a covered account
-/// holds on that estimate at the same [`HOLD_AT`]/[`RETURN_AT`] shares instead of
-/// forever.
+/// A failed provider read never holds by itself: the board shows it, and the account
+/// keeps serving on its declared windows' estimates at the same
+/// [`HOLD_AT`]/[`RETURN_AT`] shares. Holding on a failed read took every subscription
+/// lane offline whenever odind could not run its readers.
 fn account_holds(
     account: &Account,
     usages: &[&sources::Usage],
-    errors: &[&sources::SourceError],
     windows: &[(&Window, Result<Used, String>)],
     held: bool,
 ) -> Vec<String> {
@@ -683,15 +739,6 @@ fn account_holds(
         ));
     }
     holds.extend(usages.iter().filter_map(|row| row.hold(held)));
-    // The estimate is usable when the account declared windows and every one reads.
-    let covered = !windows.is_empty() && windows.iter().all(|(_, usage)| usage.is_ok());
-    if !covered {
-        holds.extend(
-            errors
-                .iter()
-                .map(|error| format!("{} is unreadable: {}", error.source, error.message)),
-        );
-    }
     for (window, usage) in windows {
         // A provider's matching quota supersedes a local list-price estimate.
         // Keep unmatched declared windows (for example a request limit) in force.
@@ -727,6 +774,7 @@ impl Reading {
             book: Book::from_model_info(info).expect("declared test model book"),
             used: BTreeMap::new(),
             holds: BTreeMap::new(),
+            out: BTreeMap::new(),
             sources: sources::Collected::default(),
             attribution: None,
         }
@@ -1093,6 +1141,7 @@ mod tests {
             book,
             used: BTreeMap::new(),
             holds: BTreeMap::from([("commandcode-goat".to_owned(), hold)]),
+            out: BTreeMap::new(),
             sources: sources::Collected::default(),
             attribution: None,
         };
@@ -1158,24 +1207,14 @@ mod tests {
         }
     }
 
-    fn unreadable_reading() -> sources::SourceError {
-        sources::SourceError {
-            account: Some("commandcode-goat".to_owned()),
-            source: "omp".to_owned(),
-            host: Some("mini".to_owned()),
-            message: "usage command exited 1".to_owned(),
-        }
-    }
-
     #[test]
-    fn an_unreadable_reading_holds_on_a_covering_gateway_estimate() {
+    fn an_account_holds_on_its_gateway_estimate() {
         let account = declared_account(true, vec![five_hour_window()]);
         let window = &account.windows[0];
         let holds = |usd: f64, held: bool| {
             account_holds(
                 &account,
                 &[],
-                &[&unreadable_reading()],
                 &[(window, Ok(Used { usd, requests: 9 }))],
                 held,
             )
@@ -1183,11 +1222,11 @@ mod tests {
         assert_eq!(
             holds(12.8, false),
             ["$12.80 of $14 per 5h used"],
-            "a covered account holds on the estimate at 90%, not on the failed read"
+            "an account holds on the estimate at 90%"
         );
         assert!(
             holds(11.2, false).is_empty(),
-            "an unheld account below 90% keeps serving while its reading is unavailable"
+            "an unheld account below 90% keeps serving"
         );
         assert_eq!(
             holds(11.2, true),
@@ -1205,13 +1244,7 @@ mod tests {
         let window = five_hour_window();
         let account = declared_account(false, vec![window.clone()]);
         assert_eq!(
-            account_holds(
-                &account,
-                &[],
-                &[&unreadable_reading()],
-                &[(&window, Ok(Used::default()))],
-                false
-            ),
+            account_holds(&account, &[], &[(&window, Ok(Used::default()))], false),
             ["no key: COMMANDCODE_API_KEY is not in sops"],
             "a keyless account holds regardless of the estimate"
         );

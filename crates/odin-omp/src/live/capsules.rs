@@ -4,12 +4,9 @@
 //! with a hard deadline that kills and reaps the child's whole process
 //! group, so a stuck repository never leaves a background writer behind.
 
-use std::io::Read;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::time::{Duration, Instant};
+use std::process::{Command, ExitStatus};
+use std::time::Duration;
 
 #[cfg(test)]
 use std::sync::Mutex;
@@ -113,13 +110,6 @@ pub fn capsule_sessions(roots: &SessionRoots) -> Result<Vec<LiveSessionId>, Stri
 /// repository nor a hostile child can grow the reclaimer's memory.
 const GIT_OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 
-/// How long the output drains may take to observe EOF after the child is
-/// gone before the call gives up on them.
-const GIT_DRAIN_GRACE: Duration = Duration::from_secs(2);
-
-/// How often a running git is checked for exit.
-const GIT_POLL: Duration = Duration::from_millis(10);
-
 #[cfg(test)]
 static TEST_GIT_PROGRAM: Mutex<Option<PathBuf>> = Mutex::new(None);
 
@@ -151,71 +141,46 @@ impl GitOutcome {
     }
 }
 
-/// Runs one git invocation under `bound`, draining both streams
-/// concurrently with the wait. A `directory` of `None` runs against the
-/// process working directory.
+/// Runs one git invocation under `bound`. A `directory` of `None` runs
+/// against the process working directory.
 fn git_bound(
     directory: Option<&Path>,
     args: &[&str],
     bound: Duration,
 ) -> Result<GitOutcome, String> {
-    let mut child = hardened_git(directory, args)
-        .spawn()
-        .map_err(|error| format!("git {}: {error}", args.first().unwrap_or(&"")))?;
-    let stdout = drain(child.stdout.take().expect("piped stdout"));
-    let stderr = drain(child.stderr.take().expect("piped stderr"));
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let streams = receive(stdout).and_then(|out| receive(stderr).map(|err| (out, err)));
-                let ((stdout, stdout_truncated), (stderr, stderr_truncated)) = match streams {
-                    Ok(streams) => streams,
-                    Err(error) => {
-                        // A descendant still holds a pipe: no writer outlives the call.
-                        let _ = kill_process_group(&mut child);
-                        return Err(error);
-                    }
-                };
-                if stdout_truncated || stderr_truncated {
-                    return Err(format!(
-                        "git {} output exceeded its {} byte cap",
-                        args.first().unwrap_or(&""),
-                        GIT_OUTPUT_LIMIT
-                    ));
-                }
-                return Ok(GitOutcome {
-                    status,
-                    stdout,
-                    stderr,
-                });
-            }
-            Ok(None) if started.elapsed() < bound => {
-                std::thread::sleep(GIT_POLL);
-            }
-            // Deadline reached or reaping failed: kill the whole group and
-            // reap, so no descendant outlives this call. A failed group
-            // signal is returned as the cleanup error — never swallowed —
-            // so an unproven cleanup can never end in a deletion.
-            _ => {
-                let cleanup = kill_process_group(&mut child);
-                let _ = receive(stdout);
-                let _ = receive(stderr);
-                cleanup?;
-                return Err(format!(
-                    "git {} exceeded its {}s bound and was killed",
-                    args.first().unwrap_or(&""),
-                    bound.as_secs()
-                ));
-            }
-        }
+    let subcommand = args.first().unwrap_or(&"");
+    let output = odin_process::run_bounded(
+        &mut hardened_git(directory, args),
+        None,
+        odin_process::ChildBounds {
+            timeout: bound,
+            max_stdout_bytes: GIT_OUTPUT_LIMIT,
+            max_stderr_bytes: GIT_OUTPUT_LIMIT,
+        },
+    )
+    .map_err(|error| format!("git {subcommand}: {error}"))?;
+    let status = output.status.ok_or_else(|| {
+        format!(
+            "git {subcommand} exceeded its {}s bound and was killed",
+            bound.as_secs()
+        )
+    })?;
+    if output.stdout.truncated() || output.stderr.truncated() {
+        return Err(format!(
+            "git {subcommand} output exceeded its {GIT_OUTPUT_LIMIT} byte cap"
+        ));
     }
+    Ok(GitOutcome {
+        status,
+        stdout: output.stdout_text(),
+        stderr: output.stderr_text(),
+    })
 }
 
 /// One hardened git spawn: config beyond the repository's own is
-/// silenced, hooks point at a guaranteed-empty directory, the fsmonitor
-/// daemon is off, stdin is closed, and the child leads its own process
-/// group so the deadline can kill the entire tree.
+/// silenced, hooks point at a guaranteed-empty directory, and the
+/// fsmonitor daemon is off. The bounded runner closes stdin and makes the
+/// child lead its own process group, so the deadline kills the entire tree.
 fn hardened_git(directory: Option<&Path>, args: &[&str]) -> Command {
     let mut command = Command::new(git_program());
     if let Some(directory) = directory {
@@ -242,70 +207,8 @@ fn hardened_git(directory: Option<&Path>, args: &[&str]) -> Command {
         .env("GIT_SSH_COMMAND", super::harness::git_ssh_command())
         // The audits stay read-only on the tree: no opportunistic index
         // refresh, nothing that takes a lock.
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0);
+        .env("GIT_OPTIONAL_LOCKS", "0");
     command
-}
-
-/// Drains one output pipe on a worker thread into a bounded buffer;
-/// bytes beyond [`GIT_OUTPUT_LIMIT`] are discarded (and reported) rather
-/// than buffered, so the pipe always keeps draining and memory stays
-/// capped.
-fn drain(pipe: impl Read + Send + 'static) -> Receiver<(Vec<u8>, bool)> {
-    let (sender, receiver) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut pipe = pipe;
-        let mut out: Vec<u8> = Vec::new();
-        let mut truncated = false;
-        let mut chunk = [0u8; 8192];
-        loop {
-            match pipe.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(count) => {
-                    let room = GIT_OUTPUT_LIMIT.saturating_sub(out.len());
-                    let keep = count.min(room);
-                    out.extend_from_slice(&chunk[..keep]);
-                    truncated |= keep < count;
-                }
-                Err(_) => break,
-            }
-        }
-        let _ = sender.send((out, truncated));
-    });
-    receiver
-}
-
-/// Waits for one drained stream: EOF is normally immediate once the child
-/// (and everything holding its pipes) is gone.
-fn receive(receiver: Receiver<(Vec<u8>, bool)>) -> Result<(String, bool), String> {
-    match receiver.recv_timeout(GIT_DRAIN_GRACE) {
-        Ok((bytes, truncated)) => Ok((String::from_utf8_lossy(&bytes).into_owned(), truncated)),
-        Err(RecvTimeoutError::Timeout) => Err("output drain stalled".to_owned()),
-        Err(RecvTimeoutError::Disconnected) => Err("output drain failed".to_owned()),
-    }
-}
-
-/// Kills the child's whole process group: the spawn put the child in its
-/// own group, so the signal reaches every descendant — a hung
-/// receive-pack, a leaked daemon, a hook — not just the direct child. A
-/// missing group (ESRCH) means nothing is left to signal; any other
-/// failure is returned so the caller reports a cleanup error and nothing
-/// is ever deleted on an unproven cleanup. The direct child is killed
-/// and reaped unconditionally afterwards.
-fn kill_process_group(child: &mut Child) -> Result<(), String> {
-    let pgid = child.id();
-    let group = rustix::process::Pid::from_child(child);
-    if let Err(error) = rustix::process::kill_process_group(group, rustix::process::Signal::KILL) {
-        if error != rustix::io::Errno::SRCH {
-            return Err(format!("git process group {pgid} cleanup: {error}"));
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    Ok(())
 }
 
 fn git_program() -> PathBuf {

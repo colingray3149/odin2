@@ -1,6 +1,6 @@
 //! Pods emit `ODIN-STATUS {json}` on stdout; status is read through the
-//! Kubernetes log API rather than host paths. Watchdogs use the latest
-//! counters, while status queries compare the two newest reports.
+//! Kubernetes log API rather than host paths. Watchdogs evaluate new reports,
+//! while status queries compare the two newest reports.
 
 use std::collections::BTreeMap;
 
@@ -32,6 +32,19 @@ fn reports(log: &str) -> impl Iterator<Item = (OffsetDateTime, Map<String, Value
 /// The newest status report of a timestamped log: when the pod printed it, and its JSON object.
 pub fn latest_report(log: &str) -> Option<(OffsetDateTime, Map<String, Value>)> {
     reports(log).next()
+}
+
+/// The status reports of a timestamped log printed after `after` (all of them when `None`),
+/// oldest first, so a monitor sees every sample between two reads, not just the newest.
+pub fn reports_since(
+    log: &str,
+    after: Option<OffsetDateTime>,
+) -> Vec<(OffsetDateTime, Map<String, Value>)> {
+    let mut fresh: Vec<_> = reports(log)
+        .take_while(|(at, _)| after.is_none_or(|after| *at > after))
+        .collect();
+    fresh.reverse();
+    fresh
 }
 
 /// The numeric fields of one status report.

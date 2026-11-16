@@ -20,9 +20,9 @@ meaning = "Which agent program this is and what Odin can claim about its tools."
 
 [[variable]]
 name = "protocol"
-type = "enum:acp|process|terminal|observe"
+type = "enum:process|terminal|observe"
 required = true
-meaning = "acp: stdio protocol; process: CLI per prompt; terminal: interactive agent; observe: passive remote-session transcripts only, with no command, model_arg, account, resume_args, state_paths or brief."
+meaning = "process: CLI per prompt; terminal: interactive agent; observe: passive remote-session transcripts only, with no command, model_arg, account, resume_args, state_paths or brief."
 
 [[variable]]
 name = "governance"
@@ -40,11 +40,11 @@ meaning = "The program and its fixed arguments; omitted for observe."
 name = "prompt"
 type = "enum:argv|stdin|rpc|keys|none"
 required = true
-meaning = "How a prompt reaches the agent (rpc for acp, keys for terminal, none for observe)."
+meaning = "How a prompt reaches the agent (keys for terminal, none for observe)."
 
 [[variable]]
 name = "output"
-type = "enum:acp|claude-stream-json|codex-json|text|environment"
+type = "enum:claude-stream-json|text|environment"
 required = true
 meaning = "The output event family; observe uses environment, selected by the remote-session observation declaration."
 

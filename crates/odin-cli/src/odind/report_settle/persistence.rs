@@ -64,6 +64,8 @@ pub(super) fn persist_report(
         &json!({
             "pdf": identity.pdf,
             "bytes": identity.bytes,
+            "pageCount": identity.page_count,
+            "content": identity.content,
             "capturedAt": identity.captured_at,
             "body": body_id,
             "source": identity.source,
@@ -203,7 +205,8 @@ where
 
 /// A pod's export folder survives its Job on the node the pod ran on. Reads it there through a
 /// helper pod, the way a finished run's exports are captured, as a tar. `node` is where the
-/// Job's pod ran when last seen, else where the run's state volume is bound.
+/// Job's pod ran when last seen, else where the run's state volume is bound; a pod stopped
+/// before either was seen is looked for on every node, the first with files being its own.
 pub(super) async fn read_retained_export(
     cell: &crate::kube::KubeRuntimeCell,
     run: &RunId,
@@ -214,27 +217,50 @@ pub(super) async fn read_retained_export(
         .parts()
         .await
         .map_err(|error| format!("the cluster is unreachable: {error}"))?;
-    let node = match node {
-        Some(node) => node,
+    let bound = match node {
+        Some(node) => Some(node),
         None => odin_kube::state_carry::state_node(&client, run)
             .await
-            .map_err(|error| format!("the node that ran it could not be read: {error}"))?
-            .ok_or_else(|| "no node is recorded for it".to_owned())?,
+            .map_err(|error| format!("the node that ran it could not be read: {error}"))?,
     };
-    let site = odin_kube::state_carry::ExportSite {
-        node,
-        image: cell.workload_identity().deployment.image_reference.clone(),
-        host_folder: host_folder.to_owned(),
-        subfolder: odin_kube::workload::export_subfolder(run),
+    let (nodes, searched) = match bound {
+        Some(node) => (vec![node], false),
+        None => odin_kube::state_carry::node_names(&client)
+            .await
+            .map(|nodes| (nodes, true))
+            .map_err(|error| {
+                format!("no node is recorded for it and the nodes could not be listed: {error}")
+            })?,
     };
-    odin_kube::state_carry::export_tar(
-        &client,
-        &cell.stop_authority(),
-        &site,
-        odin_omp::host_tools::pod_exec::MAX_EXPORT_BYTES,
-    )
-    .await
-    .map_err(|error| format!("its export on {} could not be read: {error}", site.node))
+    let mut missed = Vec::new();
+    for node in nodes {
+        let site = odin_kube::state_carry::ExportSite {
+            node,
+            image: cell.workload_identity().deployment.image_reference.clone(),
+            host_folder: host_folder.to_owned(),
+            subfolder: odin_kube::workload::export_subfolder(run),
+        };
+        match odin_kube::state_carry::export_tar(
+            &client,
+            &cell.stop_authority(),
+            &site,
+            odin_omp::host_tools::pod_exec::MAX_EXPORT_BYTES,
+        )
+        .await
+        {
+            Ok(tar) if !searched || has_files(&tar) => return Ok(tar),
+            Ok(_) => missed.push(format!("{} has no files for it", site.node)),
+            Err(error) => missed.push(format!("{}: {error}", site.node)),
+        }
+    }
+    Err(format!(
+        "its export could not be read ({})",
+        missed.join("; ")
+    ))
+}
+
+fn has_files(tar: &[u8]) -> bool {
+    odin_kube::state_carry::tar_regular_files(tar).is_ok_and(|files| !files.is_empty())
 }
 
 /// The files of an export tar; one over the report file bound is named, not read.
@@ -304,18 +330,89 @@ pub(super) fn finish_gone(
     }
 }
 
-/// Renders the report.md a gone pod left in its export and delivers it as partial work: nobody
-/// reviewed its pages. The measured stats are the last the pod's settlement wrote, when it
-/// wrote any.
-fn deliver_retained(
+/// A run the authority cancelled: nothing is owed from it. An intact saved
+/// render is still shared (real work, already outside the pod); otherwise the
+/// settlement names the cancellation and claims nothing. The node exports and
+/// volumes the run left are not read and not deleted.
+pub(super) fn finish_cancelled(run: &ReportRun) -> ReportSettlement {
+    if let Some(salvaged) = salvage_saved_report(run, "") {
+        return salvaged;
+    }
+    ReportSettlement::Cancelled {
+        note: "The run was cancelled by authority before its report, so it produced no output \
+               and nothing is owed from it. Retained node exports and persistent volumes were \
+               not read and not deleted."
+            .to_owned(),
+    }
+}
+
+/// The render the saved report holds for this exact report.md, with its PDF bytes, when the saved
+/// PDF is still intact: an earlier settlement pass already rendered it.
+fn saved_render(run: &ReportRun, body: &str) -> Option<(ReportIdentity, Vec<u8>)> {
+    let directory = record_dir(run);
+    let saved = read_record(&directory, SAVED)?;
+    let pdf = std::fs::read(directory.join(PDF_NAME)).ok()?;
+    let body_id = odin_domain::Digest::hash(body.as_bytes()).to_string();
+    if saved["body"] != json!(body_id)
+        || saved["pdf"].as_str()? != odin_domain::Digest::hash(&pdf).to_string()
+        || saved["bytes"].as_u64()? != pdf.len() as u64
+    {
+        return None;
+    }
+    let identity = ReportIdentity {
+        pdf_relative: PDF_NAME.to_owned(),
+        pdf_absolute: absolute_export(&run.target.export_dir, PDF_NAME),
+        source: saved["source"].as_str()?.to_owned(),
+        bytes: pdf.len() as u64,
+        page_count: saved["pageCount"].as_u64()?,
+        content: saved["content"].as_str()?.to_owned(),
+        body: body_id,
+        pdf: saved["pdf"].as_str()?.to_owned(),
+        captured_at: saved["capturedAt"].as_str()?.to_owned(),
+    };
+    Some((identity, pdf))
+}
+
+/// Renders the report.md a pod left in `files` and adds the PDF to them: the one render of a
+/// report nobody reviewed, shared by a gone pod's export and a live pod that ended unfinished.
+/// A pass that already rendered this body reuses that render instead of rendering again.
+pub(super) fn render_unreviewed(
     run: &ReportRun,
-    mut files: Vec<ExportedFile>,
+    files: &mut Vec<ExportedFile>,
+    body: &str,
     undone: &mut Undone,
-) -> Result<ReportSettlement, String> {
-    let body = read_named(&files, COMPANION)
-        .filter(|body| !body.trim().is_empty())
-        .ok_or_else(|| format!("it holds no {COMPANION} to render"))?;
-    let stats = read_named(&files, "run-stats.json")
+) -> Result<ReportIdentity, String> {
+    let identity = match saved_render(run, body) {
+        Some((identity, pdf)) => {
+            files.push(ExportedFile {
+                path: PDF_NAME.to_owned(),
+                bytes: identity.bytes,
+                content: Ok(pdf),
+            });
+            identity
+        }
+        None => {
+            let identity = render_fresh(run, files, body)?;
+            // Saved from the first pass that renders it, so a later pass reuses it.
+            persist_report(run, files, &identity, body)?;
+            identity
+        }
+    };
+    undone.items.push(
+        "page review: the pod's turn ended before its pages were reviewed, so the authority \
+         rendered report.md and delivered it unreviewed"
+            .to_owned(),
+    );
+    Ok(identity)
+}
+
+/// Compiles report.md through the research template and adds the PDF to `files`.
+fn render_fresh(
+    run: &ReportRun,
+    files: &mut Vec<ExportedFile>,
+    body: &str,
+) -> Result<ReportIdentity, String> {
+    let stats = read_named(files, "run-stats.json")
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
         .unwrap_or(Value::Null);
     let captured_at = match stats["capturedAt"].as_str() {
@@ -325,8 +422,8 @@ fn deliver_retained(
             .format(&time::format_description::well_known::Rfc3339)
             .map_err(|error| error.to_string())?,
     };
-    let source = complete_fallback_source(&body, &files)?;
-    let rendered = (run.render)(run, &source, &footer_meta(&stats), &files)
+    let source = complete_fallback_source(body, files)?;
+    let rendered = (run.render)(run, &source, &footer_meta(&stats), files)
         .map_err(RenderError::into_reason)?;
     let identity = ReportIdentity {
         pdf_relative: PDF_NAME.to_owned(),
@@ -344,11 +441,20 @@ fn deliver_retained(
         bytes: identity.bytes,
         content: Ok(rendered.pdf),
     });
-    undone.items.push(
-        "page review: the pod's job ended before its pages were reviewed, so the authority \
-         rendered report.md and delivered it unreviewed"
-            .to_owned(),
-    );
+    Ok(identity)
+}
+
+/// Renders the report.md a gone pod left in its export and delivers it as partial work: nobody
+/// reviewed its pages.
+fn deliver_retained(
+    run: &ReportRun,
+    mut files: Vec<ExportedFile>,
+    undone: &mut Undone,
+) -> Result<ReportSettlement, String> {
+    let body = read_named(&files, COMPANION)
+        .filter(|body| !body.trim().is_empty())
+        .ok_or_else(|| format!("it holds no {COMPANION} to render"))?;
+    let identity = render_unreviewed(run, &mut files, &body, undone)?;
     let (subject, subject_source) = report_subject(run, &body);
     Ok(finish_copies(
         run,
@@ -358,4 +464,45 @@ fn deliver_retained(
         &identity,
         undone,
     ))
+}
+
+/// A pod that ended before its report was finished still left its report.md: that markdown is
+/// rendered and delivered as partial work, unreviewed, with what the pod left undone. Without one
+/// there is nothing to deliver and the contract stays unmet (`unmet`).
+pub(super) fn unfinished_report(
+    run: &ReportRun,
+    mut files: Vec<ExportedFile>,
+    answer: &str,
+    failed: bool,
+    failure: Option<&str>,
+    unmet: &str,
+) -> ReportSettlement {
+    let Some(body) = read_named(&files, COMPANION).filter(|body| !body.trim().is_empty()) else {
+        let cause = match failed {
+            true => format!(
+                "{unmet} (the pod's agent failed: {})",
+                failure.unwrap_or("its journal names no cause")
+            ),
+            false => unmet.to_owned(),
+        };
+        return stalled(run, &files, cause, true);
+    };
+    let state = read_state(&record_dir(run));
+    let mut undone = Undone::of(answer, failed);
+    undone.name_receipts(&state.undone.receipts);
+    if undone.items.is_empty() {
+        undone.items = state.undone.items;
+    }
+    if failed {
+        undone.items.push(format!(
+            "the pod's agent failed: {}",
+            failure.unwrap_or("its journal names no cause")
+        ));
+    }
+    let identity = match render_unreviewed(run, &mut files, &body, &mut undone) {
+        Ok(identity) => identity,
+        Err(reason) => return stalled(run, &files, reason, false),
+    };
+    let (subject, subject_source) = report_subject(run, &body);
+    finish_copies(run, &files, &subject, subject_source, &identity, &undone)
 }

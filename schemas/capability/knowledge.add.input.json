@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/knowledge.add.input.json",
+  "title": "knowledge.add input",
+  "properties": {
+    "text": {
+      "type": "string",
+      "maxLength": 200000
+    },
+    "path": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "as": {
+      "type": "string",
+      "enum": [
+        "file",
+        "note"
+      ]
+    },
+    "project": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "session": {
+      "type": "string",
+      "maxLength": 100
+    }
+  },
+  "required": []
+}

@@ -228,3 +228,27 @@ fn a_readable_original_can_be_handed_to_a_child_project_and_reported_back() {
     );
     assert!(route.artifact_file(&stranger, report_id).is_err());
 }
+
+#[test]
+fn a_pod_export_path_is_refused_with_how_to_hand_it_over() {
+    let directory = tempfile::tempdir().unwrap();
+    let route = route(directory.path());
+    let scope = Scope {
+        session: Some("pod-session".parse().unwrap()),
+        ..Scope::default()
+    };
+    let workspace = directory
+        .path()
+        .join("session-authorities/capsule-capsule-pod-session/capsule/project");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("report.md"), b"# Report").unwrap();
+    assert_eq!(
+        route.workspace_file(&scope, "report.md").unwrap(),
+        b"# Report"
+    );
+    let error = route
+        .workspace_file(&scope, "/export/report.md")
+        .unwrap_err();
+    assert!(error.contains("until its run settles"), "{error}");
+    assert!(error.contains("pass the text"), "{error}");
+}

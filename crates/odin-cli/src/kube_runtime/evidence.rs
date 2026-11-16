@@ -19,6 +19,7 @@ pub(super) enum MutationStatus {
     Accepted,
     Duplicate,
     Unavailable,
+    Queued,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -79,9 +80,11 @@ impl MutationOutput {
     /// The schema's conditional requirements, enforced beyond serde shape.
     fn validate(&self) -> Result<(), String> {
         match self.status {
-            MutationStatus::Unavailable => {
+            MutationStatus::Unavailable | MutationStatus::Queued => {
                 if self.reason.as_deref().unwrap_or_default().is_empty() {
-                    return Err("an unavailable settlement requires a typed reason".to_owned());
+                    return Err(
+                        "an unavailable or queued settlement requires a typed reason".to_owned(),
+                    );
                 }
             }
             MutationStatus::Accepted | MutationStatus::Duplicate => {
@@ -157,6 +160,9 @@ pub(super) struct SummarizeRun {
     /// one before — what a seat reads instead of the log.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) status: Option<String>,
+    /// The tail of its newest pod's log, redacted, when the read asked for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) log: Option<Vec<String>>,
 }
 
 /// `kube.snapshot.read.output`: ok carries the wire projection (null when the
@@ -173,6 +179,8 @@ pub(super) struct SnapshotOutput {
         deserialize_with = "deserialize_present_projection"
     )]
     pub(super) projection: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) lanes: Option<Vec<Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) reason: Option<String>,
 }
@@ -254,6 +262,7 @@ pub(super) fn snapshot_unavailable(reason: String) -> Value {
     serde_json::to_value(SnapshotOutput {
         status: ReadStatus::Unavailable,
         projection: None,
+        lanes: None,
         reason: Some(reason),
     })
     .unwrap_or(Value::Null)
@@ -296,6 +305,69 @@ pub(super) fn mutation_settlement(
     }
 }
 
+/// Nothing was created: no node had room, so the launch waits in the launch queue.
+pub(super) fn queued_settlement(run_id: &str, operation_id: &str) -> MutationOutput {
+    MutationOutput {
+        status: MutationStatus::Queued,
+        run_id: run_id.to_owned(),
+        operation_id: Some(operation_id.to_owned()),
+        worker_id: None,
+        job_name: None,
+        resource_version: None,
+        reason: Some(
+            "this pod cannot start now (no node has room, or for a batch item its seat or lane \
+             pod cap is full), so it is queued; it starts when a running pod ends, and the \
+             session that launched it is told how it went"
+                .to_owned(),
+        ),
+        checkpoint: None,
+        checkpoint_bytes: None,
+        report: None,
+    }
+}
+
+/// An offload run's settlement: the run on its compute target, named by its folder there.
+pub(super) fn offload_settlement(
+    status: MutationStatus,
+    operation_id: &str,
+    run: &crate::live::offload::OffloadRun,
+) -> MutationOutput {
+    MutationOutput {
+        status,
+        run_id: run.run_id.as_str().to_owned(),
+        operation_id: Some(operation_id.to_owned()),
+        worker_id: None,
+        job_name: Some(run.name.clone()),
+        // An offload run has no cluster object: the target's own job (the Slurm id or the
+        // transient systemd unit) is what the settlement binds.
+        resource_version: Some(run.job.clone()),
+        reason: Some(format!(
+            "offload run on compute target {} (job {}), {:?}",
+            run.target, run.job, run.state
+        )),
+        checkpoint: None,
+        checkpoint_bytes: None,
+        report: None,
+    }
+}
+
+/// The summary row of an offload run, read from the offload journal: it has no Job to observe.
+pub(super) fn offload_summarize_row(run: &crate::live::offload::OffloadRun) -> SummarizeRun {
+    SummarizeRun {
+        run_id: run.run_id.as_str().to_owned(),
+        job_name: run.name.clone(),
+        state: state_name(run.workload_state()),
+        resource_version: run.job.clone(),
+        profile: Some(run.profile.clone()),
+        node: run.node_id().map(|node| node.to_string()),
+        seat: run.seat_id.as_ref().map(ToString::to_string),
+        started_at: run.started_at.and_then(rfc3339),
+        finished_at: run.finished_at.and_then(rfc3339),
+        status: None,
+        log: None,
+    }
+}
+
 pub(super) fn summarize_row(
     tool: &'static str,
     observation: &JobObservation,
@@ -330,6 +402,7 @@ pub(super) fn summarize_row(
         started_at: observation.workload.started_at.and_then(rfc3339),
         finished_at: observation.workload.finished_at.and_then(rfc3339),
         status: None,
+        log: None,
     })
 }
 
@@ -448,6 +521,18 @@ mod snapshot_evidence_tests {
             "the relayed evidence keeps the projection field explicitly null"
         );
     }
+
+    #[test]
+    fn snapshot_evidence_preserves_lane_compute_budgets() {
+        let output = serde_json::json!({
+            "status": "ok", "projection": null,
+            "lanes": [{"lane": "sweep", "windowDays": 7,
+                "coreHours": {"used": 2.5, "cap": 10},
+                "gpuHours": {"used": 1.0, "cap": null},
+                "computeUsd": {"used": 0.5, "cap": 20}}]
+        });
+        assert_eq!(extract(output.clone()).unwrap(), output);
+    }
 }
 
 #[cfg(test)]
@@ -530,5 +615,36 @@ mod mutation_evidence_tests {
         let mut explained = unavailable;
         explained["reason"] = "the cluster is not configured".into();
         assert!(extract(explained).is_ok());
+    }
+
+    /// An offload create has no Job: it binds the run's folder and the target's own job, so its
+    /// settlement passes the create evidence and the run lists like a pod.
+    #[test]
+    fn an_offload_settlement_binds_its_target_job_and_lists() {
+        let run: crate::live::offload::OffloadRun = serde_json::from_value(serde_json::json!({
+            "run_id": "run.offload", "profile": "stub", "target": "mini",
+            "name": "run-offload", "remote_dir": "/tmp/odin/run-offload",
+            "job": "odin-offload-run-offload.service", "state": "running",
+            "submitted_at": serde_json::to_value(time::OffsetDateTime::UNIX_EPOCH).unwrap(),
+            "export_host_folder": "/srv/odin/export",
+        }))
+        .expect("an offload run");
+        let settled = serialize_output(
+            "kube_workload_create",
+            &offload_settlement(MutationStatus::Accepted, "op-1", &run),
+        )
+        .expect("the settlement serializes");
+        let evidence = extract_mutation_evidence(
+            "kube_workload_create",
+            serde_json::json!({ "output": settled }),
+        )
+        .expect("an offload create settles with evidence");
+        assert_eq!(evidence["jobName"], run.name.as_str());
+        assert_eq!(evidence["resourceVersion"], run.job.as_str());
+
+        let row = serde_json::to_value(offload_summarize_row(&run)).unwrap();
+        assert_eq!(row["runId"], "run.offload");
+        assert_eq!(row["state"], "running");
+        assert_eq!(row["resourceVersion"], run.job.as_str());
     }
 }

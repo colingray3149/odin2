@@ -14,6 +14,19 @@ pub(super) fn validate_creation_holder(
     seat: &SeatToml,
     findings: &mut Vec<RegistryFinding>,
 ) {
+    if object.id == "supervisor" {
+        for capability in &seat.tool_refs {
+            if matches!(capability.as_str(), "build.run" | "toolset:build") {
+                findings.push(relation_failure(
+                    object,
+                    format!(
+                        "supervisor may not hold build authority {:?}",
+                        capability.as_str()
+                    ),
+                ));
+            }
+        }
+    }
     if seat.conversation.is_some() {
         return;
     }
@@ -22,8 +35,8 @@ pub(super) fn validate_creation_holder(
             findings.push(relation_failure(
                 object,
                 format!(
-                    "tool_refs entry {:?} creates kernel declarations; only the owner-facing \
-                     conversation seat may hold it",
+                    "tool_refs entry {:?} creates or changes kernel declarations or merges; only \
+                     the owner-facing conversation seat may hold it",
                     capability.as_str()
                 ),
             ));
@@ -467,6 +480,42 @@ mod tests {
 mod creation_tests {
     use super::super::fixtures::{seat_mut, seat_object_named};
     use super::validate_creation_holder;
+
+    /// A watcher may not acquire merge authority through a live edit.
+    #[test]
+    fn a_watcher_seat_may_not_merge() {
+        let mut watcher = seat_object_named("supervisor", "", false);
+        seat_mut(&mut watcher).tool_refs = std::collections::BTreeSet::from([
+            "task.steer".parse().expect("capability id"),
+            "git.branch.merge".parse().expect("capability id"),
+        ]);
+        let mut findings = Vec::new();
+        validate_creation_holder(
+            &watcher,
+            super::super::fixtures::seat_mut(&mut watcher.clone()),
+            &mut findings,
+        );
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].message.contains("git.branch.merge"));
+    }
+
+    #[test]
+    fn supervisor_may_not_acquire_build_authority() {
+        for capability in ["build.run", "toolset:build"] {
+            let mut supervisor = seat_object_named("supervisor", "", false);
+            seat_mut(&mut supervisor).tool_refs =
+                std::collections::BTreeSet::from([capability.parse().expect("capability id")]);
+            let mut findings = Vec::new();
+            validate_creation_holder(
+                &supervisor,
+                super::super::fixtures::seat_mut(&mut supervisor.clone()),
+                &mut findings,
+            );
+            assert!(findings
+                .iter()
+                .any(|finding| finding.message.contains(capability)));
+        }
+    }
 
     #[test]
     fn only_a_conversation_seat_may_hold_creation_capabilities() {

@@ -21,6 +21,8 @@ pub(super) enum HuginnApprovalsCommand {
     Show(HuginnIdArgs),
     Approve(HuginnApprovalDecisionArgs),
     Reject(HuginnApprovalDecisionArgs),
+    /// Reconcile one uncertain CFD operation using its recorded upstream binding.
+    RecoverCfd(HuginnRecoveryArgs),
 }
 
 #[derive(Debug, Args)]
@@ -31,6 +33,14 @@ pub(super) struct HuginnApprovalDecisionArgs {
     approval: String,
     #[arg(long, value_name = "REVISION")]
     expected_revision: u64,
+}
+
+#[derive(Debug, Args)]
+pub(super) struct HuginnRecoveryArgs {
+    #[arg(long, value_name = "ID")]
+    command_id: String,
+    #[arg(long, value_name = "ID")]
+    operation: String,
 }
 
 impl HuginnApprovalsCommand {
@@ -44,6 +54,12 @@ impl HuginnApprovalsCommand {
             )),
             Self::Approve(arguments) => approval_plan(arguments, live::ApprovalDecision::Approve),
             Self::Reject(arguments) => approval_plan(arguments, live::ApprovalDecision::Reject),
+            Self::RecoverCfd(arguments) => Ok(HuginnPlan::request(
+                live::HuginnRequest::RecoverCfdOperation(live::RecoverCfdOperation {
+                    command_id: parse_id(&arguments.command_id, "command ID")?,
+                    operation_id: arguments.operation,
+                }),
+            )),
         }
     }
 }

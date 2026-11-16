@@ -21,19 +21,15 @@ use crate::capability::{
     ActionArguments, ActionRequest, ActivationStructure, ArtifactPublication, ArtifactPublisher,
     PublicationKind, ReadRequest, SanitizedUrl, TypedRead,
 };
-use crate::download::QuarantineRecord;
-use crate::policy::{ActionRule, BrowserPolicySnapshot, BrowserPolicyUpdate, StructuralAction};
+use crate::policy::{ActionRule, BrowserPolicySnapshot, StructuralAction};
 use crate::safety::{BrowserSafetyGate, OutboundBlockReason, OutboundFragment, OutboundVerdict};
 use crate::stream::FrameStream;
-use crate::takeover::LocalReclaim;
 
 use super::actions::{self, ActionDispatch, ActionDispatchLimits};
 use super::reads;
-use super::state::remote_takeover_holder;
 use super::{
-    AbandonedAction, ActionId, BrowserControlSnapshot, BrowserHandle, ConsumedApproval,
-    ExecutedAction, PendingAction, PolicyUpdateReport, PreparedActionView, SessionError,
-    SessionPhase, TakeoverLeaseExpiry,
+    AbandonedAction, ActionId, BrowserHandle, ConsumedApproval, ExecutedAction, PendingAction,
+    PreparedActionView, SessionError, SessionPhase,
 };
 
 const SCREENSHOT_MEDIA_TYPE: &str = "image/png";
@@ -55,83 +51,17 @@ impl BrowserHandle {
         self.state.lock().await.view.clone()
     }
 
-    pub async fn phase(&self) -> SessionPhase {
-        self.state.lock().await.phase
-    }
-
     pub async fn control_revision(&self) -> u64 {
         self.state.lock().await.control_revision
-    }
-
-    /// Atomic controller/revision/holder observation for durable restart and
-    /// lease-expiry reconciliation.
-    pub async fn control_snapshot(&self) -> BrowserControlSnapshot {
-        let state = self.state.lock().await;
-        BrowserControlSnapshot {
-            control_revision: state.control_revision,
-            takeover: state.takeover.view(),
-            remote_holder: remote_takeover_holder(state.takeover.status()),
-            lease_token: state.takeover_lease_token,
-            lease_deadline: state.takeover.lease_deadline(),
-            pending_action: state.pending.as_ref().map(|pending| pending.id),
-        }
     }
 
     pub async fn policy(&self) -> BrowserPolicySnapshot {
         self.state.lock().await.policy.clone()
     }
 
-    pub async fn takeover_view(&self) -> BrowserTakeoverView {
-        self.state.lock().await.takeover.view()
-    }
-
     /// Bounded retained download views, including terminal failures.
     pub async fn download_views(&self) -> Vec<BrowserDownloadView> {
         self.state.lock().await.downloads.views()
-    }
-
-    /// Bounded scanner-confirmed quarantine evidence.
-    pub async fn quarantine_records(&self) -> Vec<QuarantineRecord> {
-        self.state.lock().await.downloads.quarantine_records()
-    }
-
-    /// Compare-and-swap policy replacement. A pending action bound to the
-    /// superseded (revision, digest) pair is abandoned in the same critical
-    /// section and reported, so a stale action can never reach dispatch.
-    pub async fn update_policy(
-        &self,
-        update: BrowserPolicyUpdate,
-    ) -> Result<PolicyUpdateReport, SessionError> {
-        let mut state = self.state.lock().await;
-        state.require_live()?;
-        state
-            .expire_takeover_lease(OffsetDateTime::now_utc(), true)
-            .await?;
-        let outcome = state.policy.apply(&update)?;
-        let abandoned = if state
-            .pending
-            .as_ref()
-            .is_some_and(|pending| !outcome.snapshot.binding_is_current(&pending.policy))
-        {
-            let pending = state.pending.as_ref().expect("pending action was present");
-            let abandoned_id = pending.id;
-            state.release_action_binding(&pending.preflight).await?;
-            state.pending = None;
-            Some(abandoned_id)
-        } else {
-            None
-        };
-        // Commit the new control generation before installing or projecting
-        // the policy update; stale hosts fail the durable CAS.
-        state.bump_control_revision(OffsetDateTime::now_utc())?;
-        state.policy = outcome.snapshot.clone();
-        state.observe_view();
-        Ok(PolicyUpdateReport {
-            snapshot: outcome.snapshot,
-            invalidation: outcome.invalidation,
-            abandoned,
-            control_revision: state.control_revision,
-        })
     }
 
     /// One bounded, always-untrusted typed read against the live page.
@@ -383,70 +313,6 @@ impl BrowserHandle {
         )?;
         state.observe_view();
         Ok(view)
-    }
-
-    /// Locally reclaims a held remote controller. Sealed to the local
-    /// supervisor; no remotely decoded command can mint this transition.
-    pub async fn reclaim_takeover_locally(&self) -> Result<BrowserTakeoverView, SessionError> {
-        let mut state = self.state.lock().await;
-        state.require_active()?;
-        state
-            .expire_takeover_lease(OffsetDateTime::now_utc(), true)
-            .await?;
-        let now = OffsetDateTime::now_utc();
-        let mut proposed_takeover = state.takeover.clone();
-        proposed_takeover.reclaim_locally(LocalReclaim::local(), now)?;
-        let next_control_revision = state.next_control_revision()?;
-        state.commit_takeover_transition(proposed_takeover, None, next_control_revision, now)?;
-        state.observe_view();
-        Ok(state.takeover.view())
-    }
-
-    /// Returns a locally reclaimed controller to the available state. Also
-    /// sealed against remote commands.
-    pub async fn release_takeover_locally(&self) -> Result<BrowserTakeoverView, SessionError> {
-        let mut state = self.state.lock().await;
-        state.require_active()?;
-        state
-            .expire_takeover_lease(OffsetDateTime::now_utc(), true)
-            .await?;
-        let now = OffsetDateTime::now_utc();
-        let mut proposed_takeover = state.takeover.clone();
-        proposed_takeover.make_available_locally(LocalReclaim::local(), now)?;
-        let next_control_revision = state.next_control_revision()?;
-        state.commit_takeover_transition(proposed_takeover, None, next_control_revision, now)?;
-        state.observe_view();
-        Ok(state.takeover.view())
-    }
-
-    /// Runs the production takeover-lease expiry path now, as local
-    /// supervision: a held lease is retired exactly as the production timer
-    /// retires a due one — the in-flight owner action is cancelled, the
-    /// holder and its token stop surviving, the takeover revision advances
-    /// into the available state, and the control revision advances so
-    /// every token bound below it is stale. Returns the exact retirement
-    /// facts, or `None` when no lease is held. Sealed against remote
-    /// commands, like every local takeover transition.
-    pub async fn expire_takeover_lease(&self) -> Result<Option<TakeoverLeaseExpiry>, SessionError> {
-        let mut state = self.state.lock().await;
-        state.require_active()?;
-        state
-            .expire_takeover_lease(OffsetDateTime::now_utc(), false)
-            .await
-    }
-
-    /// Takes the sole lossless expiry observation not already delivered by
-    /// [`super::BrowserSession::next_event`]. Exactly one consumer wins; a new lease
-    /// is not admitted until this cancellation fact has been consumed.
-    pub async fn take_expiry_observation(&self) -> Option<TakeoverLeaseExpiry> {
-        self.state.lock().await.lease_expiry_unreported.take()
-    }
-
-    /// Deadline at which the currently held takeover control lease expires.
-    /// `None` while no lease is held. The production session pump retires the
-    /// lease itself once this deadline passes.
-    pub async fn takeover_lease_deadline(&self) -> Option<OffsetDateTime> {
-        self.state.lock().await.takeover.lease_deadline()
     }
 }
 /// Composed host scopes require exact equality and cannot be widened by page content.

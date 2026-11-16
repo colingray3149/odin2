@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.workload.create_many.output.json",
+  "title": "kube.workload.create_many output",
+  "description": "The batch and the durable operation for each held launch.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "batch": {"type": "string", "minLength": 1, "maxLength": 128},
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {"type": "string", "minLength": 1, "maxLength": 60},
+          "operation": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
+          "status": {"type": "string", "enum": ["queued", "accepted", "refused"]}
+        },
+        "required": ["label", "operation", "status"]
+      }
+    }
+  },
+  "required": ["batch", "items"]
+}

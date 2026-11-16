@@ -4,13 +4,7 @@
 //! value still is, and the error says which field and what a good call looks like.
 use serde_json::{json, Map, Value};
 
-/// Names models swap for one another. The schema's own spelling wins, the first one it declares.
-const SYNONYMS: [&[&str]; 4] = [
-    &["artifact", "artifactId"],
-    &["query", "q"],
-    &["name", "title", "file_name"],
-    &["question", "prompt"],
-];
+use odin_registry::listing::SYNONYMS;
 
 /// The result field naming the fields a read dropped, so the model learns the real shape.
 pub const IGNORED_FIELDS: &str = "ignored_fields";
@@ -18,11 +12,15 @@ pub const IGNORED_FIELDS: &str = "ignored_fields";
 /// The member's payload from a call's arguments, and the fields dropped on the way. `op` and the help
 /// target are envelope; `args` and top-level fields are one bag, so an on-demand call and an inline one
 /// mean the same; a synonym takes the schema's spelling; a path the schema roots in a directory takes
-/// it; a required field with a declared `default` is filled; and a read (`read_only`) sheds fields
-/// the schema does not declare. A write keeps them, so the validator names the field and nothing runs
-/// on a guess, except where the schema pairs an `action` with its `arguments` (the browser's): a
-/// field outside them is that action's argument.
-pub(super) fn payload(schema: &Value, read_only: bool, arguments: Value) -> (Value, Vec<String>) {
+/// it; a required field with a declared `default` is filled; and a field `shed` names (a read's
+/// field that another op of its toolset declares) is dropped. Any other undeclared field stays, so
+/// `unknown` refuses it by name and nothing runs on a guess, except where the schema pairs an
+/// `action` with its `arguments` (the browser's): a field outside them is that action's argument.
+pub(super) fn payload(
+    schema: &Value,
+    shed: impl Fn(&str) -> bool,
+    arguments: Value,
+) -> (Value, Vec<String>) {
     let Value::Object(mut fields) = arguments else {
         return (arguments, Vec::new());
     };
@@ -73,8 +71,10 @@ pub(super) fn payload(schema: &Value, read_only: bool, arguments: Value) -> (Val
             .cloned()
             .collect();
         for field in stray {
-            if fields[&field].is_null() {
-                // A null names nothing.
+            if fields[&field].is_null() || (!acts && empty(&fields[&field])) {
+                // A null, or the empty value a strict lane fills every field of the toolset's
+                // union with ("", "null", 0, false, [], {}), names nothing; an action's own
+                // arguments (a scroll's deltaX of 0) still mean what they say.
                 fields.remove(&field);
             } else if let Some(spelling) = synonym(&field, properties, &fields) {
                 if let Some(value) = fields.remove(&field) {
@@ -90,7 +90,7 @@ pub(super) fn payload(schema: &Value, read_only: bool, arguments: Value) -> (Val
                         arguments.entry(field).or_insert(value);
                     }
                 }
-            } else if read_only {
+            } else if shed(&field) {
                 fields.remove(&field);
                 ignored.push(field);
             }
@@ -116,6 +116,50 @@ pub(super) fn payload(schema: &Value, read_only: bool, arguments: Value) -> (Val
         }
     }
     (Value::Object(fields), ignored)
+}
+
+/// Refuses the fields a closed schema does not declare, naming them and the fields the model may
+/// give; host-filled (`readOnly`) fields are declared, so a call may carry them, but are not listed.
+pub(super) fn unknown(schema: &Value, arguments: &Value) -> Result<(), String> {
+    let (Some(properties), Some(fields)) = (
+        schema.get("properties").and_then(Value::as_object),
+        arguments.as_object(),
+    ) else {
+        return Ok(());
+    };
+    if schema.get("additionalProperties") != Some(&Value::Bool(false)) {
+        return Ok(());
+    }
+    let stray: Vec<&str> = fields
+        .keys()
+        .filter(|field| !properties.contains_key(*field))
+        .map(String::as_str)
+        .collect();
+    if stray.is_empty() {
+        return Ok(());
+    }
+    let allowed: Vec<&str> = properties
+        .iter()
+        .filter(|(_, property)| property.get("readOnly") != Some(&Value::Bool(true)))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    Err(format!(
+        "unknown field {}; the fields are {}",
+        stray.join(", "),
+        allowed.join(", ")
+    ))
+}
+
+/// A value that says nothing: what a model writes for a field it has nothing to put in.
+fn empty(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Bool(flag) => !flag,
+        Value::Number(number) => number.as_f64() == Some(0.0),
+        Value::String(text) => text.is_empty() || text == "null",
+        Value::Array(items) => items.is_empty(),
+        Value::Object(fields) => fields.is_empty(),
+    }
 }
 
 /// The directory a path property's pattern roots it in: `^/export/[A-Za-z0-9]...` is `/export/`.
@@ -148,9 +192,9 @@ fn required(schema: &Value) -> impl Iterator<Item = &str> {
 }
 
 /// One call that satisfies the schema's required fields, for an error to show beside the bad field.
-/// A good call for `op`: its required fields, inside `args` as JSON text for an on-demand
-/// operation, the one form every provider can send.
-pub(super) fn example(tool: &str, op: &str, schema: &Value, on_demand: bool) -> String {
+/// A good call for `op`: its required fields inside `args` as JSON text, the one form every provider
+/// can send.
+pub(super) fn example(tool: &str, op: &str, schema: &Value) -> String {
     let mut fields = Map::new();
     for name in required(schema).filter(|name| *name != "op") {
         let property = schema.pointer(&format!("/properties/{name}"));
@@ -160,12 +204,37 @@ pub(super) fn example(tool: &str, op: &str, schema: &Value, on_demand: bool) -> 
         }
     }
     let mut call = Map::from_iter([("op".to_owned(), json!(op))]);
-    if on_demand {
+    if !fields.is_empty() {
         call.insert("args".to_owned(), json!(Value::Object(fields).to_string()));
-    } else {
-        call.extend(fields);
     }
     format!("{tool} {}", Value::Object(call))
+}
+
+/// The canonical schema with the narrowing's required fields added, so an example for a narrowed
+/// call names what the narrowing requires too (a projected `project`, for one).
+pub(super) fn narrowed(schema: &Value, narrowing: &Value) -> Value {
+    let mut merged = schema.clone();
+    let mut names: Vec<String> = required(schema).map(str::to_owned).collect();
+    for name in required(narrowing) {
+        if !names.iter().any(|known| known == name) {
+            names.push(name.to_owned());
+        }
+    }
+    if let Some(object) = merged.as_object_mut() {
+        object.insert("required".to_owned(), json!(names));
+    }
+    // A property only the narrowing declares keeps its shape for the placeholder.
+    if let (Some(properties), Some(narrowed)) = (
+        merged.get_mut("properties").and_then(Value::as_object_mut),
+        narrowing.get("properties").and_then(Value::as_object),
+    ) {
+        for (name, property) in narrowed {
+            properties
+                .entry(name.clone())
+                .or_insert_with(|| property.clone());
+        }
+    }
+    merged
 }
 
 fn placeholder(name: &str, property: Option<&Value>) -> Value {
@@ -266,22 +335,7 @@ mod tests {
                 json!({"kind":"status"}),
                 vec![],
             ),
-            // Fields a read has no use for are dropped and named: brain.search limit, brain.read max_pages,
-            // files.list limit, status.jobs lines.
-            (
-                "brain.search",
-                true,
-                json!({"op":"search","query":"orders","limit":5}),
-                json!({"query":"orders"}),
-                vec!["limit"],
-            ),
-            (
-                "brain.read",
-                true,
-                json!({"op":"read","url":"brain://x","max_pages":3}),
-                json!({"url":"brain://x"}),
-                vec!["max_pages"],
-            ),
+            // Fields a read has no use for are dropped and named: files.list limit, status.jobs lines.
             (
                 "files.list",
                 true,
@@ -301,7 +355,7 @@ mod tests {
                 "seat.ask",
                 false,
                 json!({"op":"ask_gungnir","prompt":"count the vendors","subject":"orders"}),
-                json!({"question":"count the vendors","subject":"orders"}),
+                json!({"question":"count the vendors","subject":"orders","urgency":"medium"}),
                 vec![],
             ),
             // A strict lane's nulls for fields the member never had name nothing, on a write too.
@@ -314,7 +368,7 @@ mod tests {
             ),
         ];
         for (capability, read_only, sent, meant, dropped) in table {
-            let (payload, ignored) = payload(&schema(capability), read_only, sent.clone());
+            let (payload, ignored) = payload(&schema(capability), |_| read_only, sent.clone());
             assert_eq!(payload, meant, "{capability} {sent}");
             assert_eq!(ignored, dropped, "{capability} {sent}");
         }
@@ -449,7 +503,7 @@ mod tests {
         });
         for (capability, read_only, sent, meant, dropped) in table.into_iter().chain(bare) {
             let schema = schema(capability);
-            let (payload, ignored) = payload(&schema, read_only, sent.clone());
+            let (payload, ignored) = payload(&schema, |_| read_only, sent.clone());
             // A declared optional a strict lane left null goes the way `prepare_tool_call` takes it.
             let payload = crate::host_tools::schema_compat::drop_null_optionals(&schema, payload);
             assert_eq!(payload, meant, "{capability} {sent}");
@@ -461,16 +515,61 @@ mod tests {
     }
 
     #[test]
+    fn a_write_drops_the_empty_values_a_model_fills_other_operations_fields_with() {
+        let schema = json!({"type": "object", "additionalProperties": false,
+            "properties": {"runId": {"type": "string"}, "expectedResourceVersion": {"type": "string"}},
+            "required": ["runId", "expectedResourceVersion"]});
+        let call = json!({"op": "stop", "runId": "r1", "expectedResourceVersion": "7", "count": 0,
+            "inputs": [], "limits": {}, "args": "null", "company": "null", "offset": 0});
+        let (stopped, _) = payload(&schema, |_| false, call);
+        assert_eq!(
+            stopped,
+            json!({"runId": "r1", "expectedResourceVersion": "7"})
+        );
+        // A value that says something still reaches the validator, which names it.
+        let (kept, _) = payload(
+            &schema,
+            |_| false,
+            json!({"runId": "r1", "expectedResourceVersion": "7", "count": 3}),
+        );
+        assert_eq!(kept["count"], 3);
+    }
+
+    /// knowledge.dig with `case_sensitive` (its field is `case`): no op of the toolset declares it,
+    /// so the read keeps it and the refusal names it beside the fields the op takes.
+    #[test]
+    fn a_read_refuses_a_field_no_op_of_its_toolset_declares() {
+        let schema = schema("knowledge.dig");
+        let sent = json!({"op":"dig","query":"DoMINO","case_sensitive":true,"limit":0});
+        let (kept, ignored) = payload(&schema, |field| field == "maxBytes", sent);
+        assert!(ignored.is_empty());
+        let refusal = unknown(&schema, &kept).expect_err("an undeclared field is refused");
+        assert!(refusal.contains("case_sensitive"), "{refusal}");
+        assert!(
+            refusal.contains("case") && refusal.contains("query"),
+            "{refusal}"
+        );
+        // A sibling op's field is shed, as before, and what is left passes.
+        let (shed, ignored) = payload(
+            &schema,
+            |field| field == "maxBytes",
+            json!({"op":"dig","query":"DoMINO","maxBytes":100}),
+        );
+        assert_eq!(ignored, vec!["maxBytes"]);
+        assert_eq!(unknown(&schema, &shed), Ok(()));
+    }
+
+    #[test]
     fn on_demand_arguments_written_as_json_text_are_the_same_call() {
         let schema = schema("artifact.read");
         let (object, _) = super::payload(
             &schema,
-            true,
+            |_| true,
             json!({"op":"artifact","args":{"artifactId":"a1"}}),
         );
         let (text, _) = super::payload(
             &schema,
-            true,
+            |_| true,
             json!({"op":"artifact","args":r#"{"artifactId":"a1"}"#}),
         );
         assert_eq!(text, object);
@@ -478,13 +577,25 @@ mod tests {
     }
 
     #[test]
-    fn an_on_demand_refusal_shows_its_arguments_as_json_text() {
+    fn a_missing_project_example_names_project() {
+        let canonical = schema("seat.ask");
+        assert!(!example("seat", "ask", &canonical).contains("project"));
+        let projected = narrowed(&canonical, &json!({"required": ["project"]}));
+        assert!(
+            example("seat", "ask", &projected).contains(r#"\"project\":\"<project>\""#),
+            "{}",
+            example("seat", "ask", &projected)
+        );
+    }
+
+    #[test]
+    fn a_refusal_shows_the_ops_arguments_as_json_text() {
         assert_eq!(
-            example("files", "artifact", &schema("artifact.read"), true),
+            example("files", "artifact", &schema("artifact.read")),
             r#"files {"args":"{\"artifactId\":\"<artifactId>\"}","op":"artifact"}"#
         );
         assert_eq!(
-            example("calendar", "now", &schema("time.get_current_time"), false),
+            example("calendar", "now", &schema("time.get_current_time")),
             r#"calendar {"op":"now"}"#
         );
     }

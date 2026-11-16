@@ -17,7 +17,7 @@ use serde_json::Value;
 use crate::host_tools::executor::internal_key_of;
 use crate::host_tools::HostToolRegistry;
 
-use super::{CompositionEquivalence, HostToolOperationError};
+use super::{CompositionEquivalence, HostToolOperationError, RevisionMaterial};
 
 /// Schemas resolved from the repository filesystem. Missing, escaping, or
 /// undecodable references fail closed; there is no fallback source. A parsed
@@ -222,6 +222,34 @@ impl OperationCatalog for DeclaredOperationCatalog {
                 .equivalence
                 .as_ref()
                 .is_some_and(|equivalence| equivalence.equivalent(digest))
+    }
+}
+
+/// One session's generation: the contracts and admission digest its token
+/// binds, with handler resolution and operator ownership from the running host.
+pub(super) struct GenerationCatalog<'a> {
+    pub material: &'a RevisionMaterial,
+    pub base: &'a dyn OperationCatalog,
+}
+
+impl OperationCatalog for GenerationCatalog<'_> {
+    fn admitted(&self, capability: &CapabilityId) -> Option<AdmittedCapability> {
+        if self.base.is_operator_owned(capability) {
+            return None;
+        }
+        Some(AdmittedCapability {
+            contract: self.material.contracts.get(capability)?.clone(),
+            snapshot_revision: i64::try_from(self.material.revision).ok()?,
+            snapshot_digest: self.material.admission_digest,
+        })
+    }
+
+    fn resolves(&self, binding: &HandlerBinding) -> bool {
+        self.base.resolves(binding)
+    }
+
+    fn is_operator_owned(&self, id: &CapabilityId) -> bool {
+        self.base.is_operator_owned(id)
     }
 }
 

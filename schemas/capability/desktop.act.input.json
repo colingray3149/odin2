@@ -91,8 +91,6 @@
             "wait",
             "waitFor",
             "structure",
-            "audio",
-            "media",
             "save",
             "type",
             "key",
@@ -100,11 +98,16 @@
             "beside",
             "close"
           ],
-          "description": "Fields: window for focus, fullscreen, close; windows for column (top to bottom) and beside (width?); app for launch; workspace index; move window+workspace|output; size window+width|height; click/point x,y; type text; key keys; wait ms; audio and media take action."
+          "description": "Fields: window for focus, fullscreen, close; windows for column (top to bottom) and beside (width?); app for launch; workspace index; move window+workspace|output; size window+width|height; click/point x,y; type text; key keys; wait ms. Prefer the named tools (audio, media, display, device); click only when no verb exists."
         },
         "window": {
-          "type": "integer",
-          "minimum": 1
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "maxLength": 128,
+          "description": "A window's id, or its app or title (\"discord\", \"palworld\") or \"focused\"."
         },
         "index": {
           "type": "integer",
@@ -281,20 +284,8 @@
             "uploadFile",
             "notifications",
             "clipboardRead",
-            "clipboardWrite",
-            "status",
-            "defaultOutput",
-            "volume",
-            "mute",
-            "route",
-            "appVolume",
-            "preset",
-            "play",
-            "pause",
-            "next",
-            "previous"
-          ],
-          "description": "Audio: defaultOutput sink; volume percent, sink?; mute muted; route application, sink; appVolume application, percent (one app's own volume). Media: status, pause, next, previous; play resumes, or with uri (a player URI or link, found by web search) and optional title opens it, checked against the link's own title."
+            "clipboardWrite"
+          ]
         },
         "app": {
           "type": [
@@ -360,43 +351,6 @@
         },
         "confirm": {
           "$ref": "#/$defs/press"
-        },
-        "sink": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "port": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "percent": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 100
-        },
-        "muted": {
-          "type": "boolean"
-        },
-        "application": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "description": "EasyEffects preset name for audio op preset."
-        },
-        "uri": {
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "required": [

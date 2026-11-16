@@ -34,7 +34,7 @@ pub struct RoutineTriggerToml {
     /// Narrows a workload event to one pod profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
-    /// Event-specific filter: mail query, title or file words, project ID, gesture name, or device kinds.
+    /// Event-specific filter: mail query, title or file words, project ID, gesture name, device kinds, or project event kinds.
     #[serde(default, rename = "match", skip_serializing_if = "Option::is_none")]
     pub matches: Option<String>,
     /// For `calendar_event`: how many minutes before the event starts.
@@ -43,6 +43,9 @@ pub struct RoutineTriggerToml {
     /// Absence watches every readable mail or calendar account.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// For `project_event`: the project whose events it follows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 pub const ROUTINE_MATCH_MAX_CHARS: usize = 200;
@@ -98,6 +101,21 @@ impl RoutineTriggerToml {
             }
             (_, None) => {}
         }
+        match (event, &self.project) {
+            (RoutineEvent::ProjectEvent, Some(project)) if !project.trim().is_empty() => {}
+            (RoutineEvent::ProjectEvent, _) => {
+                return Err(
+                    "a project_event routine names its project in trigger.project".to_owned(),
+                )
+            }
+            (_, Some(_)) => {
+                return Err(format!(
+                    "trigger.project belongs to project_event, not {}",
+                    event.as_str()
+                ))
+            }
+            (_, None) => {}
+        }
         if self.account.is_some()
             && !matches!(
                 event,
@@ -126,6 +144,10 @@ pub enum RoutineEvent {
     FileReceived,
     /// Includes pushes from any source, not just Odin.
     RepoPush,
+    /// A mission (any non-research pod) failed, aborted, paused, failed a render or went stale.
+    SimulationStage,
+    /// A project's tooling reported an event over Huginn (`odin huginn event`).
+    ProjectEvent,
 }
 
 impl RoutineEvent {
@@ -139,13 +161,15 @@ impl RoutineEvent {
             Self::CalendarEvent => "calendar_event",
             Self::FileReceived => "file_received",
             Self::RepoPush => "repo_push",
+            Self::SimulationStage => "simulation_stage",
+            Self::ProjectEvent => "project_event",
         }
     }
 
     pub const fn concerns_a_pod(self) -> bool {
         matches!(
             self,
-            Self::WorkloadSucceeded | Self::WorkloadFailed | Self::Watchdog
+            Self::WorkloadSucceeded | Self::WorkloadFailed | Self::Watchdog | Self::SimulationStage
         )
     }
 }
@@ -350,6 +374,34 @@ impl RoutineSchedule {
 mod tests {
     use super::*;
 
+
+    #[test]
+    fn a_project_event_trigger_names_its_project_and_nothing_else_takes_one() {
+        let trigger = |project: Option<&str>, matches: Option<&str>| RoutineTriggerToml {
+            schedule: None,
+            event: None,
+            profile: None,
+            matches: matches.map(str::to_owned),
+            lead_minutes: None,
+            account: None,
+            project: project.map(str::to_owned),
+        };
+        use RoutineEvent::*;
+        assert!(trigger(Some("project-alpha"), None)
+            .check_event(ProjectEvent)
+            .is_ok());
+        assert!(
+            trigger(Some("project-alpha"), Some("job_done dataset_registered"))
+                .check_event(ProjectEvent)
+                .is_ok()
+        );
+        assert!(trigger(None, Some("job_done"))
+            .check_event(ProjectEvent)
+            .is_err());
+        assert!(trigger(Some("project-alpha"), None)
+            .check_event(RepoPush)
+            .is_err());
+    }
 
     /// The grammar Sinmara writes from the owner's words: what parses, and what
     /// is refused with a reason she can act on.

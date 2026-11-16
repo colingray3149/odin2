@@ -35,6 +35,8 @@ pub struct RoutineSetRequest {
     pub lead_minutes: Option<u16>,
     /// The one mail or calendar account to watch.
     pub account: Option<String>,
+    /// The project a `project_event` routine follows.
+    pub project: Option<String>,
     /// `brief` or `dm`.
     pub action: String,
     pub text: String,
@@ -118,6 +120,7 @@ pub(super) fn routine_tools(runtime: &Arc<HermesRuntime>, tools: &mut Vec<Arc<dy
             matches: optional(&arguments, "match", 200)?,
             lead_minutes: lead_minutes(&arguments)?,
             account: optional(&arguments, "account", 254)?,
+            project: optional(&arguments, "project", 128)?,
             action: parse_string(&arguments, "action", 8)?,
             text: parse_string(&arguments, "text", 2_000)?,
         };
@@ -141,7 +144,8 @@ pub(super) fn routine_tools(runtime: &Arc<HermesRuntime>, tools: &mut Vec<Arc<dy
                  — e.g. 30 minutes before any class; file_received (he sends a file; optional \
                  `match` on its name); repo_push (any push to a project repository; optional \
                  `match` = the project); ring_gesture (the owner's smart ring: optional `match` = the \
-                 gesture name). Action: brief starts a turn with text as its instruction; \
+                 gesture name); project_event (a project's tooling reports an event, e.g. a job \
+                 done: `project` names the project, optional `match` = event kinds). Action: brief starts a turn with text as its instruction; \
                  dm sends text as written; on workload_succeeded or workload_failed it may \
                  name {label}, {outcome}, {summary} (the run's status summary) or {profile}. \
                  Routines use the seat's existing authority. \
@@ -227,8 +231,9 @@ pub struct RunFacts<'a> {
 }
 
 impl HermesRuntime {
-    /// Enabled seats whose `[live] watches` names `watch`.
-    pub fn seats_watching(&self, watch: &str) -> Vec<odin_domain::SeatId> {
+    /// Enabled seats whose `[live] watches` names `watch`, unqualified or as
+    /// `watch:<project>` for the event's `project`.
+    pub fn seats_watching(&self, watch: &str, project: Option<&str>) -> Vec<odin_domain::SeatId> {
         let Some(pin) = self.registry_pin() else {
             return Vec::new();
         };
@@ -239,7 +244,9 @@ impl HermesRuntime {
                 ObjectConfig::Seat(seat)
                     if seat.enabled
                         && seat.live.as_ref().is_some_and(|live| {
-                            live.watches.iter().any(|declared| declared == watch)
+                            live.watches
+                                .iter()
+                                .any(|declared| watch_matches(declared, watch, project))
                         }) =>
                 {
                     object.id.parse().ok()
@@ -247,6 +254,59 @@ impl HermesRuntime {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Whether any enabled seat watches `watch`, for any project.
+    pub fn any_seat_watches(&self, watch: &str) -> bool {
+        self.registry_pin().is_some_and(|pin| {
+            pin.current()
+                .objects
+                .iter()
+                .any(|object| match &object.config {
+                    ObjectConfig::Seat(seat) if seat.enabled => {
+                        seat.live.as_ref().is_some_and(|live| {
+                            live.watches.iter().any(|declared| {
+                                declared
+                                    .split_once(':')
+                                    .map_or(declared.as_str(), |(name, _)| name)
+                                    == watch
+                            })
+                        })
+                    }
+                    _ => false,
+                })
+        })
+    }
+
+    /// The project of `lane`, and the seat of that project's enabled
+    /// `owns_workloads` lane when one is declared.
+    pub fn workload_owner(
+        &self,
+        lane: &odin_domain::LaneId,
+    ) -> (Option<odin_domain::ProjectId>, Option<odin_domain::SeatId>) {
+        let Some(pin) = self.registry_pin() else {
+            return (None, None);
+        };
+        let snapshot = pin.current();
+        let lanes = || {
+            snapshot
+                .objects
+                .iter()
+                .filter_map(|object| match &object.config {
+                    ObjectConfig::Lane(declared) if declared.enabled => Some((object, declared)),
+                    _ => None,
+                })
+        };
+        let Some(project) = lanes()
+            .find(|(object, _)| object.id == lane.as_str())
+            .map(|(_, declared)| declared.project.clone())
+        else {
+            return (None, None);
+        };
+        let owner = lanes()
+            .find(|(_, declared)| declared.owns_workloads && declared.project == project)
+            .map(|(_, declared)| declared.default_seat.clone());
+        (Some(project), owner)
     }
 
     /// The enabled routines this runtime's conversation seat speaks for.
@@ -331,6 +391,26 @@ impl HermesRuntime {
             event,
             profile,
             RunFacts::default(),
+            key,
+            detail,
+            occurred_at_ms,
+        )
+    }
+
+    /// As [`Self::routine_event`] for an event a project's tooling reported:
+    /// it fires the routines whose `trigger.project` is `project` and whose
+    /// `match`, when present, names `kind`.
+    pub fn routine_project_event(
+        &self,
+        project: &str,
+        kind: &str,
+        key: &str,
+        detail: &str,
+        occurred_at_ms: i64,
+    ) -> Result<usize, String> {
+        self.routine_event(
+            RoutineEvent::ProjectEvent,
+            Some(&format!("{project} {kind}")),
             key,
             detail,
             occurred_at_ms,
@@ -621,12 +701,78 @@ fn narrows(trigger: &RoutineTriggerToml, event: RoutineEvent, profile: Option<&s
             .matches
             .as_deref()
             .is_none_or(|project| profile == Some(project.trim())),
+        // Neither a project id nor a kind holds a space: the subject is `<project> <kind>`.
+        RoutineEvent::ProjectEvent => profile
+            .and_then(|subject| subject.split_once(' '))
+            .is_some_and(|(project, kind)| {
+                trigger.project.as_deref().map(str::trim) == Some(project)
+                    && trigger
+                        .matches
+                        .as_deref()
+                        .is_none_or(|kinds| kinds.split_whitespace().any(|want| want == kind))
+            }),
         _ => true,
+    }
+}
+
+/// A declared watch entry `name` or `name:<project>` against an event of
+/// `watch` in `project`; an unqualified entry matches every project.
+fn watch_matches(declared: &str, watch: &str, project: Option<&str>) -> bool {
+    match declared.split_once(':') {
+        None => declared == watch,
+        Some((name, scoped)) => name == watch && project == Some(scoped),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::watch_matches;
+
+    #[test]
+    fn a_project_watch_wakes_only_for_its_project() {
+        assert!(watch_matches(
+            "workload_watch:project-alpha",
+            "workload_watch",
+            Some("project-alpha")
+        ));
+        assert!(!watch_matches(
+            "workload_watch:project-alpha",
+            "workload_watch",
+            Some("odin")
+        ));
+        assert!(!watch_matches(
+            "workload_watch:project-alpha",
+            "workload_watch",
+            None
+        ));
+        assert!(!watch_matches(
+            "workload_watch:project-alpha",
+            "child_report",
+            Some("project-alpha")
+        ));
+        assert!(watch_matches(
+            "workload_watch",
+            "workload_watch",
+            Some("odin")
+        ));
+        assert!(watch_matches("workload_watch", "workload_watch", None));
+        assert!(watch_matches(
+            "simulation:project-alpha",
+            "simulation",
+            Some("project-alpha")
+        ));
+        assert!(!watch_matches(
+            "simulation:project-alpha",
+            "simulation",
+            Some("odin")
+        ));
+        assert!(!watch_matches(
+            "simulation:project-alpha",
+            "simulation",
+            None
+        ));
+        assert!(watch_matches("simulation", "simulation", Some("odin")));
+    }
 
 
 

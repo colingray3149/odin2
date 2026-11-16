@@ -209,6 +209,8 @@ impl Ctx {
         self.http
             .get_or_init(|| {
                 reqwest::blocking::Client::builder()
+                    // Some APIs answer 403 to a request that names no User-Agent.
+                    .user_agent("odin")
                     .connect_timeout(HTTP_CONNECT)
                     .timeout(HTTP_TOTAL)
                     .redirect(reqwest::redirect::Policy::none())
@@ -241,7 +243,8 @@ impl Ctx {
 
 /// The folder name of a call key, in scratch and quarantine alike: letters, digits,
 /// `-` and `.`; anything else becomes `_`. A key with nothing to name it by is refused,
-/// so no call can resolve to a root's own folder or its parent.
+/// so no call can resolve to a root's own folder or its parent; nor can one be named
+/// like the staged-inputs folder, whose release would remove every call's inputs.
 pub(crate) fn call_folder_name(key: &str) -> Result<String, Failure> {
     let name: String = key
         .chars()
@@ -257,6 +260,11 @@ pub(crate) fn call_folder_name(key: &str) -> Result<String, Failure> {
         return Err(Failure::arguments(
             "the call has no command id to name its working folder",
         ));
+    }
+    if name == INPUTS_FOLDER {
+        return Err(Failure::arguments(format!(
+            "the call key {key:?} names the staged-inputs folder, not a call"
+        )));
     }
     Ok(name)
 }
@@ -275,7 +283,7 @@ mod tests {
     #[test]
     fn a_call_key_names_one_folder_and_a_key_with_nothing_to_name_it_by_is_refused() {
         assert_eq!(call_folder_name("cmd 1/x").unwrap(), "cmd_1_x");
-        for bad in ["", ".", "..", "__"] {
+        for bad in ["", ".", "..", "__", "in"] {
             assert!(call_folder_name(bad).is_err(), "{bad:?}");
         }
         let dir = tempfile::tempdir().expect("dir");

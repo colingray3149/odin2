@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["dry_run"],"properties":{"dry_run":{"type":"boolean"},"method":{"type":"string"},"url":{"type":"string"},"body":{"type":"object"},"lease":{"type":"object"}},"additionalProperties":false}

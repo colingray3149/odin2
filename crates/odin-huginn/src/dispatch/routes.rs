@@ -49,6 +49,7 @@ fn huginn_request_is_read_only(request: &HuginnRequest) -> bool {
         | HuginnRequest::LaneCommand(_)
         | HuginnRequest::KubeCommand(_)
         | HuginnRequest::ApprovalDecision(_)
+        | HuginnRequest::RecoverCfdOperation(_)
         | HuginnRequest::ListFiles(_)
         | HuginnRequest::ReadFile(_)
         | HuginnRequest::WatchFiles(_)
@@ -65,6 +66,7 @@ fn huginn_request_is_read_only(request: &HuginnRequest) -> bool {
         | HuginnRequest::BrowserObserve(_)
         | HuginnRequest::SimulationCommand(_)
         // A ring gesture fires the authority's routines.
+        | HuginnRequest::ProjectEvent(_)
         | HuginnRequest::AcquireTerminalControl(_)
         | HuginnRequest::WriteTerminal(_)
         | HuginnRequest::ResizeTerminal(_)
@@ -91,6 +93,7 @@ fn huginn_request_needs_device(request: &HuginnRequest) -> bool {
         HuginnRequest::BrowserCommand(_)
         | HuginnRequest::BrowserObserve(_)
         | HuginnRequest::ApprovalDecision(_)
+        | HuginnRequest::RecoverCfdOperation(_)
         | HuginnRequest::ConversationStatus
         | HuginnRequest::ConversationThread(_)
         | HuginnRequest::ConversationSay(_)
@@ -106,6 +109,7 @@ fn huginn_request_needs_device(request: &HuginnRequest) -> bool {
         | HuginnRequest::LaneCommand(_)
         | HuginnRequest::KubeCommand(_)
         | HuginnRequest::SimulationCommand(_)
+        | HuginnRequest::ProjectEvent(_)
         | HuginnRequest::EmergencyStop(_)
         // Session tokens must be associated with the calling device.
         | HuginnRequest::OpenSession(_) => true,

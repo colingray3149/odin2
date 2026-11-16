@@ -176,16 +176,6 @@ impl McpEndpoint {
         }}})
     }
 
-    /// The ACP `mcpServers` entry (`session/new`, `session/load`).
-    pub fn acp_server(&self) -> Value {
-        json!({
-            "type": "http",
-            "name": SERVER_NAME,
-            "url": self.url,
-            "headers": [{"name": "Authorization", "value": format!("Bearer {}", self.bearer)}],
-        })
-    }
-
     /// Writes the Claude Code config, owner-only, replacing any older one.
     pub fn write_config(&self, path: &Path) -> std::io::Result<()> {
         use std::io::Write as _;

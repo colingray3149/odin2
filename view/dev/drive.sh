@@ -51,7 +51,7 @@ start)
 			output HEADLESS-1 resolution $size bg #1d1620 solid_color
 			default_border none
 		EOF
-		sockets() { for s in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do [ -e "$s" ] && [ "${s%.lock}" = "$s" ] && echo "${s##*/}"; done; }
+		sockets() { for s in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do [ -e "$s" ] && [ "${s%.lock}" = "$s" ] && echo "${s##*/}"; done; return 0; }
 		before=$(sockets)
 		WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WAYLAND_DISPLAY="" \
 			setsid nix shell "${tools[@]}" -c sway -c "$run/sway.conf" >"$run/sway.log" 2>&1 &

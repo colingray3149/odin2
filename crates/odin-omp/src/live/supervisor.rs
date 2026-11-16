@@ -76,6 +76,14 @@ pub struct LiveSupervisor {
     /// is woken only by events.
     heartbeat_intervals:
         std::sync::Mutex<std::collections::HashMap<odin_domain::SeatId, std::time::Duration>>,
+    /// Seats whose heartbeat fires only when what they watch moved.
+    heartbeat_changed_only: std::sync::Mutex<std::collections::HashSet<odin_domain::SeatId>>,
+    /// The watched-state digest at each session's last fired heartbeat.
+    heartbeat_digests: std::sync::Mutex<std::collections::HashMap<LiveSessionId, String>>,
+    /// Odin state beyond the live sessions (workloads, incidents) folded into
+    /// the heartbeat digest. Installed by the daemon; absent in fixtures.
+    heartbeat_watched:
+        std::sync::Mutex<Option<std::sync::Arc<dyn crate::live::service::HeartbeatWatched>>>,
     /// Weak handle of this `Arc`. Callbacks upgrade it; they never
     /// downgrade a bare `&Self`.
     self_weak: std::sync::Weak<LiveSupervisor>,

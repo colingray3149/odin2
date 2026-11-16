@@ -237,9 +237,14 @@
             install -m 0444 ${./extension/generated/odin-authority-wire-v2.ts} \
               "$out/generated/odin-authority-wire-v2.ts"
           '';
-          # The terminal view: OMP's TUI files plus Odin's app, run as plain
-          # TypeScript by bun; no dependencies, no build step.
-          odinView = pkgs.runCommand "odin-view" { } ''
+          # The terminal view runs as plain TypeScript by bun. Its PNG decoder is
+          # pinned separately so the installed view needs no network or npm install.
+          odinView = pkgs.runCommand "odin-view" {
+            pngjs = pkgs.fetchurl {
+              url = "https://registry.npmjs.org/pngjs/-/pngjs-7.0.0.tgz";
+              hash = "sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow==";
+            };
+          } ''
             cp -r ${
               pkgs.lib.fileset.toSource {
                 root = ./view;
@@ -251,6 +256,13 @@
                 );
               }
             } "$out"
+            chmod -R u+w "$out"
+            mkdir -p "$TMPDIR/pngjs" "$out/node_modules"
+            rm -rf "$out/node_modules/pngjs"
+            tar --delay-directory-restore --no-same-permissions -xzf "$pngjs" -C "$TMPDIR/pngjs" --strip-components=1
+            # npm's archive records both package directories as 0666, without search permission.
+            chmod u+rwx "$TMPDIR/pngjs" "$TMPDIR/pngjs/lib"
+            mv "$TMPDIR/pngjs" "$out/node_modules/pngjs"
           '';
           authorityWireV2Generated = pkgs.runCommand "odin-authority-wire-v2-generated" { } ''
             mkdir -p "$out/generated"
@@ -284,6 +296,22 @@
           odin-look = import ./nix/look.nix { inherit pkgs; };
           odin-ast-grep = import ./nix/ast-grep.nix { inherit pkgs; };
           obscura = pkgs.callPackage ./nix/obscura.nix { inherit craneLib; };
+          # web.read's fetch with Chrome's network fingerprint, after the plain reader is refused.
+          fetch-impersonated = pkgs.writers.writePython3Bin "odin-fetch-impersonated" {
+            libraries = [ pkgs.python3Packages.curl-cffi ];
+            doCheck = false;
+          } (builtins.readFile ./nix/fetch-impersonated.py);
+          # web.read's PDF tables: pdfplumber's tables as Markdown, after the document's text.
+          pdf-tables = pkgs.writers.writePython3Bin "odin-pdf-tables" {
+            libraries = [ pkgs.python3Packages.pdfplumber ];
+            doCheck = false;
+          } (builtins.readFile ./nix/pdf-tables.py);
+          # The workload image's declared CLI tools as one /bin, for the authority's own recon
+          # sandbox (osint.recon from a seat): the same paths a pod sees.
+          pod-tools = pkgs.symlinkJoin {
+            name = "odin-pod-tools";
+            paths = import ./nix/pod-tools.nix pkgs ++ [ pkgs.coreutils ];
+          };
           odin-devices = pkgs.callPackage ./nix/devices.nix { inherit craneLib; };
           odind = odindCli;
           odin-sidecar = odinSidecar;

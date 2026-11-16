@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.workload.queue_drop.input.json",
+  "title": "kube.workload.queue_drop input",
+  "description": "Drop your held launches by batch or by operation id; dropped launches never start.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "batch": {"type": "string", "minLength": 1, "maxLength": 128},
+    "operation": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"}
+  },
+  "oneOf": [{"required": ["batch"]}, {"required": ["operation"]}]
+}

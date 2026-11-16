@@ -17,6 +17,8 @@ pub struct VpnTransportBinding {
     /// Host executable that resolves a protected hostname to IPv4 addresses.
     /// Absent refuses hostname pins; it never falls back to host DNS.
     pub resolver: Option<PathBuf>,
+    /// The address the authority forwards the endpoint to, which a local pod's egress admits too.
+    pub forwarded: Option<IpAddr>,
 }
 
 impl VpnTransportBinding {
@@ -67,6 +69,8 @@ pub struct KubeConfig {
     /// Exact published node identities admitting new workload placement.
     /// Empty denies new placement without disabling observation or teardown.
     pub allowed_nodes: std::collections::BTreeSet<String>,
+    /// Each node's declared data roots; a launch with data mounts places only where they cover it.
+    pub node_data_roots: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     /// Per-request timeout, including the connect probe.
     pub request_timeout: Duration,
     /// Timeout for Job stop and suspend settlement.

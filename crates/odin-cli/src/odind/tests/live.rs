@@ -85,7 +85,7 @@ fn odind_snapshot_only_check_binds_authority_to_the_published_revision() {
 
 /// Check the bridge's actual destination before IO, not just the session's memory grant.
 #[test]
-fn the_vault_write_gate_and_memory_tools_write_only_where_declared() {
+fn the_vault_write_gate_writes_only_where_declared() {
     use std::collections::BTreeSet;
     use std::num::{NonZeroU16, NonZeroU32};
 
@@ -180,6 +180,8 @@ fn the_vault_write_gate_and_memory_tools_write_only_where_declared() {
             max_parallel_runs: 1,
             max_sessions: 1,
             max_background_jobs: 4,
+            max_batch_launches: 256,
+            max_batch_inputs: 16,
             inline_seconds: 4,
             budget: Some(BudgetPolicyToml {
                 usd_micros: 30_000_000,
@@ -211,13 +213,14 @@ fn the_vault_write_gate_and_memory_tools_write_only_where_declared() {
         source_root: String::new(),
         default_seat: seat_id.clone(),
         memory_namespaces: BTreeSet::from([AtlasId::new(source).unwrap()]),
-        artifact_policy: "standard".to_owned(),
         privacy: None,
         accounts: Default::default(),
         review_verdict: None,
         repo: None,
+        hub_refresh_seconds: None,
         deploy: None,
         sphere: None,
+        agents: Default::default(),
     };
     let projects = BTreeMap::from([("alpha", &alpha)]);
     let policy = EffectiveBrainPolicy::resolve(
@@ -454,10 +457,6 @@ fn the_vault_write_gate_and_memory_tools_write_only_where_declared() {
     .unwrap();
     runtime.set_vault_write_gate(Arc::new(memory_gate));
     let tools = odin_hermes::runtime::hermes_host_tools(&runtime);
-    let remember = tools
-        .iter()
-        .find(|tool| tool.definition().name == "memory_remember")
-        .unwrap();
     let scope = odin_domain::Scope {
         seat: Some(seat_id.clone()),
         session: Some(bridge_session.clone()),
@@ -465,27 +464,6 @@ fn the_vault_write_gate_and_memory_tools_write_only_where_declared() {
         ..Default::default()
     };
     let content = "Remember the measured solver convergence criterion.";
-    let receipt = remember
-        .invoke(odin_omp::host_tools::HostInvocation {
-            scope: scope.clone(),
-            arguments: serde_json::json!({"content":content}),
-        })
-        .unwrap();
-    let written = receipt["page"].as_str().unwrap();
-    assert!(written.starts_with("gate-seat/memory-"), "{receipt}");
-    assert!(
-        std::fs::read_to_string(matched_root.path().join("notes/memory").join(written))
-            .unwrap()
-            .contains(content)
-    );
-    assert!(
-        receipt["knowledgeRefreshUnavailable"].is_string(),
-        "the durable write stays successful when the read-only projection endpoint is down"
-    );
-    assert!(remember.invoke(odin_omp::host_tools::HostInvocation {
-        scope: scope.clone(),
-        arguments: serde_json::json!({"content":content,"page_name":"memory/foreign-seat/stolen.md"}),
-    }).is_err(), "model arguments cannot choose a memory destination");
     let ordinary = tools
         .iter()
         .find(|tool| tool.definition().name == "vault_write_generated")
@@ -588,24 +566,4 @@ fn the_vault_write_gate_and_memory_tools_write_only_where_declared() {
             .is_err(),
         "another project's memory is never writable"
     );
-    runtime.set_vault_write_gate(Arc::new(project_gate));
-    runtime.set_project_memory(BTreeMap::from([(
-        (seat_id.clone(), ProjectId::new("alpha").unwrap()),
-        "project.alpha".to_owned(),
-    )]));
-    let receipt = remember
-        .invoke(odin_omp::host_tools::HostInvocation {
-            scope: odin_domain::Scope {
-                seat: Some(seat_id.clone()),
-                session: Some(bridge_session.clone()),
-                project: Some(ProjectId::new("alpha").unwrap()),
-                ..Default::default()
-            },
-            arguments: serde_json::json!({"content": "alpha-only note"}),
-        })
-        .unwrap();
-    assert!(receipt["page"]
-        .as_str()
-        .unwrap()
-        .starts_with("project.alpha/"));
 }

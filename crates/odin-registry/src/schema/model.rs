@@ -153,6 +153,20 @@ pub struct ModelCardToml {
     /// lane-name branch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strict: Option<bool>,
+    /// The context counter the card's window is guarded with; absent counts
+    /// exact UTF-8 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokenizer: Option<ModelTokenizer>,
+}
+
+/// A card's declared context counter. `qwen3` is the pinned native family;
+/// `estimate` is one token per four bytes, calibrated per lane from provider
+/// usage. Absent counts exact bytes.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelTokenizer {
+    Qwen3,
+    Estimate,
 }
 
 impl ModelCardToml {
@@ -189,4 +203,27 @@ pub struct ModelThinkingToml {
     /// Sampling temperature; lands as the gateway's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ModelCardToml, ModelTokenizer};
+
+    #[test]
+    fn a_card_declares_its_context_counter_and_no_other() {
+        let card = |tokenizer: &str| {
+            format!(
+                "schema = \"odin.registry.v1\"\nkind = \"model\"\nenabled = true\n\
+                 description = \"A hosted card.\"\nid = \"gateway/hosted\"\n\
+                 strengths = \"Everything.\"\n{tokenizer}"
+            )
+        };
+        let declared: ModelCardToml =
+            toml::from_str(&card("tokenizer = \"estimate\"\n")).expect("estimate card parses");
+        assert_eq!(declared.tokenizer, Some(ModelTokenizer::Estimate));
+        let absent: ModelCardToml =
+            toml::from_str(&card("")).expect("card without a counter parses");
+        assert_eq!(absent.tokenizer, None);
+        assert!(toml::from_str::<ModelCardToml>(&card("tokenizer = \"glm5\"\n")).is_err());
+    }
 }

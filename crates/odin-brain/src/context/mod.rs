@@ -9,4 +9,7 @@ pub mod tokenizer;
 pub use budget::{
     resolve_context_policy, EffectiveContextPolicy, SeatContextPolicy, SliceContextPolicy,
 };
-pub use tokenizer::{ContextTokenizer, PinnedTokenizer, PINNED_TOKENIZER_ID, QWEN3_TOKENIZER_ID};
+pub use tokenizer::{
+    ContextTokenizer, PinnedTokenizer, ESTIMATE_TOKENIZER_ID, PINNED_TOKENIZER_ID,
+    QWEN3_TOKENIZER_ID,
+};

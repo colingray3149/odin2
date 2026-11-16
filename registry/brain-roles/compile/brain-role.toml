@@ -1,0 +1,12 @@
+schema = "odin.registry.v1"
+kind = "brain-role"
+enabled = true
+description = "Compile one entity's facts into its page sections and roll up month and year timelines."
+role = "compile"
+engine = "lane"
+lanes = ["terra", "zai-glm"]
+[params]
+max_output = 6000
+effort = "medium"
+temperature = 0
+max_parallel = 2

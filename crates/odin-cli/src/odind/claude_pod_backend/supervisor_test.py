@@ -4,6 +4,7 @@ Run explicitly with: python3 -m unittest discover -s <this directory> -p supervi
 Tests exercise the real socket loop, pipes, process groups and filesystem journal.
 """
 import base64
+import ctypes
 import importlib.util
 import json
 import multiprocessing
@@ -23,11 +24,40 @@ spec.loader.exec_module(supervisor)
 
 
 def serve(state, workspace, ready, limit, isolated):
+    # Die with the test process: an orphaned owner once held the gate's lock for hours.
+    ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL)  # PR_SET_PDEATHSIG
     owner = supervisor.Supervisor(state, workspace, sys.executable, limit,
                                   test_same_identity=not isolated)
     ready.send(True)
     ready.close()
     owner.run()
+
+
+class DrainTest(unittest.TestCase):
+    def test_consumed_readiness_keeps_pipe_open_until_eof(self):
+        import selectors
+        owner = object.__new__(supervisor.Supervisor)
+        owner.selector = selectors.DefaultSelector()
+        read_fd, write_fd = os.pipe()
+        stream = os.fdopen(read_fd, "rb", buffering=0)
+        os.set_blocking(read_fd, False)
+        try:
+            key = owner.selector.register(stream, selectors.EVENT_READ, "stderr")
+            os.write(write_fd, b"ready")
+            self.assertEqual(os.read(read_fd, 5), b"ready")
+            owner.drain(key)
+            self.assertFalse(stream.closed)
+            self.assertEqual(owner.selector.get_key(stream), key)
+            os.close(write_fd)
+            write_fd = None
+            owner.drain(key)
+            self.assertTrue(stream.closed)
+            self.assertEqual(len(owner.selector.get_map()), 0)
+        finally:
+            if write_fd is not None:
+                os.close(write_fd)
+            stream.close()
+            owner.selector.close()
 
 
 class SupervisorTest(unittest.TestCase):
@@ -43,7 +73,7 @@ class SupervisorTest(unittest.TestCase):
         context = multiprocessing.get_context("fork")
         ready, child = context.Pipe(duplex=False)
         self.process = context.Process(target=serve, args=(
-            self.state, self.directory.name, child, limit, isolated))
+            self.state, self.directory.name, child, limit, isolated), daemon=True)
         self.process.start()
         child.close()
         self.assertTrue(ready.poll(5), "supervisor did not become ready")

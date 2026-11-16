@@ -51,15 +51,23 @@ use super::report_completion::{
 #[path = "report_settle/copies.rs"]
 mod copies;
 pub(crate) use copies::save_into_root;
-use copies::{copies_are_durable, copy_destinations, delivery_note, write_copies};
+use copies::{copies_are_durable, copy_destinations, delivery_note, delivery_unmet, write_copies};
+#[path = "report_settle/footer.rs"]
+mod footer;
+use footer::footer_meta;
+
 #[path = "report_settle/names.rs"]
 mod names;
 use names::{copy_name, delivered_name, report_stem, report_subject};
 #[path = "report_settle/persistence.rs"]
 mod persistence;
 use persistence::{
-    finish_gone, gone_export, persist_report, read_retained_export, remember_node, GoneExport,
+    finish_cancelled, finish_gone, gone_export, persist_report, read_retained_export,
+    remember_node, unfinished_report, GoneExport,
 };
+#[path = "report_settle/state.rs"]
+mod state;
+use state::{read_state, strings, write_state};
 #[path = "report_settle/resume.rs"]
 mod resume;
 use resume::{resume_decision, resume_with_unmet, unmet_note, Resume, Undone};
@@ -76,6 +84,9 @@ const MAX_RERENDERS: u8 = 2;
 const MAX_UNMET_RESUMES: u8 = 2;
 /// Reads of a gone pod's export from its node, one per review cycle, before it is given up on.
 const MAX_EXPORT_READS: u8 = 3;
+/// Review cycles a settlement may end on the same cause that waiting cannot clear (no report.md
+/// after the pod's turn ended, a render that fails the same way) before it settles as partial work.
+const MAX_STALLED_CYCLES: u8 = 3;
 const SETTLEMENT: &str = "report-settlement.json";
 const COPIES: &str = "report-copies.json";
 const DELIVERED: &str = "report-delivered.json";
@@ -100,12 +111,24 @@ pub(crate) struct ReviewTurn {
 /// Whether the pod may be ended and its carrier released.
 #[derive(Debug)]
 pub(crate) enum ReportSettlement {
-    /// Report, review and both durable copies are done.
+    /// Report, review and both durable copies are done, with nothing left undone.
     Delivered { note: String, files: String },
+    /// The report and both copies are done, but it was settled with `unmet` left undone: it is
+    /// delivered as partial work and the launching seat's ask about it stays open.
+    Partial {
+        note: String,
+        files: String,
+        unmet: Vec<String>,
+    },
     /// The pod is gone and its contract cannot finish. Share an intact saved
     /// render when available; otherwise preserve the ledger answer as partial
     /// work. The run ends here without claiming delivery.
     Salvaged { note: String, files: String },
+    /// The run was cancelled by authority: nothing is owed from it. An intact
+    /// saved render is shared as `Salvaged` before this is returned; otherwise
+    /// the run produced no output, its retained node exports were not read,
+    /// and the report contract passes to whatever run serves the ask now.
+    Cancelled { note: String },
     /// The pod stays up. `follow_up` is the turn the caller starts.
     Pending {
         note: String,
@@ -166,7 +189,23 @@ pub(crate) async fn settle_pod_report(
         Ok(None) => (true, None, None),
         Err(_) => (false, None, None),
     };
+    // A Job names no node; its live pod does, and the export stays on that node after both go.
+    let node = match node {
+        Some(node) => Some(node),
+        None if !pod_gone => reconciler
+            .workload_placement(&run)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|placement| placement.node),
+        None => None,
+    };
     let now = time::OffsetDateTime::now_utc();
+    // A run the authority cancelled was withdrawn on purpose, not lost: its
+    // export is not salvaged from a node. An applied cancel in the journal
+    // with the Job gone is a cancellation; an unreadable answer to that
+    // question falls back to the lost-carrier path.
+    let cancelled = pod_gone && matches!(reconciler.run_cancelled(&run), Ok(true));
     let wall = Wall {
         now: now.unix_timestamp(),
         left: deadline
@@ -175,26 +214,28 @@ pub(crate) async fn settle_pod_report(
         cycle: review_cycle(cell, &plan.profile),
     };
     // A gone carrier's export is read back from the node that retains it.
-    let retained = match plan.report_pdf {
-        true => {
+    let carrier = match (plan.report_pdf, cancelled) {
+        (_, true) => Carrier::Cancelled,
+        (true, false) => {
             let node = remember_node(runtime, &run, node);
             let records = records_path(runtime, &run);
             match pod_gone && !copies_are_durable(&records) {
-                true => Some(
+                true => Carrier::Gone(
                     gone_export(&records, wall, || {
                         read_retained_export(cell, &run, &plan.export_host_folder, node)
                     })
                     .await,
                 ),
-                false => None,
+                false => Carrier::Unread,
             }
         }
-        false => None,
+        (false, false) => Carrier::Unread,
     };
     let target = PodTarget {
         run,
         export_dir: plan.export_mount,
         network_transport: plan.transport,
+        recon: None,
     };
     let session = pod.session;
     let answer = pod.answer.clone();
@@ -226,7 +267,7 @@ pub(crate) async fn settle_pod_report(
             &answer_key,
             failed,
             failure.as_deref(),
-            retained,
+            carrier,
         )
     })
     .await;
@@ -284,7 +325,17 @@ fn review_cycle(cell: &crate::kube::KubeRuntimeCell, profile: &str) -> Option<i6
         .map(|(_, monitoring)| i64::from(monitoring.cadence_seconds.get()))
 }
 
-/// `retained` is the pod's export when its carrier is verifiably gone.
+/// What settlement knows of the pod that carried the run.
+enum Carrier {
+    /// No export was read back: the pod may still be up, or no PDF is owed.
+    Unread,
+    /// The carrier is verifiably gone; its export as read back from the node.
+    Gone(GoneExport),
+    /// The authority withdrew the run: no export is salvaged and no pod
+    /// command runs; copies that were already delivered stay delivered.
+    Cancelled,
+}
+
 fn finish_export(
     cell: &Arc<crate::kube::KubeRuntimeCell>,
     run: &ReportRun,
@@ -292,15 +343,14 @@ fn finish_export(
     answer_key: &str,
     failed: bool,
     failure: Option<&str>,
-    retained: Option<GoneExport>,
+    carrier: Carrier,
 ) -> ReportSettlement {
     let records = record_dir(run);
     if copies_are_durable(&records) {
-        return ReportSettlement::Delivered {
-            note: delivery_note(&records)
-                .unwrap_or_else(|| "The report copies are already durable.".to_owned()),
-            files: String::new(),
-        };
+        return durable_settlement(&records, String::new());
+    }
+    if let Carrier::Cancelled = carrier {
+        return finish_cancelled(run);
     }
     let exec = crate::kube::KubePodWorkerExec::new(Some(Arc::clone(cell)));
     if !run.owes_pdf {
@@ -309,7 +359,7 @@ fn finish_export(
             files: share_collected(&exec, &run.target, &run.runtime, &run.seat),
         };
     }
-    if let Some(retained) = retained {
+    if let Carrier::Gone(retained) = carrier {
         return finish_gone(run, answer, failed, retained);
     }
     let files = match collect_exports(&exec, &run.target, MAX_REPORT_FILE_BYTES) {
@@ -324,6 +374,17 @@ fn finish_export(
     finish_collected(&exec, run, files, answer, answer_key, failed, failure)
 }
 
+/// The settlement of copies that are already durable, as the record of their delivery says it
+/// ended: partial when it names unmet items.
+fn durable_settlement(records: &Path, files: String) -> ReportSettlement {
+    let note = delivery_note(records)
+        .unwrap_or_else(|| "The report copies are already durable.".to_owned());
+    match delivery_unmet(records) {
+        unmet if unmet.is_empty() => ReportSettlement::Delivered { note, files },
+        unmet => ReportSettlement::Partial { note, files, unmet },
+    }
+}
+
 fn finish_collected(
     exec: &dyn PodWorkerExec,
     run: &ReportRun,
@@ -335,18 +396,14 @@ fn finish_collected(
 ) -> ReportSettlement {
     let records = record_dir(run);
     if copies_are_durable(&records) {
-        let note = delivery_note(&records)
-            .unwrap_or_else(|| "The report copies are already durable.".to_owned());
         let stem = report_stem(
             run,
             &authoritative_body(&files, answer),
             &read_state(&records).captured_at,
         )
         .ok();
-        return ReportSettlement::Delivered {
-            note,
-            files: share_files(&files, &run.runtime, &run.seat, stem.as_deref()),
-        };
+        let shared = share_files(&files, &run.runtime, &run.seat, stem.as_deref());
+        return durable_settlement(&records, shared);
     }
     let contract = report_contract(
         &files,
@@ -354,8 +411,8 @@ fn finish_collected(
         failed,
         answer.trim().is_empty(),
     );
-    if let ReportCompletion::Unmet(note) = contract {
-        return ReportSettlement::Failed { note };
+    if let ReportCompletion::Unmet(note) = &contract {
+        return unfinished_report(run, files, answer, failed, failure, note);
     }
     let mut state = read_state(&records);
     let seen = Undone::of(answer, failed);
@@ -394,12 +451,7 @@ fn finish_collected(
     let mut files = files;
     let identity = match ensure_render(exec, run, &body, &contract, &state, &mut files, false) {
         Ok(identity) => identity,
-        Err(RenderError::Other(reason)) => {
-            return ReportSettlement::Pending {
-                note: reason,
-                follow_up: None,
-            }
-        }
+        Err(RenderError::Other(reason)) => return stalled(run, &files, reason, false),
         // A source that does not compile is a round of the review loop: the pod is asked to
         // fix it, and past the bound the authority renders the markdown itself.
         Err(RenderError::Compile(reason)) => {
@@ -414,12 +466,7 @@ fn finish_collected(
             ));
             match ensure_render(exec, run, &body, &contract, &state, &mut files, true) {
                 Ok(identity) => identity,
-                Err(error) => {
-                    return ReportSettlement::Pending {
-                        note: error.into_reason(),
-                        follow_up: None,
-                    }
-                }
+                Err(error) => return stalled(run, &files, error.into_reason(), false),
             }
         }
     };
@@ -553,6 +600,63 @@ fn finish_collected(
     }
 }
 
+/// A settlement pass that ended on a cause waiting cannot clear. The same cause held for
+/// [`MAX_STALLED_CYCLES`] review cycles (passes, when the cycle is unknown) settles the run as
+/// partial work with that cause named and the export's top-level files shared, so its pod is
+/// released; until then it stays pending, or failed when `failed`. A new cause starts the count.
+fn stalled(
+    run: &ReportRun,
+    files: &[ExportedFile],
+    cause: String,
+    failed: bool,
+) -> ReportSettlement {
+    let records = record_dir(run);
+    let mut state = read_state(&records);
+    let due = run
+        .wall
+        .cycle
+        .is_none_or(|cycle| run.wall.now - state.stalled_at >= cycle);
+    if state.stall != cause {
+        state.stall.clone_from(&cause);
+        state.stalls = 1;
+        state.stalled_at = run.wall.now;
+    } else if due {
+        state.stalls = state.stalls.saturating_add(1);
+        state.stalled_at = run.wall.now;
+    }
+    if let Err(error) = write_state(&records, &state) {
+        tracing::error!("settlement stall not recorded: {error}");
+    }
+    if state.stalls < MAX_STALLED_CYCLES {
+        return match failed {
+            true => ReportSettlement::Failed { note: cause },
+            false => ReportSettlement::Pending {
+                note: cause,
+                follow_up: None,
+            },
+        };
+    }
+    let top: Vec<ExportedFile> = files
+        .iter()
+        .filter(|file| !file.path.contains('/'))
+        .map(|file| ExportedFile {
+            path: file.path.clone(),
+            bytes: file.bytes,
+            content: file.content.clone(),
+        })
+        .collect();
+    ReportSettlement::Partial {
+        note: format!(
+            "Its report could not be settled: {cause}. The same cause held for {} review \
+             cycles, so it will not clear by waiting; the run ends here as partial work, without \
+             a reviewed report or its copies.",
+            state.stalls
+        ),
+        files: share_files(&top, &run.runtime, &run.seat, None),
+        unmet: vec![format!("report: {cause}")],
+    }
+}
+
 /// Sends a source that did not compile back to the pod, as one round of the review loop.
 fn fix_source(records: &Path, state: &SettlementState, reason: String) -> ReportSettlement {
     if let Err(error) = write_state(records, state) {
@@ -600,6 +704,11 @@ struct SettlementState {
     export_failures: u8,
     export_failed_at: i64,
     export_failure: String,
+    /// The cause the last settlement passes ended on, the review cycles it held for, and when it
+    /// was last counted (unix seconds).
+    stall: String,
+    stalls: u8,
+    stalled_at: i64,
 }
 
 /// Why a render did not happen.
@@ -878,60 +987,6 @@ fn content_digest(source: &str, figures: &[(&str, &[u8])]) -> String {
     odin_domain::Digest::new(*hasher.finalize().as_bytes()).to_string()
 }
 
-/// The report footer's run facts, from the measured stats.
-fn footer_meta(stats: &Value) -> Value {
-    json!({
-        "model": meta_text(stats, "servedModel"),
-        "wall_time": meta_number(stats, "wallSeconds", "s"),
-        "tool_calls": meta_number(stats, "toolCalls", ""),
-        "sites": meta_number(stats, "websites", ""),
-        "cost": meta_cost(stats),
-    })
-}
-
-fn field_unavailable(stats: &Value, field: &str) -> bool {
-    stats[field].is_null()
-        || stats["unavailable"]
-            .as_array()
-            .is_some_and(|names| names.iter().any(|name| name.as_str() == Some(field)))
-}
-
-fn meta_text(stats: &Value, field: &str) -> String {
-    if field_unavailable(stats, field) {
-        return "unavailable".to_owned();
-    }
-    stats[field]
-        .as_str()
-        .filter(|text| !text.is_empty())
-        .unwrap_or("unavailable")
-        .to_owned()
-}
-
-fn meta_number(stats: &Value, field: &str, suffix: &str) -> String {
-    if field_unavailable(stats, field) {
-        return "unavailable".to_owned();
-    }
-    match stats[field].as_u64() {
-        Some(value) => format!("{value}{suffix}"),
-        None => "unavailable".to_owned(),
-    }
-}
-
-fn meta_cost(stats: &Value) -> String {
-    if field_unavailable(stats, "listPriceUsd") {
-        return "unavailable".to_owned();
-    }
-    let Some(price) = stats["listPriceUsd"].as_f64() else {
-        return "unavailable".to_owned();
-    };
-    let dollars = format!("${price:.2} list price");
-    if stats["subscriptionIncluded"] == true {
-        format!("{dollars} (included, not billed)")
-    } else {
-        dollars
-    }
-}
-
 struct PageImage {
     data: String,
 }
@@ -1125,15 +1180,23 @@ fn finish_copies(
             }
         }
     };
-    let (note, durable) = copy_destinations(run, subject, subject_source, files, &stem);
+    let (note, durable) = copy_destinations(
+        run,
+        subject,
+        subject_source,
+        files,
+        &stem,
+        &identity.pdf_relative,
+    );
     if !durable {
         return ReportSettlement::Pending {
             note,
             follow_up: None,
         };
     }
-    let delivered = match undone.items.is_empty() {
-        true => format!(
+    let partial = !undone.items.is_empty();
+    let delivered = match partial {
+        false => format!(
             "The report contract is met. {pdf} ({bytes} bytes, captured {captured}) was accepted \
              after the model saw all {pages} page(s) of that exact render. The subject folder \
              {subject} comes from {subject_source}.{unmet}\n\n{note}",
@@ -1143,7 +1206,7 @@ fn finish_copies(
             pages = identity.page_count,
             unmet = unmet_note(undone),
         ),
-        false => format!(
+        true => format!(
             "The report is settled as partial work. {pdf} ({bytes} bytes, captured {captured}) \
              is the latest render and is delivered as it stands. The subject folder {subject} \
              comes from {subject_source}.{unmet}\n\n{note}",
@@ -1153,92 +1216,29 @@ fn finish_copies(
             unmet = unmet_note(undone),
         ),
     };
-    if let Err(error) = write_record(
-        &record_dir(run),
-        DELIVERED,
-        &json!({"note": delivered, "status": "delivered"}),
-    ) {
+    let recorded = json!({
+        "note": delivered,
+        "status": if partial { "partial" } else { "delivered" },
+        "unmet": undone.items,
+    });
+    if let Err(error) = write_record(&record_dir(run), DELIVERED, &recorded) {
         return ReportSettlement::Pending {
             note: format!("The delivery state was not recorded: {error}"),
             follow_up: None,
         };
     }
-    ReportSettlement::Delivered {
-        note: delivered,
-        files: share_files(files, &run.runtime, &run.seat, Some(&stem)),
-    }
-}
-
-fn read_state(directory: &Path) -> SettlementState {
-    let Some(parsed) = read_record(directory, SETTLEMENT) else {
-        return SettlementState::default();
-    };
-    SettlementState {
-        pdf: parsed["pdf"].as_str().unwrap_or_default().to_owned(),
-        bytes: parsed["bytes"].as_u64().unwrap_or(0),
-        captured_at: parsed["capturedAt"].as_str().unwrap_or_default().to_owned(),
-        content: parsed["content"].as_str().unwrap_or_default().to_owned(),
-        offered: parsed["offered"].as_u64().unwrap_or(0) as usize,
-        confirmed: parsed["confirmed"].as_u64().unwrap_or(0) as usize,
-        page_count: parsed["pageCount"].as_u64().unwrap_or(0) as usize,
-        dispatched_answer: parsed["dispatchedAnswer"].as_str().map(str::to_owned),
-        content_asks: parsed["contentAsks"].as_u64().unwrap_or(0) as u8,
-        renders: parsed["renders"].as_u64().unwrap_or(0) as u8,
-        resumed_at: parsed["resumedAt"].as_i64().unwrap_or(0),
-        resumes: parsed["resumes"].as_u64().unwrap_or(0) as u8,
-        resumed_unmet: parsed["resumedUnmet"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned(),
-        undone: Undone {
-            items: strings(&parsed["undone"]["items"]),
-            receipts: strings(&parsed["undone"]["receipts"]),
+    let shared = share_files(files, &run.runtime, &run.seat, Some(&stem));
+    match partial {
+        false => ReportSettlement::Delivered {
+            note: delivered,
+            files: shared,
         },
-        node: parsed["node"].as_str().unwrap_or_default().to_owned(),
-        export_failures: parsed["exportFailures"].as_u64().unwrap_or(0) as u8,
-        export_failed_at: parsed["exportFailedAt"].as_i64().unwrap_or(0),
-        export_failure: parsed["exportFailure"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned(),
+        true => ReportSettlement::Partial {
+            note: delivered,
+            files: shared,
+            unmet: undone.items.clone(),
+        },
     }
-}
-
-fn strings(list: &Value) -> Vec<String> {
-    list.as_array()
-        .map(|list| {
-            list.iter()
-                .filter_map(|item| item.as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn write_state(directory: &Path, state: &SettlementState) -> Result<(), String> {
-    write_record(
-        directory,
-        SETTLEMENT,
-        &json!({
-            "pdf": state.pdf,
-            "bytes": state.bytes,
-            "capturedAt": state.captured_at,
-            "content": state.content,
-            "offered": state.offered,
-            "confirmed": state.confirmed,
-            "pageCount": state.page_count,
-            "dispatchedAnswer": state.dispatched_answer,
-            "contentAsks": state.content_asks,
-            "renders": state.renders,
-            "resumedAt": state.resumed_at,
-            "resumes": state.resumes,
-            "resumedUnmet": state.resumed_unmet,
-            "undone": {"items": state.undone.items, "receipts": state.undone.receipts},
-            "node": state.node,
-            "exportFailures": state.export_failures,
-            "exportFailedAt": state.export_failed_at,
-            "exportFailure": state.export_failure,
-        }),
-    )
 }
 
 fn record_dir(run: &ReportRun) -> PathBuf {
@@ -1495,6 +1495,7 @@ mod tests {
                 run: RunId::new("report-forged").expect("run"),
                 export_dir: "/export".into(),
                 network_transport: odin_registry::WorkloadTransport::Direct,
+                recon: None,
             },
             owes_pdf: true,
             company: Some("Example".into()),
@@ -1634,6 +1635,7 @@ mod tests {
                 run: RunId::new(run).expect("run"),
                 export_dir: "/export".into(),
                 network_transport: odin_registry::WorkloadTransport::Direct,
+                recon: None,
             },
             owes_pdf: true,
             company: None,
@@ -1715,6 +1717,7 @@ mod tests {
                 cluster: "unit-cluster".to_owned(),
                 namespace: "unit-namespace".to_owned(),
                 allowed_nodes: std::collections::BTreeSet::new(),
+                node_data_roots: Default::default(),
                 request_timeout: std::time::Duration::from_secs(1),
                 teardown_timeout: std::time::Duration::from_secs(1),
                 vpn_transport: None,
@@ -1753,7 +1756,7 @@ mod tests {
         let run = report_run(runtime_under(root.path()), "report-wiring");
         let (files, identity, body) = saved_render();
         persist_report(&run, &files, &identity, body).expect("the render is saved");
-        let unread = || Some(GoneExport::Lost("its node could not be reached".to_owned()));
+        let unread = || Carrier::Gone(GoneExport::Lost("its node could not be reached".to_owned()));
         let gone = finish_export(
             &cell,
             &run,
@@ -1767,7 +1770,15 @@ mod tests {
             matches!(gone, ReportSettlement::Salvaged { .. }),
             "a gone carrier delivers the saved report, not {gone:?}"
         );
-        let pending = finish_export(&cell, &run, "The answer.", "answer-1", false, None, None);
+        let pending = finish_export(
+            &cell,
+            &run,
+            "The answer.",
+            "answer-1",
+            false,
+            None,
+            Carrier::Unread,
+        );
         match pending {
             ReportSettlement::Pending { follow_up, .. } => {
                 assert!(follow_up.is_none());
@@ -1804,6 +1815,42 @@ mod tests {
         );
         assert!(matches!(gone, ReportSettlement::Salvaged { files, .. } if files.is_empty()));
         assert!(!copies_are_durable(&record_dir(&unsaved)));
+    }
+
+    /// A run the authority cancelled owes nothing: its export is never read
+    /// from a node and no pod command runs, while a save that outlived the
+    /// cancellation is still shared as real work.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_cancelled_run_settles_with_no_output_and_no_node_read() {
+        let root = tempfile::tempdir().expect("state");
+        let cell = unreachable_cell();
+        let run = report_run(runtime_under(root.path()), "report-cancelled");
+        let cancelled = finish_export(&cell, &run, "", "answer-1", false, None, Carrier::Cancelled);
+        match cancelled {
+            ReportSettlement::Cancelled { note } => assert!(
+                note.contains("cancelled by authority")
+                    && note.contains("were not read and not deleted"),
+                "{note}"
+            ),
+            other => panic!("a cancelled run claims nothing and reads nothing: {other:?}"),
+        }
+        assert!(!copies_are_durable(&record_dir(&run)));
+        let saved = report_run(runtime_under(root.path()), "report-cancelled-saved");
+        let (files, identity, body) = saved_render();
+        persist_report(&saved, &files, &identity, body).expect("the render is saved");
+        let cancelled = finish_export(
+            &cell,
+            &saved,
+            "The answer.",
+            "answer-1",
+            false,
+            None,
+            Carrier::Cancelled,
+        );
+        assert!(
+            matches!(cancelled, ReportSettlement::Salvaged { .. }),
+            "a cancelled run still shares its saved render: {cancelled:?}"
+        );
     }
 
     #[test]
@@ -2078,21 +2125,8 @@ mod tests {
         }
     }
 
-    fn delivered(settled: ReportSettlement) -> String {
-        match settled {
-            ReportSettlement::Delivered { note, .. } => note,
-            other => panic!("the report is delivered: {other:?}"),
-        }
-    }
-
     const UNMET: &str = "The cylinder prices are in.\n\n## Unmet items\n\n\
                          - Nine manufacturers: Obscura, the browser and Wayback all answered 403";
-
-    /// The pod's review of its render ends the run: the pages are accepted and the copies done.
-    fn accept_pages(scene: &Scene) -> String {
-        scene.copied();
-        delivered(scene.settle("Pages accepted.", "review-1"))
-    }
 
     #[test]
     fn unmet_items_go_back_to_the_pod_once_per_review_cycle_while_time_remains() {
@@ -2138,13 +2172,105 @@ mod tests {
         // rendered and offered for review.
         let (_, turn) = pending(scene.settle(&answer(3), "answer-3"));
         assert_eq!(turn.expect("pages offered").images.len(), 1);
-        // The review's own reply lists nothing; the report still goes out as partial work.
-        let note = accept_pages(&scene);
+        // The review's own reply lists nothing; the report still goes out as partial work, and
+        // the items it leaves undone are what the launching seat's ask keeps open.
+        scene.copied();
+        let ReportSettlement::Partial { note, unmet, .. } =
+            scene.settle("Pages accepted.", "review-1")
+        else {
+            panic!("the report settles as partial work");
+        };
+        assert!(note.contains("partial work"), "{note}");
         assert!(
-            note.contains("partial work")
-                && note.contains("Cabot PDF: blocked, try 3")
-                && note.contains("Gap 3: still open"),
+            unmet
+                .iter()
+                .any(|item| item.contains("Cabot PDF: blocked, try 3"))
+                && unmet.iter().any(|item| item.contains("Gap 3: still open")),
+            "{unmet:?}"
+        );
+    }
+
+    /// A pod whose turn failed before its report was finished still left its report.md: the
+    /// authority renders it and delivers it as partial work, never reviewed.
+    #[test]
+    fn a_failed_turn_with_report_markdown_is_delivered_as_partial_work() {
+        let scene = Scene::new();
+        scene.pod.put(COMPANION, CONTACTS.as_bytes());
+        let settle = |scene: &Scene| {
+            finish_collected(
+                scene.pod.as_ref(),
+                &scene.run,
+                scene.export(),
+                "",
+                "failed-answer",
+                true,
+                Some("the model refused"),
+            )
+        };
+        // The Drive copy is not reachable in this fixture: the render is kept, copies pend.
+        let (note, _) = pending(settle(&scene));
+        assert!(note.contains("Drive"), "{note}");
+        // Once the copies are durable the same settlement reports partial work, not a failure.
+        let mut records = super::copies::read_copies(&record_dir(&scene.run));
+        for record in &mut records {
+            record.drive = "completed".into();
+            record.drive_id = Some("drive".into());
+        }
+        write_copies(&record_dir(&scene.run), &records).expect("copies recorded");
+        let ReportSettlement::Partial { note, unmet, .. } = settle(&scene) else {
+            panic!("a failed turn with report.md delivers partial work");
+        };
+        assert!(
+            note.contains("partial work") && note.contains("/export/report.pdf"),
             "{note}"
+        );
+        assert!(
+            unmet.iter().any(|item| item.contains("page review"))
+                && unmet.iter().any(|item| item.contains("the model refused")),
+            "{unmet:?}"
+        );
+        assert_eq!(
+            std::fs::read(record_dir(&scene.run).join("render-count")).expect("render count"),
+            b"1",
+            "the second pass reuses the render the first pass saved"
+        );
+    }
+
+    /// The incident: a failed pod with no report.md logged its settlement as failed 140 times.
+    #[test]
+    fn a_failed_turn_without_report_markdown_settles_partial_after_three_review_cycles() {
+        let mut scene = Scene::new();
+        let settle = |scene: &Scene| {
+            finish_collected(
+                scene.pod.as_ref(),
+                &scene.run,
+                scene.export(),
+                "",
+                "failed-answer",
+                true,
+                Some("OOMKilled: container worker was OOMKilled (exit code 137)"),
+            )
+        };
+        for cycle in 1..MAX_STALLED_CYCLES {
+            assert!(
+                matches!(settle(&scene), ReportSettlement::Failed { .. }),
+                "cycle {cycle} still waits"
+            );
+            // Passes within one cycle do not count again.
+            scene.run.wall.now += 15;
+            assert!(matches!(settle(&scene), ReportSettlement::Failed { .. }));
+            scene.run.wall.now += 180;
+        }
+        let ReportSettlement::Partial { note, unmet, .. } = settle(&scene) else {
+            panic!("a cause that cannot clear settles as partial work");
+        };
+        assert!(
+            note.contains("OOMKilled") && note.contains("partial work"),
+            "{note}"
+        );
+        assert!(
+            unmet.iter().any(|item| item.contains("OOMKilled")),
+            "{unmet:?}"
         );
     }
 

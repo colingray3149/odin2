@@ -14,6 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::exec::{WorkloadExecChannel, WorkloadExecStream, WorkloadLauncherSpec};
 use crate::job::{bounded_label_value, JOB_LABEL_RUN_ID};
 use crate::object_wait::Settle;
+use crate::placement::{pod_requests, require_room};
 use crate::workload::{egress_policy_name, resolve_hosts, WorkloadGatewayTarget};
 use crate::{KubeClient, KubeError};
 
@@ -401,6 +402,19 @@ git config user.email 'claude@odin.invalid'
     })
 }
 
+/// Refuses a Claude launch before it reserves its branch when no admitted node has room
+/// for its requests. Nothing is created here.
+pub async fn check_room(client: &KubeClient, plan: &ClaudePodPlan) -> Result<(), KubeError> {
+    let pod = desired_pod(plan)?;
+    let request = pod_requests(
+        pod.spec
+            .as_ref()
+            .ok_or_else(|| rejected("Claude pod spec is missing"))?,
+    )?;
+    require_room(client, &client.config.allowed_nodes, request).await?;
+    Ok(())
+}
+
 pub async fn ensure(
     client: &KubeClient,
     stops: &StopAuthority,
@@ -415,10 +429,11 @@ pub async fn ensure(
     if client.config.allowed_nodes.is_empty() {
         return Err(rejected("Claude carrier has no declared admissible nodes"));
     }
-    pod.spec
+    let spec = pod
+        .spec
         .as_mut()
-        .ok_or_else(|| rejected("Claude pod spec is missing"))?
-        .affinity = Some(Affinity {
+        .ok_or_else(|| rejected("Claude pod spec is missing"))?;
+    spec.affinity = Some(Affinity {
         node_affinity: Some(NodeAffinity {
             required_during_scheduling_ignored_during_execution: Some(NodeSelector {
                 node_selector_terms: vec![NodeSelectorTerm {
@@ -434,6 +449,8 @@ pub async fn ensure(
         }),
         ..Default::default()
     });
+    // Before any policy, material, or pod write: a full allowed set leaves nothing behind.
+    require_room(client, &client.config.allowed_nodes, pod_requests(spec)?).await?;
     let correlation = crate::pod_worker::pod_correlation(&plan.session)?;
     if stops
         .pod_worker_for_correlation(&correlation)

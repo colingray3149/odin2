@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "The brain's embedder on mini's CPU (model named by registry/brain-roles/embed)."
+id = "gateway/qwen3-embedding"
+# Local-account cards are exempt from the AVAILABLE check.
+capability = "embedding"
+account = "local"
+strengths = "The compiled brain's embedding leg; exact CPU vectors, no upstream spend."

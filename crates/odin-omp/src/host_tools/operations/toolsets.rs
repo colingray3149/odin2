@@ -45,10 +45,7 @@ pub(super) fn routes<'a>(
         ) {
             for op in ops {
                 if op == "help"
-                    || [
-                        "read", "bash", "edit", "task", "eval", "todo", "recall", "search",
-                    ]
-                    .contains(&group.as_str())
+                    || odin_registry::toolsets::RESERVED_TOOLSETS.contains(&group.as_str())
                 {
                     return Err(composition(format!(
                         "reserved toolset operation {group}.{op}"
@@ -140,6 +137,30 @@ impl HostToolOperations {
         ops.into_iter().cloned().collect()
     }
 
+    /// Whether another operation of the toolset the session may call declares `field`: a strict
+    /// lane fills the union of its ops' fields, so a read sheds such a field instead of refusing.
+    fn toolset_declares(
+        &self,
+        admitted: &BTreeSet<String>,
+        tool: &str,
+        scope: Option<&Scope>,
+        field: &str,
+    ) -> bool {
+        self.toolset_ops(admitted, tool, scope)
+            .iter()
+            .filter_map(|op| self.route(tool, op, scope))
+            .filter_map(|name| self.tool_index.get(name))
+            .filter_map(|id| self.contracts.get(id))
+            .filter_map(|contract| self.schemas.schema(&contract.input_schema_ref).ok())
+            .any(|schema| {
+                schema
+                    .canonical_json()
+                    .pointer("/properties")
+                    .and_then(Value::as_object)
+                    .is_some_and(|properties| properties.contains_key(field))
+            })
+    }
+
     /// A call that names its operation `operation` or `action` means `op`.
     fn spell_op(&self, tool: &str, scope: Option<&Scope>, arguments: &mut Value) {
         let Some(fields) = arguments.as_object_mut() else {
@@ -164,6 +185,48 @@ impl HostToolOperations {
         }
     }
 
+    /// `ask` with `to: "<seat>"` is that seat's own ask op, so its grant and approval stay per seat.
+    fn spell_ask(
+        &self,
+        admitted: &BTreeSet<String>,
+        tool: &str,
+        scope: Option<&Scope>,
+        arguments: &mut Value,
+    ) -> Result<(), HostToolOperationError> {
+        let Some(fields) = arguments.as_object_mut() else {
+            return Ok(());
+        };
+        if fields.get("op").and_then(Value::as_str) != Some(odin_registry::toolsets::ASK_OP)
+            || self
+                .route(tool, odin_registry::toolsets::ASK_OP, scope)
+                .is_some()
+        {
+            return Ok(());
+        }
+        let seats: Vec<String> = self
+            .toolset_ops(admitted, tool, scope)
+            .into_iter()
+            .filter_map(|op| op.strip_prefix("ask_").map(str::to_owned))
+            .collect();
+        let to = fields
+            .get("to")
+            .and_then(Value::as_str)
+            .map(|seat| seat.trim().to_ascii_lowercase());
+        match to {
+            Some(seat) if seats.contains(&seat) => {
+                fields.remove("to");
+                fields.insert("op".into(), Value::String(format!("ask_{seat}")));
+                Ok(())
+            }
+            _ => Err(HostToolOperationError::Arguments {
+                detail: format!(
+                    "{tool}.ask needs to: one of {}",
+                    listed_ops(&seats).replace(" and ", " or ")
+                ),
+            }),
+        }
+    }
+
     /// Resolve once, before reservations, timeouts, normalization, ledger and admission.
     pub fn prepare_tool_call(
         &self,
@@ -172,7 +235,22 @@ impl HostToolOperations {
         mut arguments: Value,
         scope: Option<&Scope>,
     ) -> Result<PreparedToolCall, HostToolOperationError> {
+        if tool == odin_registry::toolsets::MORE_TOOL {
+            // `more {tool, op, args}` is that toolset's own call.
+            unpack_args(&mut arguments);
+            let inner = arguments
+                .as_object_mut()
+                .and_then(|fields| fields.remove("tool"))
+                .and_then(|inner| inner.as_str().map(str::to_owned))
+                .filter(|inner| inner != odin_registry::toolsets::MORE_TOOL)
+                .ok_or_else(|| HostToolOperationError::Arguments {
+                    detail: "more needs tool: one of the toolsets its description lists".into(),
+                })?;
+            return self.prepare_tool_call(admitted, &inner, arguments, scope);
+        }
         self.spell_op(tool, scope, &mut arguments);
+        unpack_args(&mut arguments);
+        self.spell_ask(admitted, tool, scope, &mut arguments)?;
         let op = arguments
             .get("op")
             .and_then(Value::as_str)
@@ -219,6 +297,15 @@ impl HostToolOperations {
                     name: tool.to_owned(),
                     arguments,
                     ignored: Vec::new(),
+                });
+            }
+            let ops = self.toolset_ops(admitted, tool, scope);
+            if !ops.is_empty() {
+                return Err(HostToolOperationError::Arguments {
+                    detail: format!(
+                        "{tool} has no op {selected:?}; its ops are {}. Each op's fields are in the {tool} description.",
+                        listed_ops(&ops)
+                    ),
                 });
             }
             return Err(HostToolOperationError::UnknownTool {
@@ -281,12 +368,15 @@ impl HostToolOperations {
             });
             return Ok(PreparedToolCall::Help(exact));
         }
+        let read_only = contract.effect_class == EffectClass::R0;
         let (mut arguments, ignored) = super::loose::payload(
             canonical.canonical_json(),
-            contract.effect_class == EffectClass::R0,
+            |field| read_only && self.toolset_declares(admitted, tool, scope, field),
             arguments,
         );
         let result = (|| {
+            super::loose::unknown(canonical.canonical_json(), &arguments)
+                .map_err(|detail| HostToolOperationError::Arguments { detail })?;
             if contract.id.as_str() == crate::host_tools::task_grants::TASK_GRANT_CAPABILITY {
                 self.normalize_grant_effects(admitted, &mut arguments, scope)?;
             }
@@ -294,8 +384,14 @@ impl HostToolOperations {
                 canonical.canonical_json(),
                 arguments,
             );
+            let arguments = all_for_missing_choices(
+                canonical.canonical_json(),
+                narrowing.canonical_json(),
+                arguments,
+            );
             let arguments = super::dispatch::normalize_capability_arguments(
                 contract,
+                scope,
                 narrowing.canonical_json(),
                 arguments,
             )?;
@@ -313,16 +409,20 @@ impl HostToolOperations {
             };
             // A validator names the offending value in full; the field is what the model needs.
             let reason: String = reason.chars().take(REASON_CHARS_MAX).collect();
+            let shown = match &contract.delegate_to {
+                Some(_) => odin_registry::toolsets::ASK_OP,
+                None => selected,
+            };
+            let mut example = super::loose::example(
+                tool,
+                shown,
+                &super::loose::narrowed(canonical.canonical_json(), narrowing.canonical_json()),
+            );
+            if let Some(seat) = &contract.delegate_to {
+                example = example.replacen("{", &format!("{{\"to\":\"{seat}\","), 1);
+            }
             HostToolOperationError::Arguments {
-                detail: format!(
-                    "{tool}.{op}: {reason}. Example: {}",
-                    super::loose::example(
-                        tool,
-                        selected,
-                        canonical.canonical_json(),
-                        contract.expose == Some(CapabilityExposureToml::OnDemand)
-                    )
-                ),
+                detail: format!("{tool}.{shown}: {reason}. A good call: {example}"),
             }
         })?;
         Ok(PreparedToolCall::Call {
@@ -443,7 +543,9 @@ impl HostToolOperations {
                         .map(|view| view.op.clone())
                         .or_else(|| contract.op.clone()),
                     description: contract.description.clone(),
-                    on_demand: contract.expose == Some(CapabilityExposureToml::OnDemand),
+                    on_demand: view.and_then(|view| view.expose).or(contract.expose)
+                        == Some(CapabilityExposureToml::OnDemand),
+                    delegate_to: contract.delegate_to.as_ref().map(|seat| seat.to_string()),
                     definition: serde_json::to_value(definition)
                         .map_err(|error| composition(error.to_string()))?,
                 });
@@ -451,8 +553,13 @@ impl HostToolOperations {
                 direct.push(definition);
             }
         }
-        let projected =
-            odin_registry::toolsets::project(members, &self.toolsets).map_err(composition)?;
+        let deferred = scope
+            .and_then(|scope| scope.seat.as_ref())
+            .and_then(|seat| self.deferred.get(seat.as_str()))
+            .cloned()
+            .unwrap_or_default();
+        let projected = odin_registry::toolsets::project(members, &self.toolsets, &deferred)
+            .map_err(composition)?;
         for value in projected {
             direct.push(RpcHostToolDefinition {
                 name: value["name"].as_str().unwrap().to_owned().into(),
@@ -465,5 +572,94 @@ impl HostToolOperations {
         }
         direct.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(direct)
+    }
+}
+
+/// The fields a model put in `args`, object or JSON text, beside the envelope: one bag either way.
+fn unpack_args(arguments: &mut Value) {
+    let Some(fields) = arguments.as_object_mut() else {
+        return;
+    };
+    let wrapped = match fields.get("args") {
+        Some(Value::Object(wrapped)) => wrapped.clone(),
+        Some(Value::String(text)) => match serde_json::from_str(text) {
+            Ok(Value::Object(wrapped)) => wrapped,
+            // Not an object: left for the validator to name.
+            _ => return,
+        },
+        Some(Value::Null) => serde_json::Map::new(),
+        _ => return,
+    };
+    fields.remove("args");
+    for (field, value) in wrapped {
+        // A strict lane sends every listed field, null where it has nothing to say.
+        if fields.get(&field).is_none_or(Value::is_null) {
+            fields.insert(field, value);
+        }
+    }
+}
+
+/// `a, b and c`, for an error naming a toolset's ops.
+fn listed_ops(ops: &[String]) -> String {
+    match ops {
+        [] => String::new(),
+        [only] => only.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// A required field whose declared values are resolved at the seam (an account) and that the call
+/// left out means "all": a field with one value takes it, and a reading call reads every one.
+fn all_for_missing_choices(schema: &Value, narrowing: &Value, mut arguments: Value) -> Value {
+    let Some(fields) = arguments.as_object_mut() else {
+        return arguments;
+    };
+    let required = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str);
+    for field in required {
+        let Some(property) = narrowing.pointer(&format!("/properties/{field}")) else {
+            continue;
+        };
+        let values = property
+            .get("enum")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice);
+        // Several accounts with no "all" among them is the owner's choice: the error names them.
+        let open = values.len() == 1 || values.contains(&Value::String("all".into()));
+        if property.get(odin_registry::listing::RESOLVED_IDS) == Some(&Value::Bool(true))
+            && open
+            && fields.get(field).is_none_or(Value::is_null)
+        {
+            fields.insert(field.to_owned(), Value::String("all".into()));
+        }
+    }
+    arguments
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_left_out_account_means_all_only_where_there_is_nothing_to_choose() {
+        let schema = json!({"required": ["account"]});
+        let narrowing = |values: Value| json!({"properties": {"account": {"enum": values, "x-odin-resolve-ids": true}}});
+        let one = all_for_missing_choices(&schema, &narrowing(json!(["gmail"])), json!({}));
+        assert_eq!(one["account"], "all");
+        let reading =
+            all_for_missing_choices(&schema, &narrowing(json!(["a", "b", "all"])), json!({}));
+        assert_eq!(reading["account"], "all");
+        let choice = all_for_missing_choices(&schema, &narrowing(json!(["a", "b"])), json!({}));
+        assert!(choice.get("account").is_none());
+        let named = all_for_missing_choices(
+            &schema,
+            &narrowing(json!(["gmail"])),
+            json!({"account": "x"}),
+        );
+        assert_eq!(named["account"], "x");
     }
 }

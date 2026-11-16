@@ -479,7 +479,7 @@ impl WorkerAuthority {
                         .and_then(|()| {
                             let mut collector = crate::output::OutputCollector::new(4096);
                             match collector.drain(&mut stderr) {
-                                Ok(()) => Some(collector.finish()),
+                                Ok(_) => Some(collector.finish()),
                                 Err(_) => None,
                             }
                         })

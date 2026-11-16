@@ -119,9 +119,7 @@ kind = "lane"
 enabled = true
 description = "route gate fixture coordinator research session lane"
 project = "research"
-family = "engine"
 default_seat = "coordinator"
-queue = "interactive"
 requires_independent_review = false
 "#
     .to_owned()
@@ -135,9 +133,7 @@ kind = "lane"
 enabled = true
 description = "route gate fixture transfer lane {name}"
 project = "research"
-family = "transfer"
 default_seat = "coordinator"
-queue = "interactive"
 requires_independent_review = false
 direction = "{direction}"
 payload_kind = "{payload}"
@@ -154,7 +150,6 @@ description = "route gate fixture research project"
 source_root = ""
 default_seat = "coordinator"
 memory_namespaces = ["atlas.code"]
-artifact_policy = "standard"
 "#
     .to_owned()
 }
@@ -259,6 +254,7 @@ impl GateFixture {
                 answer_timeout_seconds: NonZeroU64::new(240).expect("answer bound"),
                 stall_seconds: None,
                 class: None,
+                escalation: None,
             },
             vehicle: Some((
                 LiveSeatBinding {

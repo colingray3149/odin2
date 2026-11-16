@@ -20,5 +20,5 @@ tests = [
   "odin-hermes::it vault::generated_writes_land_only_beneath_the_generated_namespace",
   "odin-hermes::it vault::generated_writes_never_traverse_symlinks",
   "odin-hermes::it vault::an_identical_rewrite_leaves_the_page_untouched_and_a_changed_one_replaces_it",
-  "odin-cli::bin/odind learning::tests::the_vault_write_gate_and_memory_tools_write_only_where_declared",
+  "odin-cli::bin/odind learning::tests::the_vault_write_gate_writes_only_where_declared",
 ]

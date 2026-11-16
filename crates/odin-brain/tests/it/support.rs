@@ -105,6 +105,8 @@ pub fn seat(sources: &[&str], projects: &[&str]) -> SeatToml {
             max_parallel_runs: 4,
             max_sessions: 4,
             max_background_jobs: 4,
+            max_batch_launches: 256,
+            max_batch_inputs: 16,
             inline_seconds: 4,
             budget: Some(BudgetPolicyToml {
                 usd_micros: 30_000_000,
@@ -145,13 +147,14 @@ pub fn project(namespaces: &[&str]) -> ProjectToml {
         source_root: String::new(),
         default_seat: SeatId::new("fixture-seat").unwrap(),
         memory_namespaces: atlas_ids(namespaces),
-        artifact_policy: "standard".to_owned(),
         privacy: None,
         accounts: Default::default(),
         review_verdict: None,
         repo: None,
+        hub_refresh_seconds: None,
         deploy: None,
         sphere: None,
+        agents: Default::default(),
     }
 }
 

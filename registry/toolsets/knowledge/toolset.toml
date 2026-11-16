@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "the owner's compiled brain: read, remember, project notes, his to-do list."
+examples = [
+  'knowledge {op: "read", path: "people/zilan.md"}',
+  'knowledge {op: "remember", text: "Zilan moved to Austin", about: "Zilan"}',
+]

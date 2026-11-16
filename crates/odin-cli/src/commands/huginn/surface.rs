@@ -84,6 +84,10 @@ pub(crate) enum HuginnCommand {
     Models,
     /// Background jobs still running on the authority.
     Jobs,
+    /// Report an event a project's tooling finished (a job done, a dataset
+    /// registered): the routines that follow `project_event` for that project
+    /// fire once per key, and seats watching `project_event:<project>` wake.
+    Event(HuginnProjectEventArgs),
     /// Stop all agent work on the authority (the owner's `ohshit`): every worker
     /// and pod, then Sinmara and the model gateway. `ohshit --resume` on the
     /// authority brings it back.
@@ -110,6 +114,23 @@ pub(crate) struct HuginnEmergencyStopArgs {
     pub(super) yes: bool,
 }
 
+
+#[derive(Clone, Debug, Args)]
+pub(crate) struct HuginnProjectEventArgs {
+    /// The registry project the event belongs to.
+    #[arg(long)]
+    pub(super) project: String,
+    /// What happened, one lowercase word, e.g. `job_done`.
+    #[arg(long)]
+    pub(super) kind: String,
+    /// Unique per occurrence in the project (a retry with the same key
+    /// fires nothing new), e.g. the job id.
+    #[arg(long)]
+    pub(super) key: String,
+    /// One JSON value describing it, at most 1000 bytes.
+    #[arg(long, value_name = "JSON")]
+    pub(super) detail: String,
+}
 
 #[derive(Clone, Debug, Args)]
 pub(crate) struct HuginnSpendArgs {
@@ -302,6 +323,7 @@ pub(crate) enum HuginnPlan {
     Spend(u8),
     Models,
     Jobs,
+    ProjectEvent(live::ProjectEventReport),
 }
 
 impl HuginnPlan {
@@ -374,6 +396,17 @@ impl HuginnCommand {
             Self::Spend(arguments) => Ok(HuginnPlan::Spend(arguments.days)),
             Self::Models => Ok(HuginnPlan::Models),
             Self::Jobs => Ok(HuginnPlan::Jobs),
+            Self::Event(arguments) => {
+                let report = live::ProjectEventReport {
+                    project: odin_domain::ProjectId::new(arguments.project)
+                        .map_err(|error| error.to_string())?,
+                    kind: arguments.kind,
+                    key: arguments.key,
+                    detail: arguments.detail,
+                };
+                report.check()?;
+                Ok(HuginnPlan::ProjectEvent(report))
+            }
             Self::EmergencyStop(arguments) => {
                 if !arguments.yes {
                     return Err("this stops all agent work; pass --yes".to_owned());
@@ -936,6 +969,21 @@ pub(crate) fn run_huginn(arguments: HuginnArgs, output: &mut impl Write) -> Resu
                     other => Err(format!("unexpected jobs response: {other:?}")),
                 }
             }
+            HuginnPlan::ProjectEvent(report) => {
+                let response = client
+                    .request(live::HuginnRequest::ProjectEvent(report.clone()))
+                    .await
+                    .map_err(|error| client_failure(&error, json))?;
+                match response {
+                    live::HuginnResponse::Ack => writeln!(
+                        output,
+                        "project event {} {} reported (key {})",
+                        report.project, report.kind, report.key
+                    )
+                    .map_err(|error| format!("could not write the receipt: {error}")),
+                    other => Err(format!("unexpected project event response: {other:?}")),
+                }
+            }
             HuginnPlan::PairDevice { .. } => {
                 Err("internal error: local device pairing reached the remote transport".to_owned())
             }
@@ -1213,6 +1261,12 @@ pub(super) fn write_spend(output: &mut impl Write, view: &live::SpendView) -> Re
     if !view.workloads.is_empty() {
         writeln!(output, "per pod workload (within its seat):").map_err(io)?;
         for line in &view.workloads {
+            row(output, line).map_err(io)?;
+        }
+    }
+    if !view.compute.is_empty() {
+        writeln!(output, "compute (apart from the model total):").map_err(io)?;
+        for line in &view.compute {
             row(output, line).map_err(io)?;
         }
     }

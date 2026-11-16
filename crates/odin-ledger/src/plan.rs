@@ -263,7 +263,7 @@ fn validate_todo_fields(id: &TodoId, ordinal: i64, title: &str) -> LedgerResult<
 }
 
 /// Shared validation keeps preflight admission and transactional execution consistent.
-fn validate_replace_inputs(
+pub(crate) fn validate_replace_inputs(
     expected_revision: i64,
     objective: &str,
     todos: &[TodoSpec],
@@ -459,7 +459,7 @@ fn validate_todos(todos: &[TodoSpec]) -> LedgerResult<()> {
     Ok(())
 }
 
-fn replace_aggregate(
+pub(crate) fn replace_aggregate(
     tx: &Transaction<'_>,
     run_id: &RunId,
     objective: &str,

@@ -295,7 +295,14 @@ mod tests {
         stranger.pid += 1;
         let serving = serve(stranger, Duration::from_millis(500));
         let error = ask(&serving.socket).expect_err("an unexpected peer gets no answer");
-        assert_eq!(error.code(), SidecarErrorCode::Protocol, "{error}");
+        // The server hangs up unread: the request write fails, or the read is reset, by timing.
+        assert!(
+            matches!(
+                error.code(),
+                SidecarErrorCode::Protocol | SidecarErrorCode::Unanswered
+            ),
+            "{error}"
+        );
         let (_server, finished) = serving.thread.join().expect("server thread");
         let error = finished.expect_err("no expected peer connected");
         assert_eq!(error.code(), SidecarErrorCode::Lifecycle);

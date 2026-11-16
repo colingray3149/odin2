@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "kube.workload.create output",
-  "description": "Settlement of the pod Job (a finite job or a long-lived service) launched from the named published profile. status accepted = Job created; duplicate = idempotent replay of the recorded operation; unavailable = typed unavailability with reason. jobName and resourceVersion bind the exact cluster object on accepted and duplicate.",
+  "description": "Settlement of the pod Job (a finite job or a long-lived service) launched from the named published profile. status accepted = Job created; duplicate = idempotent replay of the recorded operation; queued = no node has room now, so the launch is held and starts when a running pod ends (reason says so; nothing was created); unavailable = typed unavailability with reason. jobName and resourceVersion bind the exact cluster object on accepted and duplicate.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -10,6 +10,7 @@
       "enum": [
         "accepted",
         "duplicate",
+        "queued",
         "unavailable"
       ]
     },
@@ -56,7 +57,10 @@
       "if": {
         "properties": {
           "status": {
-            "const": "unavailable"
+            "enum": [
+              "queued",
+              "unavailable"
+            ]
           }
         },
         "required": [

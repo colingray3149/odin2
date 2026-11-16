@@ -113,11 +113,21 @@ pub enum LiveCommandBody {
         /// message is not the owner's own text.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         owner_text: Option<String>,
+        /// Hermes's unprompted wake (a job, pod or child report, a
+        /// follow-up, a seat.ask ping, an incident). A harness may run it
+        /// beside the main conversation; everything else is a main turn.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        wake: bool,
     },
     FollowUp {
         message: LiveMessage,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         owner_text: Option<String>,
+        /// Hermes's unprompted wake (a job, pod or child report, a
+        /// follow-up, a seat.ask ping, an incident). A harness may run it
+        /// beside the main conversation; everything else is a main turn.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        wake: bool,
     },
     Steer {
         message: LiveMessage,

@@ -39,6 +39,8 @@ pub struct OperationRow {
     pub effect_state: EffectState,
     pub reconciliation_json: String,
     pub evidence_digest: Option<String>,
+    /// Verified recovery receipt; original attempt evidence remains immutable.
+    pub recovery_evidence_digest: Option<String>,
     pub executor_id: String,
     pub prepared_binding: String,
     pub binding_digest: String,
@@ -81,7 +83,7 @@ pub enum TransitionOutcome {
 pub(super) const OPERATION_COLUMNS: &str = "correlation_id, operation_id, capsule_id, seat_id, \
      token_id, session_id, policy_digest, listing_digest, capability, request_digest, \
      request_json, effect_state, reconciliation_json, evidence_digest, executor_id, \
-     prepared_binding, binding_digest, updated_at";
+     prepared_binding, binding_digest, updated_at, recovery_evidence_digest";
 
 pub(super) fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OperationRow> {
     let effect_state: String = row.get(11)?;
@@ -107,5 +109,6 @@ pub(super) fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OperationRow
         prepared_binding: row.get(15)?,
         binding_digest: row.get(16)?,
         updated_at: row.get(17)?,
+        recovery_evidence_digest: row.get(18)?,
     })
 }

@@ -1,0 +1,26 @@
+schema = "odin.registry.v1"
+seat_ops = { kubert = { toolset = "kube", op = "launch_many" } }
+toolset = "kube"
+op = "launch_many"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Queues a batch of labeled launches of one published workload profile, optionally bound to an approved campaign. All items are validated before any launch is held. Each item starts when placement and seat and lane limits permit; replaying the call does not duplicate launches. Use kube.workload.queue to inspect and kube.workload.queue_drop to drop held launches."
+handler = { id = "odin_kube.workload.create_many" }
+input_schema = "schemas/capability/kube.workload.create_many.input.json"
+output_schema = "schemas/capability/kube.workload.create_many.output.json"
+effect_class = "R3"
+seat_tags = ["operator"]
+timeout_seconds = 130
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_kube.workload.create_many_evidence" }
+tests = [
+  "odin-cli::bin/odind kube_runtime::create_many::tests::create_many_refuses_every_item_when_one_is_invalid",
+  "odin-cli::bin/odind kube_runtime::create_many::tests::batch_limits_follow_declared_values",
+  "odin-cli::bin/odind kube_runtime::create_many::tests::batch_limits_use_each_published_snapshot",
+  "odin-cli::bin/odind kube_runtime::execution::batch_run_tests::batch_items_have_distinct_replayable_runs",
+  "odin-cli::bin/odind kube_runtime::launch_queue::tests::create_many_replayed_with_the_same_operation_queues_nothing_new",
+]

@@ -1,5 +1,8 @@
 # Capabilities a seat bound to a runtime-created project may hold.
 capabilities = [
+  "odin.plan_get",
+  "odin.plan_set",
+  "odin.todo_update",
   "model.consult",
   "models.read",
   "claude.open",
@@ -24,10 +27,10 @@ capabilities = [
   "seat.ask.sinmara",
   "seat.ask.supervisor",
   "seat.ask.kubert",
-  "memory.remember",
-  "memory.forget",
-  "brain.search",
-  "brain.read",
+  "knowledge.search",
+  "knowledge.read",
+  "knowledge.add",
+  "knowledge.status",
   "incident.raise",
   "kube.workload.summarize",
   "kube.workload.create",
@@ -55,5 +58,6 @@ capabilities = [
   "code.review.request",
   "code.review.verdict",
   "seat.ask.forseti",
+  "simulation.read",
   "task.create",
 ]

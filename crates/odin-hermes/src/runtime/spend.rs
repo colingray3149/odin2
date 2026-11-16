@@ -657,6 +657,28 @@ fn read_with_book(
     Ok(summary)
 }
 
+pub fn append_compute(
+    summary: &mut Value,
+    usage: &odin_registry::ComputeUsage,
+    days: u16,
+    now_ms: u64,
+) {
+    let today = now_ms / 86_400_000;
+    let first = today.saturating_sub(u64::from(days.saturating_sub(1)));
+    let rows: Vec<Value> = usage
+        .source_charges
+        .iter()
+        .filter_map(|(source, charges)| {
+            let usd: f64 = charges
+                .range(first..=today)
+                .map(|(_, charge)| charge.usd)
+                .sum();
+            (usd > 0.0).then(|| json!({"label": source, "usd": usd, "source": "declared price"}))
+        })
+        .collect();
+    summary["compute"] = json!(rows);
+}
+
 pub(super) fn spend_tools(runtime: &Arc<HermesRuntime>, tools: &mut Vec<Arc<dyn HostTool>>) {
     let runtime = Arc::clone(runtime);
     let handler = move |_scope: Scope, arguments: Value| {
@@ -673,7 +695,21 @@ pub(super) fn spend_tools(runtime: &Arc<HermesRuntime>, tools: &mut Vec<Arc<dyn 
         let gateway = runtime
             .model_gateway()
             .ok_or_else(|| HostToolError::unavailable(TOOL, NO_GATEWAY))?;
-        read(&gateway, days)
+        let mut summary = read(&gateway, days)?;
+        let root = runtime
+            .compute_usage_root
+            .lock()
+            .map_err(|_| HostToolError::unavailable(TOOL, "compute usage store lock poisoned"))?
+            .clone();
+        if let Some(root) = root {
+            let usage = odin_registry::ComputeUsage::load(&root)
+                .map_err(|error| HostToolError::unavailable(TOOL, error))?;
+            let now_ms =
+                u64::try_from(time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000)
+                    .unwrap_or(0);
+            append_compute(&mut summary, &usage, days as u16, now_ms);
+        }
+        Ok(summary)
     };
     tools.push(Arc::new(CapabilityTool::plain_without_prerequisites(
         RpcHostToolDefinition {
@@ -697,6 +733,25 @@ pub(super) fn spend_tools(runtime: &Arc<HermesRuntime>, tools: &mut Vec<Arc<dyn 
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn spend_read_shows_compute_separately_from_model_spend() {
+        let mut usage = odin_registry::ComputeUsage::default();
+        usage.charge_source(
+            "lease:box",
+            &["lane-a".to_owned()],
+            0..3_600_000,
+            2.0,
+            1.0,
+            2.5,
+        );
+        let mut summary = json!({"total": {"usd": 1.0}});
+        append_compute(&mut summary, &usage, 1, 3_600_000);
+        assert_eq!(summary["total"]["usd"], 1.0);
+        assert_eq!(summary["compute"][0]["label"], "lease:box");
+        assert_eq!(summary["compute"][0]["usd"], 2.5);
+        assert_eq!(summary["compute"][0]["source"], "declared price");
+    }
 
     /// LiteLLM 1.97 `/model/info` (with the generated `model_info.odin`) and `/user/daily/activity`.
     #[test]

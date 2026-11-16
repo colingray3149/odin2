@@ -6,7 +6,8 @@
 //! sessions. Invalid Job bindings yield rejection items without ending the stream.
 //! ResourceVersions remain opaque; catalogs assign durable revision ordinals.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::client::{KubeClient, KubeError};
@@ -32,6 +33,33 @@ const RESUME_BACKOFF_START: Duration = Duration::from_millis(250);
 const RESUME_BACKOFF_CAP: Duration = Duration::from_millis(5_000);
 /// A session that lived this long ended normally; it resumes without pause.
 const HEALTHY_SESSION: Duration = Duration::from_secs(5);
+
+/// The owned Jobs the live watch last saw, so pollers read them instead of listing again.
+/// Empty (`None`) until a watch has listed, and again once that watch's stream is dropped.
+#[derive(Clone, Default)]
+pub struct JobCache(Arc<Mutex<Option<BTreeMap<String, v1::Job>>>>);
+
+impl JobCache {
+    /// The cached Jobs carrying `label`, or `None` while no watch backs the cache.
+    pub fn labelled(&self, label: &str) -> Option<Vec<v1::Job>> {
+        let jobs = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        jobs.as_ref().map(|jobs| {
+            jobs.values()
+                .filter(|job| {
+                    job.metadata
+                        .labels
+                        .as_ref()
+                        .is_some_and(|labels| labels.contains_key(label))
+                })
+                .cloned()
+                .collect()
+        })
+    }
+
+    fn update(&self, change: impl FnOnce(&mut Option<BTreeMap<String, v1::Job>>)) {
+        change(&mut self.0.lock().unwrap_or_else(PoisonError::into_inner));
+    }
+}
 
 /// Deletions carry identity only; live objects carry validated projections.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -61,8 +89,10 @@ pub struct KubeJobDeleted {
 /// The first list's failure is returned here; later failures are items.
 pub async fn job_observations(
     client: KubeClient,
+    cache: JobCache,
 ) -> Result<impl Stream<Item = Result<KubeJobWatchEvent, KubeError>> + Send + Unpin, KubeError> {
     let mut state = JobWatchState {
+        cache,
         watch: ListedWatch::new(
             client.jobs(),
             Some(KUBE_OWNED_SELECTOR),
@@ -381,6 +411,8 @@ fn deleted_identity(cluster: &str, job: &v1::Job) -> KubeJobDeleted {
 }
 
 struct JobWatchState {
+    /// Filled from this watch only while its stream lives.
+    cache: JobCache,
     client: KubeClient,
     watch: ListedWatch<v1::Job>,
     cluster: String,
@@ -398,6 +430,9 @@ impl JobWatchState {
     async fn project(&mut self, step: Step<v1::Job>) -> Result<(), KubeError> {
         match step {
             Step::Listed(jobs) => {
+                self.cache.update(|cached| {
+                    *cached = Some(jobs.iter().map(|job| (job_key(job), job.clone())).collect());
+                });
                 let nodes = crate::status::job_nodes(&self.client).await?;
                 let mut listed = Vec::with_capacity(jobs.len());
                 for job in &jobs {
@@ -417,6 +452,11 @@ impl JobWatchState {
                     .push_back(Ok(KubeJobWatchEvent::Listed(listed)));
             }
             Step::Applied(job) => {
+                self.cache.update(|cached| {
+                    if let Some(jobs) = cached {
+                        jobs.insert(job_key(&job), job.clone());
+                    }
+                });
                 self.revision = self.revision.saturating_add(1);
                 match observe_job(&self.cluster, &job, self.revision) {
                     Ok(mut observation) => {
@@ -428,6 +468,11 @@ impl JobWatchState {
                 }
             }
             Step::Deleted(job) => {
+                self.cache.update(|cached| {
+                    if let Some(jobs) = cached {
+                        jobs.remove(&job_key(&job));
+                    }
+                });
                 self.pending
                     .push_back(Ok(KubeJobWatchEvent::Deleted(deleted_identity(
                         &self.cluster,
@@ -437,6 +482,16 @@ impl JobWatchState {
         }
         Ok(())
     }
+}
+
+impl Drop for JobWatchState {
+    fn drop(&mut self) {
+        self.cache.update(|cached| *cached = None);
+    }
+}
+
+fn job_key(job: &v1::Job) -> String {
+    job.metadata.name.clone().unwrap_or_default()
 }
 
 #[cfg(test)]

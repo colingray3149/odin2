@@ -11,7 +11,7 @@ use super::paths::{ignored, relative_to_odin, sorted_paths};
 /// Schema folders holding JSON schemas, each checked for dialect and shape.
 const JSON_SCHEMA_KINDS: [&str; 3] = ["authority", "capability", "control"];
 /// Schema folders holding one crate's SQL migrations; the crate that owns them reads them.
-const SQL_SCHEMA_KINDS: [&str; 2] = ["hermes", "huginn"];
+const SQL_SCHEMA_KINDS: [&str; 3] = ["campaign", "hermes", "huginn"];
 
 pub(super) fn inspect_schema_catalog(context: &RelationContext) -> Vec<RegistryFinding> {
     let mut findings = Vec::new();
@@ -212,5 +212,25 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let findings = inspect_schema_catalog(&RelationContext::new(&root));
         assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    #[test]
+    fn campaign_store_is_admitted_as_a_separate_sql_schema_kind() {
+        let root = tempfile::tempdir().unwrap();
+        let schemas = root.path().join("schemas");
+        fs::create_dir_all(schemas.join("campaign")).unwrap();
+        fs::write(
+            schemas.join("campaign/0001_campaign_store.sql"),
+            "SELECT 1;",
+        )
+        .unwrap();
+        let context = RelationContext::new(root.path());
+        assert!(inspect_schema_catalog(&context).is_empty());
+
+        fs::write(schemas.join("campaign_store.sql"), "SELECT 1;").unwrap();
+        let findings = inspect_schema_catalog(&context);
+        assert!(findings
+            .iter()
+            .any(|finding| finding.code == "schema-anomalous-entry"));
     }
 }

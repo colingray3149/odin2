@@ -37,12 +37,6 @@ required = true
 meaning = "The served Atlas corpus the project retrieves from: an atlas.* source the seats' brain_scope declares."
 
 [[variable]]
-name = "artifact_policy"
-type = "enum:standard|private|large-scientific"
-required = true
-meaning = "Retention/privacy class."
-
-[[variable]]
 name = "accounts"
 type = "optional<table>"
 required = false

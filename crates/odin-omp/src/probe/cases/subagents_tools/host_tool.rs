@@ -258,7 +258,7 @@ async fn run_host_tool_and_uri(context: &CaseContext) -> CaseOutcome {
 /// the host-tool and scoped-URI assertions need: lane
 /// Provisioning→Ready→Running, run Planning→Running, and the lane's
 /// current-run/session references.
-fn seed_bound_lane(context: &CaseContext) -> Result<(), String> {
+pub(crate) fn seed_bound_lane(context: &CaseContext) -> Result<(), String> {
     let now = OffsetDateTime::from_unix_timestamp(13_000).map_err(|error| error.to_string())?;
     let shared = context.ledger();
     let ledger = shared

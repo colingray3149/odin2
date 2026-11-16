@@ -39,6 +39,9 @@ struct PublishPathParams {
     source: PathBuf,
 }
 
+/// The display-name prefix of a simulation frame's record.
+const SIMULATION_FRAME_PREFIX: &str = "frame-";
+
 #[derive(Clone)]
 pub struct FsPublishedArtifactStore {
     root: Arc<PathBuf>,
@@ -342,12 +345,89 @@ impl FsPublishedArtifactStore {
         .map_err(|error| HuginnProtocolError::unavailable("publishedArtifactJoin", error))?
     }
 
+    /// Durably publishes one simulation frame (a PNG or SVG a mission's pod wrote), readable by content
+    /// ticket until [`Self::retire_simulation_frames`] drops it.
+    pub async fn publish_simulation_frame(
+        &self,
+        display_name: &str,
+        media_type: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ArtifactRef, HuginnProtocolError> {
+        let byte_len = u64::try_from(bytes.len()).map_err(|error| {
+            HuginnProtocolError::unavailable(
+                "publishedArtifactBytes",
+                format!("{} bytes do not fit u64: {error}", bytes.len()),
+            )
+        })?;
+        let content_digest = Digest::hash(&bytes);
+        let display_name = format!("{SIMULATION_FRAME_PREFIX}{display_name}");
+        let kind = ArtifactKind::Render(if media_type == "image/svg+xml" {
+            odin_domain::huginn::RenderKind::SanitizedSvg
+        } else {
+            odin_domain::huginn::RenderKind::RasterImage
+        });
+        let identity =
+            serde_json::to_vec(&("simulation-frame", &display_name, byte_len, content_digest))
+                .map_err(|error| HuginnProtocolError::unavailable("publishedArtifactId", error))?;
+        let artifact_id =
+            ArtifactId::new(format!("artifact:huginn:{}", Digest::hash(&identity).hex()))
+                .map_err(|error| HuginnProtocolError::unavailable("publishedArtifactId", error))?;
+        let artifact = ArtifactRef::new(ArtifactRefInit {
+            artifact_id,
+            session_id: self.render_session,
+            lane_id: self.render_lane.clone(),
+            kind,
+            display_name,
+            media_type: media_type.to_owned(),
+            byte_len,
+            content_digest,
+        })
+        .map_err(|error| HuginnProtocolError::unavailable("publishedArtifactEnvelope", error))?;
+        let record = PublishedArtifactRecord {
+            artifact: artifact.clone(),
+            payload_name: payload_name(content_digest),
+        };
+        let root = self.root.as_ref().clone();
+        let publication_lock = Arc::clone(&self.publication_lock);
+        tokio::task::spawn_blocking(move || {
+            let mut refs = publication_lock.lock().map_err(|error| {
+                HuginnProtocolError::unavailable("publishedArtifactLock", error)
+            })?;
+            persist_payload_bytes(
+                &bytes,
+                &root.join("payloads").join(&record.payload_name),
+                byte_len,
+                content_digest,
+            )?;
+            persist_published_record(&root, &mut refs, &record)?;
+            Ok(artifact)
+        })
+        .await
+        .map_err(|error| HuginnProtocolError::unavailable("publishedArtifactJoin", error))?
+    }
+
+    /// Retires simulation frames that aged out of their mission's board.
+    pub fn retire_simulation_frames(
+        &self,
+        dropped: &[ArtifactRef],
+    ) -> Result<(), HuginnProtocolError> {
+        self.retire_named(SIMULATION_FRAME_PREFIX, dropped)
+    }
+
     /// Retires the feed records named by frames the replay store dropped. What the store published for
     /// anything else (browser frames, renders, files) has its own owner and is left alone.
     pub fn retire_feed_payloads(&self, dropped: &[ArtifactRef]) -> Result<(), HuginnProtocolError> {
+        self.retire_named("feed-", dropped)
+    }
+
+    fn retire_named(
+        &self,
+        prefix: &str,
+        dropped: &[ArtifactRef],
+    ) -> Result<(), HuginnProtocolError> {
         let mut records = Vec::new();
         for artifact in dropped {
-            if artifact.display_name.starts_with("feed-") {
+            if artifact.display_name.starts_with(prefix) {
                 records.push(PublishedArtifactRecord {
                     artifact: artifact.clone(),
                     payload_name: payload_name(artifact.content_digest),
@@ -499,6 +579,24 @@ impl FsPublishedArtifactStore {
     /// store-owned worker.
     pub fn flush_browser_retirements(&self) -> Result<(), HuginnProtocolError> {
         self.browser_artifacts.flush()
+    }
+
+    /// One published artifact's bytes (a simulation frame for a seat's tool).
+    pub async fn read_bytes(
+        &self,
+        artifact_id: &ArtifactId,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, HuginnProtocolError> {
+        let store = self.clone();
+        let id = artifact_id.clone();
+        tokio::task::spawn_blocking(move || store.read(&id, max_bytes))
+            .await
+            .map_err(|error| HuginnProtocolError::unavailable("publishedArtifactJoin", error))??
+            .map(|content| content.bytes)
+            .ok_or_else(|| HuginnProtocolError::NotFound {
+                object_kind: "artifact".to_owned(),
+                object_id: artifact_id.to_string(),
+            })
     }
 
     pub(in crate::service) fn read(

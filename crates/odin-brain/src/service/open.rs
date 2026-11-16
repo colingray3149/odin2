@@ -120,12 +120,12 @@ impl BrainService {
                         KnowledgeSource::Vault(vault)
                     }
                     BrainSourceConfig::Memory { source } => {
-                        if source.scope().memory_seat()
-                            != id.as_str().strip_prefix(MEMORY_NAMESPACE_PREFIX)
-                            || source.scope().memory_seat().is_none()
-                        {
+                        let seat_subtree = source.scope().memory_seat().is_some()
+                            && source.scope().memory_seat()
+                                == id.as_str().strip_prefix(MEMORY_NAMESPACE_PREFIX);
+                        if !seat_subtree && !source.scope().is_owner_profile() {
                             return Err(BrainError::InvalidPolicy(format!(
-                                "memory source {id} must bind exactly its named seat's reserved subtree"
+                                "memory source {id} must bind exactly its named seat's reserved subtree or the owner's me/ profile"
                             )));
                         }
                         // The memory source arrives fully scoped from the

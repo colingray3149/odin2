@@ -380,6 +380,7 @@ mod tests {
             approval_policy: CapabilityApprovalToml::None,
             approval_decider: Default::default(),
             preview: None,
+            approval_card: None,
             batchable: false,
             batch: None,
             evidence_extractor: Some(HandlerBindingToml::Exec(ExecHandlerToml {

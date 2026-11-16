@@ -8,8 +8,8 @@ const TOOLSET_EXAMPLES_MIN: usize = 2;
 const TOOLSET_EXAMPLES_MAX: usize = 5;
 const TOOLSET_DESCRIPTION_MAX_CHARS: usize = 110;
 /// Names the host's own tools use; a toolset cannot take them.
-pub const RESERVED_TOOLSETS: [&str; 8] = [
-    "read", "bash", "edit", "task", "eval", "todo", "recall", "search",
+pub const RESERVED_TOOLSETS: [&str; 9] = [
+    "read", "bash", "edit", "task", "eval", "todo", "recall", "search", "more",
 ];
 /// How many `$ref` hops a field type follows before the reference is called a cycle.
 const REF_DEPTH_MAX: usize = 16;
@@ -40,6 +40,8 @@ pub struct Member {
     pub op: Option<String>,
     pub description: String,
     pub on_demand: bool,
+    /// The seat a `seat.ask` member hands its job to; such members fold into one [`ASK_OP`].
+    pub delegate_to: Option<String>,
     pub definition: Value,
 }
 
@@ -81,27 +83,6 @@ pub(crate) fn example_op(example: &str) -> Option<&str> {
     })
 }
 
-/// The declared examples whose op the seat holds, else the generated help call.
-fn examples_line(
-    group: &str,
-    ops: &BTreeSet<String>,
-    declared: Option<&ToolsetToml>,
-    fallback: Value,
-) -> String {
-    let held: Vec<&str> = declared
-        .map(|toolset| toolset.examples.as_slice())
-        .unwrap_or_default()
-        .iter()
-        .filter(|example| example_op(example).is_some_and(|op| ops.contains(op)))
-        .map(String::as_str)
-        .collect();
-    if held.is_empty() {
-        format!("Example: {group} {fallback}")
-    } else {
-        format!("Examples: {}", held.join("; "))
-    }
-}
-
 /// Every declared toolset by name, as listing projection reads them.
 pub fn declared_toolsets(
     objects: &[crate::schema::RegistryObject],
@@ -117,11 +98,22 @@ pub fn declared_toolsets(
         .collect()
 }
 
+/// The text up to the first sentence end; a dot between identifier characters (`web.read`) is not one.
 pub(crate) fn first_sentence(text: &str) -> &str {
-    text.split_inclusive(['.', '!', '?'])
-        .next()
-        .unwrap_or(text)
-        .trim()
+    let bytes = text.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        let ends = match byte {
+            b'!' | b'?' => true,
+            b'.' => bytes
+                .get(index + 1)
+                .is_none_or(|next| next.is_ascii_whitespace()),
+            _ => false,
+        };
+        if ends {
+            return text[..=index].trim();
+        }
+    }
+    text.trim()
 }
 
 fn read_schema(root: &std::path::Path, reference: &str) -> Result<Value, String> {
@@ -206,10 +198,179 @@ fn field_type(value: &Value, schema: &Value, depth: usize) -> Result<Value, Stri
     Err("field has no resolvable type".into())
 }
 
-/// Exact constraints remain in the member schema. Only the union's field vocabulary is shown.
+/// The op that hands another seat a job: every `seat.ask.<seat>` member a seat holds folds into it,
+/// and `to` names the seat.
+pub const ASK_OP: &str = "ask";
+
+/// The longest item shape shown for a list of objects (`todos: [{id, title, status}]`).
+const ITEM_FIELDS_CHARS: usize = 80;
+
+/// The longest enum shown inline in a signature (`as?: video|audio|gallery`); a longer one is listed
+/// once, after the ops.
+const INLINE_ENUM_CHARS: usize = 40;
+
+/// What a field takes, as a signature shows it: nothing for a string, else a short type or the
+/// inline values. `None` when its values are listed after the ops instead.
+fn signature_type(
+    field: &str,
+    original: &Value,
+    schema: &Value,
+    nested: bool,
+    values: &mut BTreeMap<String, BTreeSet<String>>,
+) -> Result<Option<String>, String> {
+    if let Some(declared) = original.get("enum").and_then(Value::as_array) {
+        let shown: Vec<String> = declared
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map_or_else(|| value.to_string(), str::to_owned)
+            })
+            .collect();
+        let inline = shown.join("|");
+        if original.get(crate::listing::RESOLVED_IDS) != Some(&json!(true))
+            && inline.len() <= INLINE_ENUM_CHARS
+        {
+            return Ok(Some(inline));
+        }
+        values.entry(field.to_owned()).or_default().extend(shown);
+        return Ok(None);
+    }
+    if let Some(items) =
+        original
+            .get("items")
+            .filter(|_| !nested)
+            .and_then(|items| match items.get("$ref") {
+                Some(Value::String(reference)) => reference
+                    .strip_prefix('#')
+                    .and_then(|pointer| schema.pointer(pointer)),
+                _ => Some(items),
+            })
+    {
+        if items.get("properties").is_some() {
+            // A list of objects shows its items' fields: `todos: [{id, title, status}]`.
+            let mut item = items.clone();
+            if let Some(defs) = schema.get("$defs") {
+                item["$defs"] = defs.clone();
+            }
+            // An item too varied to say in one short line stays `list`; the error shows it.
+            let mut ignored = BTreeMap::new();
+            if let Ok(fields) = signature_at(&item, None, false, true, &mut ignored) {
+                if fields.len() <= ITEM_FIELDS_CHARS {
+                    for (field, listed) in ignored {
+                        values.entry(field).or_default().extend(listed);
+                    }
+                    return Ok(Some(format!("[{{{fields}}}]")));
+                }
+            }
+        }
+    }
+    let kind = field_type(original, schema, 0)?;
+    let names: Vec<&str> = match &kind {
+        Value::String(kind) => vec![kind.as_str()],
+        Value::Array(kinds) => kinds
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|kind| *kind != "null")
+            .collect(),
+        _ => Vec::new(),
+    };
+    if names == ["string"] {
+        return Ok(None);
+    }
+    let short: Vec<&str> = names
+        .into_iter()
+        .map(|kind| match kind {
+            "string" => "str",
+            "integer" => "int",
+            "number" => "num",
+            "boolean" => "bool",
+            "array" => "list",
+            "object" => "obj",
+            other => other,
+        })
+        .collect();
+    Ok((!short.is_empty()).then(|| short.join("|")))
+}
+
+/// One op's fields as a model writes them: required ones bare, optional ones with `?`, a type or
+/// values only where the field is not a plain string. `lead` (and its synonyms) is shown beside `op`.
+fn signature(
+    schema: &Value,
+    lead: Option<&str>,
+    required_only: bool,
+    values: &mut BTreeMap<String, BTreeSet<String>>,
+) -> Result<String, String> {
+    signature_at(schema, lead, required_only, false, values)
+}
+
+/// [`signature`] one list item deep: a `nested` signature shows its own lists as `list`.
+fn signature_at(
+    schema: &Value,
+    lead: Option<&str>,
+    required_only: bool,
+    nested: bool,
+    values: &mut BTreeMap<String, BTreeSet<String>>,
+) -> Result<String, String> {
+    // A required field with a declared default is filled when omitted, so the model may leave it out.
+    let required: BTreeSet<&str> = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|field| {
+            schema
+                .pointer(&format!("/properties/{field}/default"))
+                .is_none()
+        })
+        .collect();
+    let led = |field: &str| {
+        lead.is_some_and(|lead| {
+            field == lead
+                || crate::listing::SYNONYMS
+                    .iter()
+                    .any(|group| group.contains(&lead) && group.contains(&field))
+        })
+    };
+    let mut fields = Vec::new();
+    let properties = schema.get("properties").and_then(Value::as_object);
+    let shown = |field: &str, original: &Value| {
+        field != "op" && !led(field) && original.get("readOnly") != Some(&json!(true))
+    };
+    // Required fields first, each group in declaration order.
+    for want in [true, false] {
+        for (field, original) in properties.into_iter().flatten() {
+            if !shown(field, original) || required.contains(field.as_str()) != want {
+                continue;
+            }
+            if required_only && !want {
+                // The optional ones are named by the error that needs them.
+                fields.push("…".to_owned());
+                break;
+            }
+            let optional = if want { "" } else { "?" };
+            fields.push(
+                match signature_type(field, original, schema, nested, values)
+                    .map_err(|error| format!("{field}: {error}"))?
+                {
+                    Some(kind) => format!("{field}{optional}: {kind}"),
+                    None => format!("{field}{optional}"),
+                },
+            );
+        }
+    }
+    Ok(fields.join(", "))
+}
+
+/// Each toolset as one tool: `op` names the operation and `args` carries its fields. The description
+/// gives every op its own signature, so the first call can be right without a help round trip, and the
+/// parameters stay two fields however many ops the toolset holds. Exact constraints remain in the member
+/// schema, which validates the call.
 pub fn project(
     mut members: Vec<Member>,
     toolsets: &BTreeMap<String, ToolsetToml>,
+    deferred: &BTreeSet<String>,
 ) -> Result<Vec<Value>, String> {
     // The listing is the same bytes however the caller ordered the members: by toolset, then id.
     members.sort_by(|a, b| (&a.toolset, &a.id).cmp(&(&b.toolset, &b.id)));
@@ -221,21 +382,32 @@ pub fn project(
             .push(member);
     }
     let mut result = Vec::new();
+    let mut more = Vec::new();
     for (group, members) in groups {
         if !valid_toolset_name(&group) {
             return Err(format!("invalid or reserved toolset name {group}"));
         }
-        let mut properties: Map<String, Value> = Map::new();
-        let mut field_ops: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        let mut field_values: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        let mut ops = BTreeSet::from(["help".to_owned()]);
+        let lead = toolsets
+            .get(&group)
+            .and_then(|toolset| toolset.lead.as_deref());
+        if deferred.contains(&group) {
+            more.push(deferred_line(&group, &members, toolsets.get(&group))?);
+            continue;
+        }
+        let mut ops = BTreeSet::new();
         let mut lines = Vec::new();
-        let mut example = None;
-        let mut on_demand = false;
+        let mut values: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut asks = Vec::new();
         let mut template = members[0].definition.clone();
         for member in members {
             let schema = &member.definition["parameters"];
+            if let Some(seat) = &member.delegate_to {
+                asks.push((seat.clone(), member));
+                continue;
+            }
             let member_ops = member_ops(&member.id, member.op.as_deref(), schema);
+            let fields = signature(schema, lead, member.on_demand, &mut values)
+                .map_err(|error| format!("{group}.{error}"))?;
             for op in &member_ops {
                 if !ops.insert(op.clone()) {
                     return Err(format!("duplicate toolset operation {group}.{op}"));
@@ -245,95 +417,140 @@ pub fn project(
                     .and_then(|descriptions| descriptions.get(op))
                     .and_then(Value::as_str)
                     .unwrap_or(&member.description);
-                lines.push(format!("{op}: {}", first_sentence(description)));
-                if example.is_none() {
-                    example = Some(json!({"op":"help","operation":op}));
-                }
-            }
-            if member.on_demand {
-                on_demand = true;
-                continue;
-            }
-            if let Some(fields) = schema.get("properties").and_then(Value::as_object) {
-                for (field, original) in fields {
-                    if field == "op" || original.get("readOnly") == Some(&json!(true)) {
-                        continue;
-                    }
-                    let kind = field_type(original, schema, 0)
-                        .map_err(|error| format!("{group}.{field}: {error}"))?;
-                    let mut shown = json!({"type":kind});
-                    if original.get(crate::listing::RESOLVED_IDS) == Some(&json!(true)) {
-                        if let Some(values) = original.get("enum").and_then(Value::as_array) {
-                            field_values
-                                .entry(field.clone())
-                                .or_default()
-                                .extend(values.iter().filter_map(Value::as_str).map(str::to_owned));
-                        }
-                    } else if let Some(values) = original.get("enum") {
-                        shown["enum"] = values.clone();
-                    }
-                    if let Some(existing) = properties.get_mut(field) {
-                        if existing["type"] != shown["type"] {
-                            return Err(format!(
-                                "toolset {group} field {field}: conflicting types {} and {}",
-                                existing["type"], shown["type"]
-                            ));
-                        }
-                        match (existing.get("enum").cloned(), shown.get("enum")) {
-                            (Some(Value::Array(mut left)), Some(Value::Array(right))) => {
-                                for value in right {
-                                    if !left.contains(value) {
-                                        left.push(value.clone());
-                                    }
-                                }
-                                existing["enum"] = json!(left);
-                            }
-                            _ => {
-                                existing.as_object_mut().unwrap().remove("enum");
-                            }
-                        }
-                    } else {
-                        properties.insert(field.clone(), shown);
-                    }
-                    field_ops
-                        .entry(field.clone())
-                        .or_default()
-                        .extend(member_ops.iter().cloned());
-                }
+                lines.push(format!("{op}({fields}): {}", first_sentence(description)));
             }
         }
-        for (field, users) in field_ops {
-            let value = properties.get_mut(&field).unwrap();
-            if value.get("enum").is_some() && users.len() > 1 {
-                value["description"] = json!(users.join(","));
+        if let Some((_, first)) = asks.first() {
+            if !ops.insert(ASK_OP.to_owned()) {
+                return Err(format!("duplicate toolset operation {group}.{ASK_OP}"));
             }
+            let seats: Vec<&str> = asks.iter().map(|(seat, _)| seat.as_str()).collect();
+            let fields = signature(
+                &first.definition["parameters"],
+                lead,
+                first.on_demand,
+                &mut values,
+            )
+            .map_err(|error| format!("{group}.{error}"))?;
+            let whom: Vec<String> = asks
+                .iter()
+                .map(|(seat, member)| format!("{seat}: {}", first_sentence(&member.description)))
+                .collect();
+            lines.push(format!(
+                "{ASK_OP}(to: {}, {fields}): Hands another seat one job. {}",
+                seats.join("|"),
+                whom.join(" ")
+            ));
         }
-        for (field, values) in field_values {
-            let value = properties.get_mut(&field).unwrap();
-            value["description"] = json!(format!(
-                "Values: {}",
+        if ops.is_empty() {
+            return Err(format!("toolset {group} lists no operations"));
+        }
+        for (field, values) in values {
+            lines.push(format!(
+                "{field}: {}",
                 values.into_iter().collect::<Vec<_>>().join(", ")
             ));
         }
+        let mut properties = Map::new();
         properties.insert("op".into(), json!({"type":"string","enum":ops}));
-        properties.insert(
-            "operation".into(),
-            json!({"type":"string","description":"help target"}),
-        );
-        if on_demand {
-            // A string too: a strict-schema provider can only send an empty object for a property
-            // that declares no fields, so on those models the arguments travel as JSON text.
-            properties.insert("args".into(), json!({"anyOf":[{"type":"string"},{"type":"object"}],"description":"On-demand arguments: an object or its JSON text; help returns exact fields."}));
+        if let Some(lead) = lead {
+            properties.insert(lead.into(), json!({"type":"string"}));
         }
-        let example = example.ok_or_else(|| format!("toolset {group} lists no operations"))?;
-        lines.push(examples_line(&group, &ops, toolsets.get(&group), example));
+        properties.insert("args".into(), args_property());
         template["name"] = json!(group);
         template["label"] = template["name"].clone();
         template["description"] = json!(lines.join("\n"));
         template["parameters"] = json!({"type":"object","properties":properties,"required":["op"],"additionalProperties":false});
         result.push(template);
     }
+    if !more.is_empty() {
+        let tools: Vec<&str> = more.iter().map(|(group, _)| group.as_str()).collect();
+        let lines: Vec<&str> = more.iter().map(|(_, line)| line.as_str()).collect();
+        result.push(json!({
+            "name": MORE_TOOL,
+            "label": MORE_TOOL,
+            "description": format!("More tools, each op with its required fields:\n{}", lines.join("\n")),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string", "enum": tools},
+                    "op": {"type": "string"},
+                    "args": args_property(),
+                },
+                "required": ["tool", "op"],
+                "additionalProperties": false,
+            },
+            "hidden": false,
+            "loadMode": "essential",
+        }));
+    }
     Ok(result)
+}
+
+/// An op's fields, as JSON text only: a strict-schema provider can send nothing but `{}` for an
+/// object that declares no fields, and given the choice a model tried that first.
+fn args_property() -> Value {
+    json!({"type":"string","description":"The op's fields as JSON text, e.g. {\"url\":\"https://…\"}"})
+}
+
+/// The one tool a seat's deferred toolsets are called through: `more {tool, op, args}`.
+pub const MORE_TOOL: &str = "more";
+
+/// One deferred toolset as `more` lists it: what it is for, then each op with its required fields.
+fn deferred_line(
+    group: &str,
+    members: &[Member],
+    declared: Option<&ToolsetToml>,
+) -> Result<(String, String), String> {
+    let mut values = BTreeMap::new();
+    let mut ops = Vec::new();
+    for member in members {
+        let schema = &member.definition["parameters"];
+        let fields = signature(schema, None, true, &mut values)
+            .map_err(|error| format!("{group}.{error}"))?;
+        let names = match &member.delegate_to {
+            Some(seat) => vec![format!("{ASK_OP} to {seat}")],
+            None => member_ops(&member.id, member.op.as_deref(), schema),
+        };
+        for op in names {
+            ops.push(format!("{op}({fields})"));
+        }
+    }
+    let about = declared.map_or(String::new(), |toolset| format!("{} ", toolset.description));
+    Ok((
+        group.to_owned(),
+        format!("{group}: {about}{}", ops.join(", ")),
+    ))
+}
+
+/// The toolsets a seat lists through [`MORE_TOOL`].
+pub fn seat_deferred(objects: &[crate::schema::RegistryObject], seat_id: &str) -> BTreeSet<String> {
+    objects
+        .iter()
+        .find_map(|object| match &object.config {
+            crate::schema::ObjectConfig::Seat(seat) if object.id == seat_id => {
+                seat.tools.as_ref().map(|tools| tools.deferred.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// Every seat's deferred toolsets, by seat id.
+pub fn declared_deferrals(
+    objects: &[crate::schema::RegistryObject],
+) -> BTreeMap<String, BTreeSet<String>> {
+    objects
+        .iter()
+        .filter_map(|object| match &object.config {
+            crate::schema::ObjectConfig::Seat(seat) => seat
+                .tools
+                .as_ref()
+                .filter(|tools| !tools.deferred.is_empty())
+                .map(|tools| (object.id.clone(), tools.deferred.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The seat's listing as its model is sent it: the exact enabled grant set (toolset macros
@@ -473,14 +690,20 @@ fn seat_definitions(
                     .map(|view| view.op.clone())
                     .or_else(|| capability.op.clone()),
                 description: capability.description.clone(),
-                on_demand: capability.expose == Some(CapabilityExposureToml::OnDemand),
+                on_demand: view.and_then(|view| view.expose).or(capability.expose)
+                    == Some(CapabilityExposureToml::OnDemand),
+                delegate_to: capability.delegate_to.as_ref().map(|seat| seat.to_string()),
                 definition,
             });
         } else {
             direct.push(definition);
         }
     }
-    direct.extend(project(members, &declared_toolsets(objects))?);
+    direct.extend(project(
+        members,
+        &declared_toolsets(objects),
+        &seat_deferred(objects, seat_id),
+    )?);
     direct.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     Ok(direct)
 }
@@ -664,6 +887,19 @@ pub(crate) fn validate(
         if !seat.enabled {
             continue;
         }
+        let toolsets = declared_toolsets(objects);
+        for group in seat.tools.iter().flat_map(|tools| &tools.deferred) {
+            if !toolsets.contains_key(group) {
+                findings.push(crate::RegistryFinding::fail(
+                    "tool-listing",
+                    &object.relative_config,
+                    format!(
+                        "seat {} defers {group}, which is not a declared toolset",
+                        object.id
+                    ),
+                ));
+            }
+        }
         let budget = seat
             .tools
             .as_ref()
@@ -702,12 +938,22 @@ pub(crate) fn validate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_sentence_keeps_dotted_identifiers() {
+        assert_eq!(
+            first_sentence("Ask web.direct to fetch a host. Then more."),
+            "Ask web.direct to fetch a host."
+        );
+        assert_eq!(first_sentence("No end here"), "No end here");
+        assert_eq!(first_sentence("Done! Next."), "Done!");
+    }
     use crate::schema::{ObjectConfig, RegistryObject};
     use std::path::{Path, PathBuf};
 
     /// Projection without declared toolsets: the generated example line.
     fn project(members: Vec<Member>) -> Result<Vec<Value>, String> {
-        super::project(members, &BTreeMap::new())
+        super::project(members, &BTreeMap::new(), &BTreeSet::new())
     }
     fn member(id: &str, op: &str, schema: Value, on_demand: bool) -> Member {
         Member {
@@ -716,42 +962,51 @@ mod tests {
             op: Some(op.into()),
             description: "Does the declared work. More details remain private.".into(),
             on_demand,
+            delegate_to: None,
             definition: json!({"name":id,"parameters":schema}),
         }
     }
 
     #[test]
-    fn help_and_union_keep_only_declared_types_descriptions_and_merged_enums() {
-        let listing=project(vec![member("one","read",json!({"properties":{"limit":{"type":"integer","minimum":1,"maximum":10},"kind":{"type":"string","enum":["a"]}}}),false),member("two","list",json!({"properties":{"limit":{"type":"integer","minimum":20,"maximum":30},"kind":{"type":"string","enum":["b"]}}}),false)]).unwrap();
-        let fields = &listing[0]["parameters"]["properties"];
-        assert!(fields["op"]["enum"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("help")));
-        assert!(fields["limit"].get("minimum").is_none());
-        assert_eq!(fields["kind"]["enum"], json!(["a", "b"]));
-        assert!(fields["kind"]["description"]
-            .as_str()
-            .unwrap()
-            .contains("read,list"));
+    fn each_op_lists_its_own_fields_and_the_parameters_stay_op_and_args() {
+        let listing = project(vec![
+            member("one", "read", json!({"properties":{"limit":{"type":"integer","minimum":1},"kind":{"type":"string","enum":["a"]},"id":{"type":"string"}},"required":["id"]}), false),
+            member("two", "list", json!({"properties":{"limit":{"type":"integer"},"kind":{"type":"string","enum":["b"]}}}), false),
+        ])
+        .unwrap();
+        let description = listing[0]["description"].as_str().unwrap();
+        assert!(
+            description.contains("read(id, kind?: a, limit?: int): Does the declared work."),
+            "{description}"
+        );
+        assert!(
+            description.contains("list(kind?: b, limit?: int)"),
+            "{description}"
+        );
+        let fields = listing[0]["parameters"]["properties"].as_object().unwrap();
+        assert_eq!(fields.keys().collect::<Vec<_>>(), ["args", "op"]);
+        assert_eq!(fields["op"]["enum"], json!(["list", "read"]));
+        assert_eq!(listing[0]["parameters"]["required"], json!(["op"]));
     }
 
     #[test]
-    fn on_demand_members_contribute_only_args_and_ops() {
-        let listing = project(vec![member(
-            "one",
-            "scene",
-            json!({"properties":{"steps":{"type":"array"}}}),
-            true,
-        )])
+    fn an_on_demand_op_shows_only_its_required_fields_and_long_values_are_listed_once() {
+        let ids = json!({"type":"string","enum":["mini-documents","pc-downloads"],"x-odin-resolve-ids":true});
+        let listing = project(vec![
+            member("one", "scene", json!({"properties":{"steps":{"type":"array"},"device":{"type":"string"}},"required":["steps"]}), true),
+            member("two", "list", json!({"properties":{"root":ids}}), false),
+        ])
         .unwrap();
-        let fields = &listing[0]["parameters"]["properties"];
-        assert_eq!(
-            fields["args"]["anyOf"],
-            json!([{"type":"string"},{"type":"object"}])
+        let description = listing[0]["description"].as_str().unwrap();
+        assert!(
+            description.contains("scene(steps: list, …)"),
+            "{description}"
         );
-        assert!(fields.get("steps").is_none());
-        assert_eq!(fields["op"]["enum"], json!(["help", "scene"]));
+        assert!(description.contains("list(root?)"), "{description}");
+        assert!(
+            description.ends_with("root: mini-documents, pc-downloads"),
+            "{description}"
+        );
     }
 
     #[test]
@@ -764,9 +1019,11 @@ mod tests {
             "$defs": {"step": {"type": "object"}}
         });
         let listing = project(vec![member("one", "read", schema, false)]).unwrap();
-        let fields = &listing[0]["parameters"]["properties"];
-        assert_eq!(fields["step"]["type"], "object");
-        assert_eq!(fields["either"]["type"], json!(["integer", "string"]));
+        let description = listing[0]["description"].as_str().unwrap();
+        assert!(
+            description.contains("read(either?: int|str, step?: obj)"),
+            "{description}"
+        );
 
         let looped = json!({
             "properties": {"a": {"$ref": "#/$defs/a"}},
@@ -783,28 +1040,93 @@ mod tests {
     }
 
     #[test]
-    fn conflicting_types_and_duplicate_operations_are_load_errors() {
-        let result = project(vec![
-            member(
-                "one",
-                "read",
-                json!({"properties":{"value":{"type":"string"}}}),
-                false,
-            ),
-            member(
-                "two",
-                "list",
-                json!({"properties":{"value":{"type":"object"}}}),
-                false,
-            ),
-        ]);
-        assert!(result.unwrap_err().contains("conflicting types"));
+    fn duplicate_operations_are_load_errors() {
         assert!(project(vec![
             member("one", "read", json!({}), false),
             member("two", "read", json!({}), false)
         ])
         .unwrap_err()
         .contains("duplicate"));
+    }
+
+    #[test]
+    fn seat_asks_fold_into_one_ask_op_naming_each_seat() {
+        let ask = |id: &str, seat: &str| Member {
+            delegate_to: Some(seat.into()),
+            ..member(
+                id,
+                &format!("ask_{seat}"),
+                json!({"properties":{"_delegate_to":{"type":"string","readOnly":true},"question":{"type":"string"},"urgency":{"enum":["low","high"],"default":"low"}},"required":["_delegate_to","question","urgency"]}),
+                false,
+            )
+        };
+        let listing = project(vec![
+            ask("seat.ask.kubert", "kubert"),
+            ask("seat.ask.scribe", "scribe"),
+        ])
+        .unwrap();
+        assert_eq!(
+            listing[0]["parameters"]["properties"]["op"]["enum"],
+            json!(["ask"])
+        );
+        let description = listing[0]["description"].as_str().unwrap();
+        assert!(description.starts_with("ask(to: kubert|scribe, question, urgency?: low|high): Hands another seat one job. kubert: Does the declared work. scribe:"), "{description}");
+    }
+
+    #[test]
+    fn a_list_of_objects_shows_its_item_fields() {
+        let listing = project(vec![member("one", "set", json!({"properties":{"todos":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"note":{"type":"string"}},"required":["id","title"]}}},"required":["todos"]}), false)]).unwrap();
+        let description = listing[0]["description"].as_str().unwrap();
+        assert!(
+            description.starts_with("set(todos: [{id, title, note?}]): "),
+            "{description}"
+        );
+        assert_eq!(
+            listing[0]["parameters"]["properties"]["args"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn deferred_toolsets_are_listed_inside_one_more_tool_and_a_lead_field_beside_op() {
+        let mut searched = member(
+            "web.search",
+            "web",
+            json!({"properties":{"query":{"type":"string"},"count":{"type":"integer"}},"required":["query"]}),
+            false,
+        );
+        searched.toolset = "lookup".into();
+        let mut lead = toolset_toml(&[]);
+        lead.lead = Some("query".into());
+        let toolsets = BTreeMap::from([("lookup".to_owned(), lead)]);
+        let listing = super::project(
+            vec![
+                member("one", "get", json!({"properties":{"url":{"type":"string"},"as":{"enum":["audio"]}},"required":["url"]}), false),
+                searched,
+            ],
+            &toolsets,
+            &BTreeSet::from(["sample".to_owned()]),
+        )
+        .unwrap();
+        let names: Vec<&str> = listing
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["lookup", MORE_TOOL]);
+        assert!(listing[0]["description"]
+            .as_str()
+            .unwrap()
+            .starts_with("web(count?: int): "));
+        assert_eq!(
+            listing[0]["parameters"]["properties"]["query"]["type"],
+            "string"
+        );
+        let more = listing[1]["description"].as_str().unwrap();
+        assert!(more.ends_with("sample: get(url, …)"), "{more}");
+        assert_eq!(
+            listing[1]["parameters"]["properties"]["tool"]["enum"],
+            json!(["sample"])
+        );
     }
 
     fn toolset_toml(examples: &[&str]) -> ToolsetToml {
@@ -817,6 +1139,7 @@ mod tests {
                 .iter()
                 .map(|example| (*example).to_owned())
                 .collect(),
+            lead: None,
         }
     }
 
@@ -1054,5 +1377,42 @@ approval_policy = "none"
         assert!(refusal("../secret.json").contains("invalid schema path"));
         assert!(refusal("schemas/capability/link.json").contains("escapes schema root"));
         assert!(refusal("schemas/capability/gone.json").contains("gone.json"));
+    }
+
+    /// Every enabled seat of the repository's own registry, as its model is sent it, fits the
+    /// budget. `ODIN_LISTING_DUMP=<dir>` writes each seat's listing there to read.
+    #[test]
+    fn every_declared_seat_listing_fits_the_budget() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let discovery = crate::walk(root.join("registry"));
+        let mut parsed = crate::schema::parse_objects(&discovery.objects);
+        crate::schema::expand_toolset_grants(&mut parsed.objects);
+        let mut sizes = Vec::new();
+        for object in &parsed.objects {
+            let ObjectConfig::Seat(seat) = &object.config else {
+                continue;
+            };
+            if !seat.enabled {
+                continue;
+            }
+            let listing = seat_listing(&parsed.objects, &object.id, &root).unwrap();
+            let bytes = crate::listing::listing_bytes(&listing);
+            if let Ok(dir) = std::env::var("ODIN_LISTING_DUMP") {
+                std::fs::write(
+                    Path::new(&dir).join(format!("{}.json", object.id)),
+                    serde_json::to_string_pretty(&listing).unwrap(),
+                )
+                .unwrap();
+            }
+            sizes.push((object.id.clone(), listing.len(), bytes));
+        }
+        eprintln!("{sizes:?}");
+        assert!(!sizes.is_empty());
+        for (seat, _, bytes) in sizes {
+            assert!(
+                bytes + crate::listing::DEPLOYMENT_HEADROOM_BYTES <= DEFAULT_LISTING_BYTES,
+                "seat {seat} listing is {bytes} bytes"
+            );
+        }
     }
 }

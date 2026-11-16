@@ -9,7 +9,7 @@
 //! adapter forwards to the concrete [`KubeCapabilityOwner`].
 //!
 //! Effect classes follow the contract: `create`, `pause`, `resume`,
-//! `restart`, and `cancel` are R3 mutations requiring operator approval;
+//! `restart`, `cancel` and `queue` (whose drop removes held launches) are R3 mutations (their cards decide them by declaration);
 //! `summarize`, `snapshot.read`, and `health.read` are R0 pure reads.
 //! Evidence extractor bindings consume the validated handler output
 //! (`{"output": ...}`) and never re-execute the underlying capability.
@@ -22,11 +22,13 @@ use std::sync::{Arc, RwLock};
 
 use crate::host_tools::{HostInvocation, HostTool, HostToolError, RpcHostToolDefinition};
 
-/// The sixteen compiled kube handler/extractor bindings.
+/// The compiled kube handler/extractor bindings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KubeCapabilityBinding {
     WorkloadCreate,
     WorkloadCreateEvidence,
+    WorkloadCreateMany,
+    WorkloadCreateManyEvidence,
     WorkloadPause,
     WorkloadPauseEvidence,
     WorkloadResume,
@@ -37,6 +39,12 @@ pub enum KubeCapabilityBinding {
     WorkloadCancelEvidence,
     WorkloadSummarize,
     WorkloadSummarizeEvidence,
+    WorkloadSteer,
+    WorkloadSteerEvidence,
+    WorkloadQueue,
+    WorkloadQueueEvidence,
+    WorkloadQueueDrop,
+    WorkloadQueueDropEvidence,
     SnapshotRead,
     SnapshotReadEvidence,
     HealthRead,
@@ -45,9 +53,11 @@ pub enum KubeCapabilityBinding {
 
 impl KubeCapabilityBinding {
     /// Every compiled binding, in handler/evidence pair order.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 24] = [
         Self::WorkloadCreate,
         Self::WorkloadCreateEvidence,
+        Self::WorkloadCreateMany,
+        Self::WorkloadCreateManyEvidence,
         Self::WorkloadPause,
         Self::WorkloadPauseEvidence,
         Self::WorkloadResume,
@@ -58,6 +68,12 @@ impl KubeCapabilityBinding {
         Self::WorkloadCancelEvidence,
         Self::WorkloadSummarize,
         Self::WorkloadSummarizeEvidence,
+        Self::WorkloadSteer,
+        Self::WorkloadSteerEvidence,
+        Self::WorkloadQueue,
+        Self::WorkloadQueueEvidence,
+        Self::WorkloadQueueDrop,
+        Self::WorkloadQueueDropEvidence,
         Self::SnapshotRead,
         Self::SnapshotReadEvidence,
         Self::HealthRead,
@@ -69,6 +85,8 @@ impl KubeCapabilityBinding {
         match self {
             Self::WorkloadCreate => "odin_kube.workload.create",
             Self::WorkloadCreateEvidence => "odin_kube.workload.create_evidence",
+            Self::WorkloadCreateMany => "odin_kube.workload.create_many",
+            Self::WorkloadCreateManyEvidence => "odin_kube.workload.create_many_evidence",
             Self::WorkloadPause => "odin_kube.workload.pause",
             Self::WorkloadPauseEvidence => "odin_kube.workload.pause_evidence",
             Self::WorkloadResume => "odin_kube.workload.resume",
@@ -79,6 +97,12 @@ impl KubeCapabilityBinding {
             Self::WorkloadCancelEvidence => "odin_kube.workload.cancel_evidence",
             Self::WorkloadSummarize => "odin_kube.workload.summarize",
             Self::WorkloadSummarizeEvidence => "odin_kube.workload.summarize_evidence",
+            Self::WorkloadSteer => "odin_kube.workload.steer",
+            Self::WorkloadSteerEvidence => "odin_kube.workload.steer_evidence",
+            Self::WorkloadQueue => "odin_kube.workload.queue",
+            Self::WorkloadQueueEvidence => "odin_kube.workload.queue_evidence",
+            Self::WorkloadQueueDrop => "odin_kube.workload.queue_drop",
+            Self::WorkloadQueueDropEvidence => "odin_kube.workload.queue_drop_evidence",
             Self::SnapshotRead => "odin_kube.snapshot.read",
             Self::SnapshotReadEvidence => "odin_kube.snapshot.read_evidence",
             Self::HealthRead => "odin_kube.health.read",
@@ -90,11 +114,17 @@ impl KubeCapabilityBinding {
     pub const fn capability_id(self) -> &'static str {
         match self {
             Self::WorkloadCreate | Self::WorkloadCreateEvidence => "kube.workload.create",
+            Self::WorkloadCreateMany | Self::WorkloadCreateManyEvidence => {
+                "kube.workload.create_many"
+            }
             Self::WorkloadPause | Self::WorkloadPauseEvidence => "kube.workload.pause",
             Self::WorkloadResume | Self::WorkloadResumeEvidence => "kube.workload.resume",
             Self::WorkloadRestart | Self::WorkloadRestartEvidence => "kube.workload.restart",
             Self::WorkloadCancel | Self::WorkloadCancelEvidence => "kube.workload.cancel",
             Self::WorkloadSummarize | Self::WorkloadSummarizeEvidence => "kube.workload.summarize",
+            Self::WorkloadSteer | Self::WorkloadSteerEvidence => "kube.workload.steer",
+            Self::WorkloadQueue | Self::WorkloadQueueEvidence => "kube.workload.queue",
+            Self::WorkloadQueueDrop | Self::WorkloadQueueDropEvidence => "kube.workload.queue_drop",
             Self::SnapshotRead | Self::SnapshotReadEvidence => "kube.snapshot.read",
             Self::HealthRead | Self::HealthReadEvidence => "kube.health.read",
         }
@@ -107,11 +137,17 @@ impl KubeCapabilityBinding {
     pub const fn listed_name(self) -> &'static str {
         match self {
             Self::WorkloadCreate | Self::WorkloadCreateEvidence => "kube_workload_create",
+            Self::WorkloadCreateMany | Self::WorkloadCreateManyEvidence => {
+                "kube_workload_create_many"
+            }
             Self::WorkloadPause | Self::WorkloadPauseEvidence => "kube_workload_pause",
             Self::WorkloadResume | Self::WorkloadResumeEvidence => "kube_workload_resume",
             Self::WorkloadRestart | Self::WorkloadRestartEvidence => "kube_workload_restart",
             Self::WorkloadCancel | Self::WorkloadCancelEvidence => "kube_workload_cancel",
             Self::WorkloadSummarize | Self::WorkloadSummarizeEvidence => "kube_workload_summarize",
+            Self::WorkloadSteer | Self::WorkloadSteerEvidence => "kube_workload_steer",
+            Self::WorkloadQueue | Self::WorkloadQueueEvidence => "kube_workload_queue",
+            Self::WorkloadQueueDrop | Self::WorkloadQueueDropEvidence => "kube_workload_queue_drop",
             Self::SnapshotRead | Self::SnapshotReadEvidence => "kube_snapshot_read",
             Self::HealthRead | Self::HealthReadEvidence => "kube_health_read",
         }
@@ -121,11 +157,15 @@ impl KubeCapabilityBinding {
         matches!(
             self,
             Self::WorkloadCreateEvidence
+                | Self::WorkloadCreateManyEvidence
                 | Self::WorkloadPauseEvidence
                 | Self::WorkloadResumeEvidence
                 | Self::WorkloadRestartEvidence
                 | Self::WorkloadCancelEvidence
                 | Self::WorkloadSummarizeEvidence
+                | Self::WorkloadSteerEvidence
+                | Self::WorkloadQueueEvidence
+                | Self::WorkloadQueueDropEvidence
                 | Self::SnapshotReadEvidence
                 | Self::HealthReadEvidence
         )
@@ -135,6 +175,8 @@ impl KubeCapabilityBinding {
         match self {
             Self::WorkloadCreate => "Kube Workload Create",
             Self::WorkloadCreateEvidence => "Kube Workload Create Evidence",
+            Self::WorkloadCreateMany => "Kube Workload Create Many",
+            Self::WorkloadCreateManyEvidence => "Kube Workload Create Many Evidence",
             Self::WorkloadPause => "Kube Workload Pause",
             Self::WorkloadPauseEvidence => "Kube Workload Pause Evidence",
             Self::WorkloadResume => "Kube Workload Resume",
@@ -145,6 +187,12 @@ impl KubeCapabilityBinding {
             Self::WorkloadCancelEvidence => "Kube Workload Cancel Evidence",
             Self::WorkloadSummarize => "Kube Workload Summarize",
             Self::WorkloadSummarizeEvidence => "Kube Workload Summarize Evidence",
+            Self::WorkloadSteer => "Kube Workload Steer",
+            Self::WorkloadSteerEvidence => "Kube Workload Steer Evidence",
+            Self::WorkloadQueue => "Kube Workload Queue",
+            Self::WorkloadQueueEvidence => "Kube Workload Queue Evidence",
+            Self::WorkloadQueueDrop => "Kube Workload Queue Drop",
+            Self::WorkloadQueueDropEvidence => "Kube Workload Queue Drop Evidence",
             Self::SnapshotRead => "Kube Snapshot Read",
             Self::SnapshotReadEvidence => "Kube Snapshot Read Evidence",
             Self::HealthRead => "Kube Health Read",
@@ -155,10 +203,16 @@ impl KubeCapabilityBinding {
     const fn description(self) -> &'static str {
         match self {
             Self::WorkloadCreate => {
-                "Launch one pod from a published profile. Optional targetNode narrows initial placement to a node in the pinned declared allowed_nodes, intersecting unchanged profile labels and live placement checks; arbitrary selectors are forbidden. For an agent pod it must equal the resolved serving/session node. Omit it for normal placement. This initial choice does not pin the profile or constrain later restart rehome, which uses its own targetNode. A script pod may take inputs: artifact ids (blake3:…) shared with you, which it reads in order at /var/run/odin/staging/input-0, input-1, …. An optional label (up to 60 printable characters) names the run in views."
+                "Launch one pod from a published profile. Optional targetNode narrows initial placement to a node in the pinned declared allowed_nodes, intersecting unchanged profile labels and live placement checks; arbitrary selectors are forbidden. For an agent pod it must equal the resolved serving/session node. Omit it for normal placement. This initial choice does not pin the profile or constrain later restart rehome, which uses its own targetNode. A script pod may take inputs: artifact ids (blake3:…) shared with you, which it reads in order at /var/run/odin/staging/input-0, input-1, …. An optional label (up to 60 printable characters) names the run in views. continueFrom names a finished run of the same profile whose state this run takes over, starting on the node that holds it."
             }
             Self::WorkloadCreateEvidence => {
                 "Extract validated evidence from one workload creation."
+            }
+            Self::WorkloadCreateMany => {
+                "Queue labeled launches of one published profile. All items are validated before any launch is held; the queue starts each when capacity and seat and lane limits permit."
+            }
+            Self::WorkloadCreateManyEvidence => {
+                "Extract validated evidence from one batch launch."
             }
             Self::WorkloadPause => {
                 "Pause one of your running pods — a finite job or a long-lived service — until resumed; with checkpoint: true its state is also captured as a checkpoint artifact. runId and expectedResourceVersion are that pod's row in kube_workload_summarize (find it by its profile)."
@@ -185,11 +239,23 @@ impl KubeCapabilityBinding {
                 "Extract validated evidence from one workload cancellation."
             }
             Self::WorkloadSummarize => {
-                "List your pods and your project's (or one by runId): each row names its profile, node, state, runId and resourceVersion — the runId and resourceVersion the pause, resume, restart and stop tools take — and a running pod's status: its newest reported values against the previous ones (how a simulation is converging), so you never need its log."
+                "List your pods and your project's (or one by runId): each row names its profile, node, state, runId and resourceVersion — the runId and resourceVersion the pause, resume, restart and stop tools take — and a running pod's status: its newest reported values against the previous ones (how a simulation is converging). With runId, logLines also reads that pod's newest log lines."
             }
             Self::WorkloadSummarizeEvidence => {
                 "Extract validated evidence from one workload summary."
             }
+            Self::WorkloadQueue => "List your held launches, oldest first, with their batch.",
+            Self::WorkloadQueueEvidence => "Extract validated evidence from a launch queue read.",
+            Self::WorkloadQueueDrop => {
+                "Drop a held batch or launch by operation id so it never starts."
+            }
+            Self::WorkloadQueueDropEvidence => {
+                "Extract validated evidence from a launch queue drop."
+            }
+            Self::WorkloadSteer => {
+                "Change a running pod's control values without stopping it: writes document (checked against its profile's control schema) to the pod's control file as the next seq. expectedSeq is the seq you last saw (0 before any steer); a stale one is refused with the current seq. The pod reads it within about a minute and reports control_seq in its status."
+            }
+            Self::WorkloadSteerEvidence => "Extract validated evidence from one workload steer.",
             Self::SnapshotRead => "Read one workload snapshot observation from the bound cluster.",
             Self::SnapshotReadEvidence => "Extract validated evidence from one snapshot read.",
             Self::HealthRead => {
@@ -206,6 +272,12 @@ impl KubeCapabilityBinding {
             }
             Self::WorkloadCreateEvidence => {
                 include_str!("../../../../schemas/capability/kube.workload.create.output.json")
+            }
+            Self::WorkloadCreateMany => {
+                include_str!("../../../../schemas/capability/kube.workload.create_many.input.json")
+            }
+            Self::WorkloadCreateManyEvidence => {
+                include_str!("../../../../schemas/capability/kube.workload.create_many.output.json")
             }
             Self::WorkloadPause => {
                 include_str!("../../../../schemas/capability/kube.workload.pause.input.json")
@@ -236,6 +308,24 @@ impl KubeCapabilityBinding {
             }
             Self::WorkloadSummarizeEvidence => {
                 include_str!("../../../../schemas/capability/kube.workload.summarize.output.json")
+            }
+            Self::WorkloadSteer => {
+                include_str!("../../../../schemas/capability/kube.workload.steer.input.json")
+            }
+            Self::WorkloadSteerEvidence => {
+                include_str!("../../../../schemas/capability/kube.workload.steer.output.json")
+            }
+            Self::WorkloadQueue => {
+                include_str!("../../../../schemas/capability/kube.workload.queue.input.json")
+            }
+            Self::WorkloadQueueEvidence => {
+                include_str!("../../../../schemas/capability/kube.workload.queue.output.json")
+            }
+            Self::WorkloadQueueDrop => {
+                include_str!("../../../../schemas/capability/kube.workload.queue_drop.input.json")
+            }
+            Self::WorkloadQueueDropEvidence => {
+                include_str!("../../../../schemas/capability/kube.workload.queue_drop.output.json")
             }
             Self::SnapshotRead => {
                 include_str!("../../../../schemas/capability/kube.snapshot.read.input.json")
@@ -481,8 +571,8 @@ impl HostTool for KubeCapabilityTool {
 ///
 /// A bare `invoke` fails closed: reaching the real cluster always requires
 /// the kernel-minted prepared operation produced by HostToolOperations —
-/// fresh seat authority, effective listing, plan gate, and for the R3
-/// mutations the operator approval settlement. The wrapper only carries the
+/// fresh seat authority, effective listing, plan gate, and the approval
+/// settlement the card declares. The wrapper only carries the
 /// model-visible definition; the executor reaches the inner adapter through
 /// the permit, never through this name.
 pub(crate) struct KubeListedTool {
@@ -496,7 +586,10 @@ impl HostTool for KubeListedTool {
     }
 
     fn parameters_for_scope(&self, scope: &Scope) -> Option<Value> {
-        if self.inner.binding != KubeCapabilityBinding::WorkloadCreate {
+        if !matches!(
+            self.inner.binding,
+            KubeCapabilityBinding::WorkloadCreate | KubeCapabilityBinding::WorkloadCreateMany
+        ) {
             return None;
         }
         let profiles: Vec<_> = self

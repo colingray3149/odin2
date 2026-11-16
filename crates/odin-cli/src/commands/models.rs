@@ -8,8 +8,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command as ProcessCommand, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command as ProcessCommand;
+use std::time::Duration;
 
 use clap::{Args, Subcommand};
 use serde_json::{json, Value};
@@ -22,7 +22,7 @@ use super::{resolve_odin_root, run_git, DEFAULT_RENDERER};
 
 /// A model-list command must answer within this bound or the refresh refuses.
 const LIST_BOUND: Duration = Duration::from_secs(120);
-const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const LIST_OUTPUT_LIMIT: usize = 16 << 20;
 
 /// The gateway unit a render restarts.
 const GATEWAY_UNIT: &str = "litellm.service";
@@ -120,57 +120,36 @@ pub(crate) fn models_command(
 /// Run one model-list command under a bound, returning its stdout. `env`
 /// names additional exports the child needs.
 fn capture(command: &str, arguments: &[&str], env: &[(String, String)]) -> Result<String, String> {
-    let mut child = ProcessCommand::new(command)
-        .args(arguments)
-        .envs(
+    let output = odin_process::run_bounded(
+        ProcessCommand::new(command).args(arguments).envs(
             env.iter()
                 .map(|(name, value)| (name.as_str(), value.as_str())),
-        )
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("could not run {command}: {error}"))?;
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let out = std::thread::spawn(move || {
-        let mut buffer = String::new();
-        if let Some(mut pipe) = stdout {
-            let _ = std::io::Read::read_to_string(&mut pipe, &mut buffer);
-        }
-        buffer
-    });
-    let err = std::thread::spawn(move || {
-        let mut buffer = String::new();
-        if let Some(mut pipe) = stderr {
-            let _ = std::io::Read::read_to_string(&mut pipe, &mut buffer);
-        }
-        buffer
-    });
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() > LIST_BOUND => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("{command} did not answer within {LIST_BOUND:?}"));
-            }
-            Ok(None) => std::thread::sleep(PROCESS_POLL_INTERVAL),
-            Err(error) => return Err(format!("{command}: {error}")),
-        }
-    };
-    let stdout = out.join().unwrap_or_default();
-    let stderr = err.join().unwrap_or_default();
+        ),
+        None,
+        odin_process::ChildBounds {
+            timeout: LIST_BOUND,
+            max_stdout_bytes: LIST_OUTPUT_LIMIT,
+            max_stderr_bytes: LIST_OUTPUT_LIMIT,
+        },
+    )
+    .map_err(|error| format!("could not run {command}: {error}"))?;
+    let status = output
+        .status
+        .ok_or_else(|| format!("{command} did not answer within {LIST_BOUND:?}"))?;
     if !status.success() {
-        let note = stderr
+        return Err(output
+            .stderr_text()
             .lines()
             .find(|line| !line.trim().is_empty())
             .map(str::to_owned)
-            .unwrap_or_else(|| format!("{command} exited {status}"));
-        return Err(note);
+            .unwrap_or_else(|| format!("{command} exited {status}")));
     }
-    Ok(stdout)
+    if output.stdout.truncated() {
+        return Err(format!(
+            "{command} printed more than {LIST_OUTPUT_LIMIT} bytes"
+        ));
+    }
+    Ok(output.stdout_text())
 }
 
 /// Claude Code has no models-list CLI; the servable set is declared here,
@@ -432,6 +411,7 @@ struct MainWorktree {
 
 impl MainWorktree {
     fn add(root: &Path) -> Result<Self, String> {
+        Self::remove_stale(root);
         git(root, &["fetch", "-q", "origin", "main"])?;
         let directory = tempfile::Builder::new()
             .prefix("odin-models-refresh.")
@@ -450,6 +430,30 @@ impl MainWorktree {
 
     fn path(&self) -> &Path {
         self.directory.path()
+    }
+
+    /// Remove refresh worktrees an earlier run left behind. Drop never runs
+    /// when the unit is stopped mid-refresh (a deploy's SIGTERM), so each one
+    /// stayed registered; refreshes never overlap, so any found here is stale.
+    fn remove_stale(root: &Path) {
+        let Ok(list) = git(root, &["worktree", "list", "--porcelain"]) else {
+            return;
+        };
+        let temp = std::env::temp_dir();
+        for path in list
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+        {
+            let candidate = Path::new(path);
+            let stale = candidate.parent() == Some(temp.as_path())
+                && candidate
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("odin-models-refresh."));
+            if stale {
+                let _ = git(root, &["worktree", "remove", "--force", path]);
+            }
+        }
+        let _ = git(root, &["worktree", "prune"]);
     }
 
     /// Commit AVAILABLE and push it to origin main, rebased onto its tip;
@@ -921,6 +925,23 @@ mod tests {
             .expect("create registry directory");
         std::fs::write(&path, b"{\"version\":1,\"models\":[]}\n").expect("write AVAILABLE");
         path
+    }
+
+    #[test]
+    fn a_worktree_left_by_a_killed_refresh_is_removed_by_the_next() {
+        let fixture = tempfile::TempDir::new().expect("temporary directory");
+        let (repo, _competitor) = raced_origin(fixture.path());
+        let killed = MainWorktree::add(&repo).expect("add the first refresh worktree");
+        let left = killed.path().to_path_buf();
+        std::mem::forget(killed);
+        let next = MainWorktree::add(&repo).expect("add the next refresh worktree");
+        let listed = git(&repo, &["worktree", "list", "--porcelain"]);
+        assert!(!left.exists(), "the stale worktree is gone");
+        assert!(
+            !listed.contains(&*left.to_string_lossy()),
+            "the stale worktree is unregistered: {listed}"
+        );
+        assert!(listed.contains(&*next.path().to_string_lossy()));
     }
 
     #[test]

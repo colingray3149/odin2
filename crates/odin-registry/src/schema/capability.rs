@@ -50,6 +50,27 @@ pub enum PreviewKindToml {
     Deploy,
     /// A workflow's own read-only plan of the exact effect.
     Plan,
+    /// The host's approval card: the object and each bound value, old and new.
+    Card,
+}
+
+/// A declared approval card: `title` with each `{/pointer}` replaced by that bound argument, then one
+/// `field: value` row per JSON pointer in `fields`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalCardToml {
+    pub title: String,
+    pub fields: Vec<String>,
+}
+
+impl ApprovalCardToml {
+    /// The `{...}` placeholders of the title, in order.
+    pub fn title_pointers(&self) -> impl Iterator<Item = &str> {
+        self.title
+            .split('{')
+            .skip(1)
+            .filter_map(|part| part.split_once('}').map(|(inner, _)| inner))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -244,6 +265,10 @@ pub struct CapabilityToml {
     /// Exact-effect preview the owner must see before consent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<PreviewKindToml>,
+    /// The values the owner reads on a `preview = "card"` approval, declared here so a new card or field
+    /// is a registry edit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_card: Option<ApprovalCardToml>,
     /// A grant batch may name this capability.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub batchable: bool,
@@ -269,6 +294,10 @@ pub struct CapabilityToml {
 pub struct CapabilitySeatOpToml {
     pub toolset: String,
     pub op: String,
+    /// This seat's own listing of the op: `on_demand` keeps its fields behind `args` for this seat
+    /// only, so a seat that rarely calls it does not carry its schema every turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expose: Option<CapabilityExposureToml>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

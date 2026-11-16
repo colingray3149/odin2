@@ -239,6 +239,18 @@ pub trait CodingRoute: Send + Sync {
         let _ = (scope, diff_digest, approve, notes);
         Err("the review lane is not composed on this host".to_owned())
     }
+    /// Records `scope`'s seat's science verdict on the readable proposal
+    /// artifact `proposal`: `{proposal, approve, reviewer}`.
+    fn record_science_verdict(
+        &self,
+        scope: &Scope,
+        proposal: String,
+        approve: bool,
+        notes: String,
+    ) -> Result<Value, String> {
+        let _ = (scope, proposal, approve, notes);
+        Err("science review is not composed on this host".to_owned())
+    }
     /// `propose`, but only on an approving independent verdict for the
     /// exact pending diff (lanes declaring `requires_independent_review`).
     fn propose_reviewed(
@@ -1061,6 +1073,36 @@ pub(super) fn review_tools(runtime: &Arc<HermesRuntime>, tools: &mut Vec<Arc<dyn
              checking what you doubt (code_navigate, code_diagnostics, test_run); otherwise \
              false with the changes you require in notes. Name the diffDigest from the request.",
             capability_parameters!("code.review.verdict"),
+            handler,
+        ));
+    }
+    {
+        let runtime = Arc::clone(runtime);
+        let handler = move |scope: Scope, arguments: Value| {
+            let proposal = parse_string(&arguments, "proposal", 160)?;
+            let approve = arguments
+                .get("approve")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| HostToolError::Arguments {
+                    tool: "science_review_verdict",
+                    detail: "approve must be true or false".to_owned(),
+                })?;
+            let notes = parse_string(&arguments, "notes", 4_000)?;
+            route(&runtime, "science_review_verdict")?
+                .record_science_verdict(&scope, proposal, approve, notes)
+                .map_err(|reason| HostToolError::Unavailable {
+                    tool: "science_review_verdict",
+                    reason,
+                })
+        };
+        tools.push(tool(
+            "science_review_verdict",
+            "Record a science verdict",
+            "Records your independent verdict on one proposal artifact (dataset version, surrogate \
+             promotion, validation claim, out-of-domain decision): approve (true) only after \
+             reading its evidence and recomputing what you doubt; otherwise false with each defect \
+             and the smallest fix in notes. Name the proposal artifactId you were asked about.",
+            capability_parameters!("science.review.verdict"),
             handler,
         ));
     }

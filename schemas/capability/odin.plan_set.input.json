@@ -5,22 +5,47 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "objective": { "type": "string" },
+    "objective": {
+      "type": "string",
+      "description": "Omitted keeps the current objective."
+    },
     "todos": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "title": { "type": "string", "minLength": 1 },
-          "status": { "enum": ["pending", "active", "blocked", "completed", "cancelled"] }
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "active",
+              "blocked",
+              "completed",
+              "cancelled"
+            ]
+          }
         },
-        "required": ["id", "title", "status"]
+        "required": [
+          "id",
+          "title",
+          "status"
+        ]
       }
     },
-    "expectedRevision": { "type": "integer", "minimum": 0 },
-    "timestampMs": { "type": "integer" }
+    "expectedRevision": {
+      "type": "integer",
+      "minimum": 0
+    }
   },
-  "required": ["objective", "todos", "expectedRevision", "timestampMs"]
+  "required": [
+    "todos"
+  ]
 }

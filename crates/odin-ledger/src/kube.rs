@@ -194,6 +194,23 @@ impl Journal<'_> {
             .optional()?)
     }
 
+    /// Whether an authority cancel was applied for `run`: the run was
+    /// withdrawn on purpose, not lost. A pending cancel does not count while
+    /// the Job may still exist.
+    pub fn run_cancelled(&self, scope: &Scope<'_>, run: &RunId) -> LedgerResult<bool> {
+        Ok(self
+            .0
+            .query_row(
+                "SELECT 1 FROM kube_job_operations \
+                 WHERE cluster=?1 AND namespace=?2 AND run_id=?3 AND kind='cancel' \
+                 AND state='applied' LIMIT 1",
+                params![scope.cluster, scope.namespace, run.as_str()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
     pub fn launch(&self, run: &RunId) -> LedgerResult<Option<Launch>> {
         Ok(self
             .0

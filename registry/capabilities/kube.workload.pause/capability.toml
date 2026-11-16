@@ -4,7 +4,7 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Suspends one finite Job by run id, given the resourceVersion observed at admission."
+description = "Suspends one pod Job (a finite job or a long-lived service) by run id, given the resourceVersion observed at admission."
 handler = { id = "odin_kube.workload.pause" }
 input_schema = "schemas/capability/kube.workload.pause.input.json"
 output_schema = "schemas/capability/kube.workload.pause.output.json"

@@ -1,6 +1,6 @@
 //! Generation rollover across daemon restarts preserves conversation history
 //! without replaying settled effects or changing the predecessor's token.
-//! Only the harness backend is replaced by a loopback transport.
+//! The harness backend is loopback and the daemon reload gate is fixture-local.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -806,6 +806,7 @@ pub(crate) async fn stage_predecessor(
             body: LiveCommandBody::Prompt {
                 message: message(prompt.text),
                 owner_text: None,
+                wake: false,
             },
         };
         gate.ledger
@@ -844,6 +845,7 @@ pub(crate) async fn stage_predecessor(
             body: LiveCommandBody::Prompt {
                 message: message(flight.text),
                 owner_text: None,
+                wake: false,
             },
         };
         gate.ledger
@@ -1153,6 +1155,7 @@ pub(crate) fn production_factory_config_with(
     ProductionBridgeRuntimeConfig {
         tool_result_budgets: BTreeMap::new(),
         workload_drafts: None,
+        root_plan_consent: None,
         task_grants: None,
         approved_calls: None,
         jobs: None,
@@ -1181,6 +1184,11 @@ pub(crate) fn production_factory_config_with(
         brain_postgres: None,
         brain_rerank: None,
         artifact_root: root.join("factory-artifacts"),
+        promotion_verifier: None,
+        campaign_validator: None,
+        spend_validator: None,
+        campaign_recorder: None,
+        spend_recorder: None,
         context_trace_root: None,
         max_artifact_read_bytes: 4096,
         project_roots: BTreeMap::from([(
@@ -1226,6 +1234,7 @@ pub(crate) fn production_factory_config_with(
         card_windows: BTreeMap::new(),
         conversation_guidance: BTreeMap::new(),
         toolsets: BTreeMap::new(),
+        deferred_toolsets: BTreeMap::new(),
         workload_sessions: BTreeMap::new(),
         workload_carrier: None,
         context_read: None,
@@ -1234,6 +1243,7 @@ pub(crate) fn production_factory_config_with(
         turn_images: None,
         hermes_internal_bindings: Vec::new(),
         seat_sandboxes: BTreeMap::new(),
+        seat_read_roots: BTreeMap::new(),
         project_spheres: BTreeMap::new(),
         seat_memory_max: BTreeMap::new(),
         sandbox_host: None,
@@ -1310,6 +1320,22 @@ pub(crate) async fn compose_serving_with(
     }
 }
 
+// This stack models an independent daemon with no pending reload. Delegating
+// token provisioning keeps the production authority while avoiding the real
+// daemon's process-global reload flag, which other tests may set concurrently.
+struct FixtureConversationAuthority(DeclaredConversationAuthority);
+
+#[async_trait]
+impl odin_hermes::conversation::ConversationAuthority for FixtureConversationAuthority {
+    async fn ensure(
+        &self,
+        command_id: &CommandId,
+        session_id: LiveSessionId,
+    ) -> Result<odin_hermes::conversation::EnsuredGeneration, String> {
+        self.0.ensure(command_id, session_id).await
+    }
+}
+
 /// Reproduce vehicle-open composition, which is private to the serving module.
 pub(crate) fn compose_root_at(
     gate: &GateFixture,
@@ -1340,16 +1366,18 @@ pub(crate) fn compose_root_at(
     // The declared authority is composed FIRST: the config literal below
     // moves seat_binding, lane, and the launch pair into the root, so
     // every value the authority needs is cloned before those moves.
-    let authority = Arc::new(DeclaredConversationAuthority {
-        config: gate.config.clone(),
-        seat: seat_binding.seat_id.clone(),
-        project: declaration.project.clone(),
-        slice: seat_binding.slice_id.clone(),
-        lane: lane.clone(),
-        provider: launch.provider.clone(),
-        model: launch.model.clone(),
-        incidents: None,
-    });
+    let authority = Arc::new(FixtureConversationAuthority(
+        DeclaredConversationAuthority {
+            config: gate.config.clone(),
+            seat: seat_binding.seat_id.clone(),
+            project: declaration.project.clone(),
+            slice: seat_binding.slice_id.clone(),
+            lane: lane.clone(),
+            provider: launch.provider.clone(),
+            model: launch.model.clone(),
+            incidents: None,
+        },
+    ));
     odin_hermes::conversation::ConversationRoot::open(
         odin_hermes::conversation::ConversationRootConfig {
             binding: seat_binding,
@@ -1799,6 +1827,7 @@ async fn admitted_unsettled_intent_stays_on_predecessor_across_rollover() {
             message: LiveMessage::new(vec![LiveContentBlock::Text(IN_FLIGHT_TEXT.to_owned())])
                 .expect("stranded message"),
             owner_text: None,
+            wake: false,
         },
     };
     let entry = fixture

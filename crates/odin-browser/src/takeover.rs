@@ -180,42 +180,6 @@ impl TakeoverCoordinator {
         }
     }
 
-    /// Locally reclaims a held remote controller. The sealed witness makes
-    /// this transition unavailable to all remotely decoded command values.
-    pub(crate) fn reclaim_locally(
-        &mut self,
-        _witness: LocalReclaim,
-        now: OffsetDateTime,
-    ) -> Result<BrowserTakeoverStatus, TakeoverError> {
-        match &self.status {
-            BrowserTakeoverStatus::Held { .. } => {
-                self.transition(
-                    BrowserTakeoverStatus::ReclaimedLocally { reclaimed_at: now },
-                    now,
-                )?;
-                Ok(self.status.clone())
-            }
-            BrowserTakeoverStatus::Available => Err(TakeoverError::NotHeld),
-            BrowserTakeoverStatus::ReclaimedLocally { .. } => Err(TakeoverError::AlreadyReclaimed),
-        }
-    }
-
-    /// Returns a completed local reclaim to the available state. Also sealed;
-    /// a remote device cannot clear a local reclaim and reacquire control.
-    pub(crate) fn make_available_locally(
-        &mut self,
-        _witness: LocalReclaim,
-        now: OffsetDateTime,
-    ) -> Result<BrowserTakeoverStatus, TakeoverError> {
-        match &self.status {
-            BrowserTakeoverStatus::ReclaimedLocally { .. } => {
-                self.transition(BrowserTakeoverStatus::Available, now)?;
-                Ok(self.status.clone())
-            }
-            _ => Err(TakeoverError::NotReclaimed),
-        }
-    }
-
     /// Deadline at which the currently held control lease expires. `None`
     /// while no lease is held.
     pub fn lease_deadline(&self) -> Option<OffsetDateTime> {
@@ -364,9 +328,9 @@ mod tests {
             .expect("authenticated acquire");
     }
 
-    /// Reclaim is local-only, advances the revision, and prevents the remote holder from returning.
+    /// Only the authenticated holder, acting as itself, changes a held lease.
     #[test]
-    fn takeover_reclaim() {
+    fn takeover_admits_only_the_authenticated_holder() {
         let (mut coordinator, _session, holder, foreign) = coordinator(DEFAULT_TAKEOVER_LEASE_TTL);
         let acquired = coordinator
             .apply_authenticated(
@@ -404,41 +368,6 @@ mod tests {
             Err(TakeoverError::ActorMismatch { .. })
         ));
         assert_eq!(coordinator.view().revision, 2);
-
-        // The sealed local witness reclaims; remote commands cannot.
-        let reclaimed = coordinator
-            .reclaim_locally(LocalReclaim::local(), at(3))
-            .expect("local reclaim");
-        assert!(matches!(
-            reclaimed,
-            BrowserTakeoverStatus::ReclaimedLocally { .. }
-        ));
-        assert_eq!(coordinator.view().revision, 3);
-        assert!(matches!(
-            coordinator.apply_authenticated(
-                holder,
-                &BrowserTakeoverCommand::Acquire { device_id: holder },
-                at(4),
-            ),
-            Err(TakeoverError::ReclaimedLocally)
-        ));
-
-        // Only the sealed local release reopens the session for takeover.
-        coordinator
-            .make_available_locally(LocalReclaim::local(), at(5))
-            .expect("local release");
-        let reacquired = coordinator
-            .apply_authenticated(
-                foreign,
-                &BrowserTakeoverCommand::Acquire { device_id: foreign },
-                at(6),
-            )
-            .expect("reacquire after local release");
-        assert!(matches!(
-            reacquired.status,
-            BrowserTakeoverStatus::Held { .. }
-        ));
-        assert_eq!(reacquired.revision, 5);
     }
 
     /// Real expiry: a due lease retires holder and token in one transition,

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://odin.local/schemas/capability/seat.ask.input.json",
   "title": "seat.ask input",
-  "description": "Structured cross-seat delegation through the one generic seat_ask primitive. The model never names a seat: the dispatch target is the capability's published delegate_to, and _delegate_to repeats it as host-only canonical metadata — the host normalizes it from the same published contract before journaling and approval, the model can neither select nor omit it, and any routing change therefore changes the approved arguments digest, so an old approval for one target can never authorize another. R3: the ask dispatches a governed worker with enough mandate to act, so the kernel approval gate (ApprovalRequirement::Operator) must approve the exact dispatch scope first, and a denial is recorded durably with no dispatch. approvalId is a model-supplied selector naming the exact approval on the phase-two dispatch — never itself authority: the kernel consumes that exact approval server-side, and the host executor passes the unforgeable authorized-operation proof onward. The caller's identity is scope-derived: there is no caller_seat field, and the caller seat, lane, session, and run stay the actual invocation scope. Options carry opaque action references only — never credentials, account data, or secret material. The durable ask command is keyed by the kernel's idempotency authority, so exactly one recorded ask exists per idempotency key (CORE-004).",
+  "description": "Structured cross-seat delegation through the one generic seat_ask primitive. The model never names a seat: the dispatch target is the capability's published delegate_to, and _delegate_to repeats it as host-only canonical metadata \u2014 the host normalizes it from the same published contract before journaling and approval, the model can neither select nor omit it, and any routing change therefore changes the approved arguments digest, so an old approval for one target can never authorize another. R3: the ask dispatches a governed worker with enough mandate to act, so the kernel approval gate (ApprovalRequirement::Operator) must approve the exact dispatch scope first, and a denial is recorded durably with no dispatch. approvalId is a model-supplied selector naming the exact approval on the phase-two dispatch \u2014 never itself authority: the kernel consumes that exact approval server-side, and the host executor passes the unforgeable authorized-operation proof onward. The caller's identity is scope-derived: there is no caller_seat field, and the caller seat, lane, session, and run stay the actual invocation scope. Options carry opaque action references only \u2014 never credentials, account data, or secret material. The durable ask command is keyed by the kernel's idempotency authority, so exactly one recorded ask exists per idempotency key (CORE-004).",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -60,7 +60,8 @@
         "low",
         "medium",
         "high"
-      ]
+      ],
+      "default": "medium"
     },
     "wait_seconds": {
       "description": "Wait up to this many seconds, limited by the operation deadline; omitted waits the seat's inline_seconds, so a short ask answers in this turn and a long one reports by wake. Returns the child's status and last answer, or null if no answer is available. task_read refreshes these fields.",

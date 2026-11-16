@@ -229,7 +229,46 @@ export interface FeaturesValue {
 	rows: FeatureRow[];
 }
 
+/** The authority's `Status/knowledge` object: kb-status's status.json, or only `error` when odind cannot read it. */
+export interface KnowledgeValue {
+	evaluated_at?: string;
+	error?: string | null;
+	counts?: { parts: number; green: number; paused: number; behind: number; red: number; grey: number };
+	parts?: { id: string; title: string; area: string; kind: string; state: "green" | "paused" | "behind" | "red" | "grey"; text: string }[];
+	recent?: { ts?: string; actor?: string; op?: string; path?: string; note?: string }[];
+}
+
+/** One mission on the authority's `Status/missions` board. */
+export interface MissionRow {
+	run: string;
+	label: string;
+	stage: string;
+	node?: string | null;
+	workload?: string | null;
+	failure?: string | null;
+	updatedAt: string;
+	sampleAt?: string | null;
+	lastSample?: Record<string, unknown> | null;
+	series?: Record<string, number[]> | null;
+	checkpoints: number;
+	renderers: string[];
+	openRenders: number;
+	frame?: { artifact: string; mediaType?: string; renderer: string; seq: number; simTimeUs?: number | null; at: string } | null;
+}
+
+export interface MissionsValue {
+	rows: MissionRow[];
+}
+
 /** One declared repo's newest CI run, or why it could not be read. */
+/** One open seat session's own plan: its objective and to-do list, as the seat keeps it. */
+export interface PlanRow {
+	seat: string;
+	session: string;
+	objective: string;
+	todos: { id: string; title: string; status: string }[];
+}
+
 export interface CiRow {
 	repo: string;
 	status: string | null;
@@ -297,18 +336,28 @@ export interface InjectionRecord {
 	blocks: InjectionBlock[];
 }
 
+export interface LaneBudget {
+	lane: string;
+	windowDays: number;
+	coreHours: { used: number; cap: number | null };
+	gpuHours: { used: number; cap: number | null };
+	computeUsd: { used: number; cap: number | null };
+}
+
 export type BridgeMessage =
 	| { t: "link"; ok: boolean; text?: string; cause?: string }
 	| { t: "seats"; seats: SeatInfo[]; /** Claude session projections, not seat sessions. */ claude?: SessionInfo[]; /** The session carrying Sinmara's conversation. */ conversation?: string | null }
 	| { t: "reset"; session: string; seat?: string; /** Replayed first: the session the conversation rolled over from. */ previous?: string | null }
 	| ({ t: "event" } & LiveEvent)
 	| { t: "spend"; day: string; usdCents: number; includedCents: number; tokens: number; seats: Record<string, Spent> }
+	| { t: "budgets"; lanes: LaneBudget[] }
 	| { t: "modelRows"; rows?: string[]; error?: string }
 	| { t: "approvals"; rows: ApprovalRow[] }
 	| { t: "incidents"; rows: IncidentRow[] }
 	| { t: "pods"; rows: PodRow[] }
 	| { t: "claudeLocal"; device: string; rows: LocalClaudeRow[] }
 	| { t: "ci"; rows: CiRow[]; /** Why the repo list itself could not be read. */ note?: string }
+	| { t: "plans"; rows: PlanRow[] }
 	| { t: "done"; id: string; ok: boolean; text: string }
 	/** A deploy replaced the installed odin: the view exits with `exit` and `odin view` starts the new one. */
 	| { t: "updated"; exit: number }
@@ -318,7 +367,10 @@ export type BridgeMessage =
 	| { t: "compute"; error: string }
 	| { t: "models"; board?: ModelBoard; note?: string }
 	| { t: "context"; session: string; record?: InjectionRecord; note?: string }
-	| { t: "features"; value?: FeaturesValue; note?: string };
+	| { t: "features"; value?: FeaturesValue; note?: string }
+	| { t: "knowledge"; value?: KnowledgeValue }
+	| { t: "missions"; value: MissionsValue }
+	| { t: "frame"; run: string; artifact: string; mediaType?: string | null; data?: string; error?: string };
 
 export type ViewCommand =
 	| { t: "watch"; session: string }
@@ -330,7 +382,10 @@ export type ViewCommand =
 	| { t: "compute"; active: boolean }
 	| { t: "models" }
 	| { t: "context"; session: string }
-	| { t: "features" };
+	| { t: "features" }
+	/** The Missions tab opened, closed or moved: the bridge polls the board and sends the open mission's frames. */
+	| { t: "missions"; open: boolean; run?: string }
+	| { t: "render" | "pause" | "resume"; id: string; run: string };
 
 /** One spend figure: dollars billed, and subscription use at list price that the plan already pays. */
 export interface Spent {

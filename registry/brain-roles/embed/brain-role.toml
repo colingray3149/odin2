@@ -1,0 +1,25 @@
+schema = "odin.registry.v1"
+kind = "brain-role"
+enabled = true
+description = "Text embeddings: Qwen3-Embedding-0.6B Q8_0, 1024-d, on mini's CPU (GPU vectors are not exact)."
+role = "embed"
+engine = "local"
+lanes = ["qwen3-embedding"]
+model = "qwen3-embedding-0.6b"
+file = "Qwen3-Embedding-0.6B-Q8_0.gguf"
+sha256 = "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439"
+dims = 1024
+# The active vector space (R53). New model, dims, quant or framing = a new string here and `kb-index space-add`.
+space = "qwen3-embedding-0.6b:q8_0:1024:v1"
+[params]
+device = "cpu"      # cpu = -ngl 0 --device none
+pooling = "last"
+query_instruction = "Given a personal knowledge search query, retrieve the relevant passages"
+truncate_tokens = 1024
+mrl = false         # true only when dims is below the model's native width (Matryoshka cut); the service refuses a cut without it
+batch = 32
+threads = 8
+ctx = 4096          # two 2048-token slots: twice truncate_tokens
+ubatch = 2048
+parallel = 2
+memory_max = "3G"  # the 640 MB mapped weights stay resident beside 1.5 GB of buffers; less thrashes them

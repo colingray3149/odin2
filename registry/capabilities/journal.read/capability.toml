@@ -5,7 +5,7 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Read Odin's journal. Reads the tail of odind's own journal (up to 200 lines, optionally since a time and from a minimum level: error, warn or info), redacted. Worth it when the owner asks how something went or why it failed."
+description = "Read a unit's journal. Reads the tail of an authority user unit's journal (odind by default, or a declared brain, model or gateway unit), up to 200 lines, optionally since a time and from a minimum level: error, warn or info, redacted. Worth it when something failed and you need to see why."
 handler = { id = "journal_read" }
 input_schema = "schemas/capability/journal.read.input.json"
 output_schema = "schemas/capability/journal.read.output.json"

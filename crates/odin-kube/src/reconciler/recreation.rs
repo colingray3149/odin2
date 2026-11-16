@@ -101,53 +101,13 @@ impl JobReconciler {
                 launch
             }
         };
+        super::create::campaign_deadline(&launch, None)?;
         self.bind_worker(&job, &launch, operation).await?;
-        self.restore_paused_deadline(&action.job_name()).await?;
         self.release_worker(&launch.worker_id).await?;
         let live = self.get_job(&action.job_name()).await?.ok_or_else(|| {
             KubeError::rejected("resumed Job disappeared from the API before observation")
         })?;
         self.owned_observation(&live)
-    }
-
-    // Preserve the remaining runtime by extending the deadline over the pause.
-    async fn restore_paused_deadline(&self, name: &str) -> Result<(), KubeError> {
-        let Some(job) = self.get_job(name).await? else {
-            return Ok(());
-        };
-        let deadline = job
-            .spec
-            .as_ref()
-            .and_then(|spec| spec.active_deadline_seconds);
-        let status = job.status.as_ref();
-        let started = status.and_then(|status| status.start_time.as_ref());
-        let suspended = status
-            .and_then(|status| status.conditions.as_ref())
-            .and_then(|conditions| {
-                conditions
-                    .iter()
-                    .find(|condition| condition.type_ == "Suspended" && condition.status == "True")
-            })
-            .and_then(|condition| condition.last_transition_time.as_ref());
-        let (Some(deadline), Some(started), Some(suspended)) = (deadline, started, suspended)
-        else {
-            return Ok(());
-        };
-        let now = k8s_openapi::jiff::Timestamp::now().as_second();
-        let extended = resumed_deadline(
-            deadline,
-            started.0.as_second(),
-            suspended.0.as_second(),
-            now,
-        );
-        if extended > deadline {
-            self.patch_job(
-                name,
-                serde_json::json!({"spec": {"activeDeadlineSeconds": extended}}),
-            )
-            .await?;
-        }
-        Ok(())
     }
 
     // A terminal Suspend cannot be reused for Delete; register a new worker first.
@@ -167,12 +127,18 @@ impl JobReconciler {
             Some(launch) => launch,
             None => self.fresh_launch(action)?,
         };
+        super::create::campaign_deadline(&launch, action.rehome_target())?;
         // Admit placement and state movement before stopping the existing workload.
         let mut carry_from = None;
         if let Some(plan) = &launch.workload {
             if let Some(target) = action.rehome_target() {
-                crate::state_carry::require_node_fits(&self.client, target, &launch.node_selector)
-                    .await?;
+                crate::state_carry::require_node_fits(
+                    &self.client,
+                    target,
+                    &launch.node_requirements(),
+                    &plan.data,
+                )
+                .await?;
             }
             // A replay past the carry's checkpoint finds the old claim gone.
             if progress.carried.is_none() {
@@ -189,6 +155,9 @@ impl JobReconciler {
                             crate::state_carry::state_node(&self.client, &action.run_id).await?;
                         match (&refusal, source) {
                             (KubeError::Rejected { .. }, Some(source)) if source != target => {
+                                if !plan.state_carry {
+                                    return Err(state_stays(&plan.profile, &source));
+                                }
                                 carry_from = Some(source);
                             }
                             _ => return Err(refusal),
@@ -252,8 +221,30 @@ impl JobReconciler {
             )
             .await?;
         }
-        self.create_job_on(&launch, action.rehome_target(), operation, progress)
-            .await
+        // A started old Job's remaining time carries over, floored; an unstarted one has none.
+        let now = k8s_openapi::jiff::Timestamp::now().as_second();
+        let deadline = old.as_ref().and_then(|job| {
+            let deadline = job.spec.as_ref()?.active_deadline_seconds?;
+            let started = job.status.as_ref()?.start_time.as_ref()?;
+            Some(if launch.campaign_reservation.is_some() {
+                deadline
+                    .saturating_sub(now.saturating_sub(started.0.as_second()).max(0))
+                    .max(0)
+            } else {
+                restarted_deadline(deadline, started.0.as_second(), now)
+            })
+        });
+        if launch.campaign_reservation.is_some() && deadline == Some(0) {
+            return Err(KubeError::rejected("campaign compute budget is exhausted"));
+        }
+        self.create_job_on(
+            &launch,
+            action.rehome_target(),
+            deadline,
+            operation,
+            progress,
+        )
+        .await
     }
 
     // Persist the checkpoint before deleting the old volume.
@@ -314,27 +305,33 @@ impl JobReconciler {
     }
 }
 
-/// Slack for the release that follows the deadline patch.
-const RESUME_DEADLINE_SLACK_SECONDS: i64 = 30;
+/// The least runtime a restarted pod gets, however little its old Job had left.
+const RESTART_DEADLINE_FLOOR_SECONDS: i64 = 300;
 
-// Include the pause duration so the resumed Job retains its remaining runtime.
-fn resumed_deadline(deadline: i64, started: i64, suspended: i64, now: i64) -> i64 {
-    let ran = suspended.saturating_sub(started).max(0);
-    let left = deadline.saturating_sub(ran).max(0);
+// A restarted Job runs for what its old Job had left, never less than the floor.
+fn restarted_deadline(deadline: i64, started: i64, now: i64) -> i64 {
     let elapsed = now.saturating_sub(started).max(0);
-    elapsed
-        .saturating_add(left)
-        .saturating_add(RESUME_DEADLINE_SLACK_SECONDS)
-        .max(deadline)
+    deadline
+        .saturating_sub(elapsed)
+        .max(RESTART_DEADLINE_FLOOR_SECONDS)
+}
+
+/// A profile declaring `state.carry = false` keeps its state on its node: rehome refuses.
+pub(super) fn state_stays(profile: &str, node: &str) -> KubeError {
+    KubeError::rejected(format!(
+        "profile {profile} declares state.carry = false: its state stays on {node}; restart it \
+         in place or cancel it"
+    ))
 }
 
 #[cfg(test)]
 mod deadline_tests {
     #[test]
-    fn a_resumed_pod_keeps_the_time_it_had_left() {
-        let (started, paused, resumed) = (0, 52 * 60, 64 * 60);
-        let deadline = super::resumed_deadline(3600, started, paused, resumed);
-        assert_eq!(deadline - (resumed - started), 8 * 60 + 30);
-        assert_eq!(super::resumed_deadline(3600, 0, 600, 700), 3600 + 100 + 30);
+    fn a_restarted_pod_gets_what_its_old_job_had_left_but_not_less_than_the_floor() {
+        assert_eq!(super::restarted_deadline(3600, 0, 600), 3000);
+        assert_eq!(
+            super::restarted_deadline(3600, 0, 3500),
+            super::RESTART_DEADLINE_FLOOR_SECONDS
+        );
     }
 }

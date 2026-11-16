@@ -134,6 +134,14 @@ pub(super) async fn bind(parts: HermesBind<'_>) -> Result<Option<VehicleRouteBin
                 .iter()
                 .map(|option| option.model.to_string())
                 .collect();
+            if let Some(lane) = &declaration.escalation {
+                if !launches.contains(lane) {
+                    return Err(format!(
+                        "seat {} escalation lane {lane} is not one of its launches",
+                        binding.seat_id
+                    ));
+                }
+            }
             let endpoint = gateway.clone();
             tokio::task::spawn_blocking(move || {
                 odin_hermes::runtime::validate_model_launches(&endpoint, &launches)
@@ -149,6 +157,7 @@ pub(super) async fn bind(parts: HermesBind<'_>) -> Result<Option<VehicleRouteBin
             Some(odin_hermes::conversation::ClassRoute {
                 class: class.as_str(),
                 gateway,
+                escalation: declaration.escalation.clone(),
             })
         } else {
             None
@@ -219,6 +228,11 @@ pub(super) async fn bind(parts: HermesBind<'_>) -> Result<Option<VehicleRouteBin
     // their capability timeouts; a seam left unbound (hermes absent) keeps
     // dispatch typed-unavailable, never stubbed.
     if let Some(runtime) = &hermes_runtime {
+        runtime.set_rental_route(Arc::new(crate::rental_route::DaemonRentalRoute {
+            root: config.paths.state_root.join("huginn"),
+            pin: Arc::clone(pin),
+            runtime: tokio::runtime::Handle::current(),
+        }));
         runtime.set_terminal_read_route(Arc::new(DaemonTerminalReadRoute {
             supervisor: Arc::clone(supervisor),
             handle: tokio::runtime::Handle::current(),
@@ -397,6 +411,23 @@ pub(super) async fn bind(parts: HermesBind<'_>) -> Result<Option<VehicleRouteBin
             host_files.start_queue()?;
             runtime.set_host_file_route(host_files);
         }
+        // Declared approval cards: the capability's own `approval_card` rendered from the bound
+        // arguments, so a new card or field is a registry edit (publication reloads this composition).
+        for object in pin
+            .current()
+            .listed_objects(odin_registry::RegistryKind::Capability)
+        {
+            if let odin_registry::ObjectConfig::Capability(capability) = &object.config {
+                if let Some(card) = &capability.approval_card {
+                    runtime.set_approval_card(
+                        &object.id,
+                        Arc::new(odin_hermes::runtime::approval_card::DeclaredCard(
+                            card.clone(),
+                        )),
+                    );
+                }
+            }
+        }
         let mut declare = None;
         if let Some(sync) = &sync {
             // One authoring route: projects, seats, routines and seat models share its
@@ -433,6 +464,10 @@ pub(super) async fn bind(parts: HermesBind<'_>) -> Result<Option<VehicleRouteBin
             runtime.set_project_route(route.clone());
             runtime.set_routine_route(route.clone());
             runtime.set_registry_author_route(route.clone());
+            runtime.set_approval_card(
+                "registry.edit.grant",
+                Arc::new(crate::registry_edit::EditCard(route.clone())),
+            );
             declare = Some(route);
         }
         runtime.set_model_command_route(Arc::new(DaemonModelCommandRoute {

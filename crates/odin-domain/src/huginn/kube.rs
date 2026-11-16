@@ -318,6 +318,9 @@ pub struct KubeNodeView {
     /// Departure staleness only — never set for missing usage (that is
     /// `usage_stale`).
     pub stale: bool,
+    /// The owner's mode holding the node, as "<mode> since <time>" (Odin's pods yield to it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -423,6 +426,9 @@ pub struct KubeNodeHealth {
     pub unschedulable: bool,
     pub capacity: KubeResources,
     pub allocatable: KubeResources,
+    /// The owner's mode holding the node, as "<mode> since <time>".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 /// One container of a problem pod: readiness, restarts, and the waiting

@@ -1,5 +1,6 @@
 schema = "odin.registry.v1"
 toolset = "brain"
+op = "note"
 kind = "capability"
 enabled = true
 implementation = "builtin"

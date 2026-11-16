@@ -6,8 +6,8 @@ use k8s_openapi::api::batch::v1::{Job, JobSpec};
 use k8s_openapi::api::core::v1::{
     Affinity, Capabilities, Container, EnvVar, EnvVarSource, HostPathVolumeSource, NodeAffinity,
     NodeSelector, NodeSelectorRequirement, NodeSelectorTerm, PodDNSConfig, PodSecurityContext,
-    PodSpec, PodTemplateSpec, ResourceRequirements, SeccompProfile, SecurityContext, Volume,
-    VolumeMount,
+    PodSpec, PodTemplateSpec, ResourceRequirements, SeccompProfile, SecurityContext, Toleration,
+    Volume, VolumeMount,
 };
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -46,6 +46,14 @@ pub(crate) const WORKER_RESERVATION: KubeResources = KubeResources {
     gpu_count: 0,
 };
 
+// The transport sidecar only tunnels packets, so it reserves a lean share, not a worker's.
+pub(crate) const TRANSPORT_RESERVATION: KubeResources = KubeResources {
+    cpu_millis: 250,
+    memory_bytes: 256 * 1024 * 1024,
+    ephemeral_storage_bytes: 256 * 1024 * 1024,
+    gpu_count: 0,
+};
+
 fn quantity_millis(millis: u64) -> Quantity {
     Quantity(format!("{millis}m"))
 }
@@ -67,29 +75,34 @@ fn worker_reservation(launch: &JobLaunch) -> KubeResources {
     }
 }
 
-// Placement must account for the worker, the browser, and a protected transport sidecar.
-fn launch_reservation(launch: &JobLaunch) -> KubeResources {
+// Placement must account for the worker, the browser container when one runs, and a
+// protected transport sidecar; each extra container reserves only what it runs with.
+pub(crate) fn launch_reservation(launch: &JobLaunch) -> KubeResources {
     let worker = worker_reservation(launch);
-    let extra = u64::from(
-        launch
-            .workload
-            .as_ref()
-            .is_some_and(|plan| plan.agent.is_some()),
-    ) + u64::from(
-        launch
-            .workload
-            .as_ref()
-            .is_some_and(|plan| plan.vpn.is_some()),
-    );
-    if extra == 0 {
+    let Some(plan) = launch.workload.as_ref() else {
         return worker;
-    }
+    };
+    let browser = u64::from(plan.browser_command().is_some());
+    let transport = u64::from(plan.vpn.is_some());
     KubeResources {
-        cpu_millis: worker.cpu_millis + extra * WORKER_CPU_MILLIS,
-        memory_bytes: worker.memory_bytes + extra * WORKER_MEMORY_BYTES,
-        ephemeral_storage_bytes: worker.ephemeral_storage_bytes + extra * WORKER_EPHEMERAL_BYTES,
+        cpu_millis: worker.cpu_millis
+            + browser * WORKER_CPU_MILLIS
+            + transport * TRANSPORT_RESERVATION.cpu_millis,
+        memory_bytes: worker.memory_bytes
+            + browser * WORKER_MEMORY_BYTES
+            + transport * TRANSPORT_RESERVATION.memory_bytes,
+        ephemeral_storage_bytes: worker.ephemeral_storage_bytes
+            + browser * WORKER_EPHEMERAL_BYTES
+            + transport * TRANSPORT_RESERVATION.ephemeral_storage_bytes,
         gpu_count: worker.gpu_count,
     }
+}
+
+fn launch_data(launch: &JobLaunch) -> &[crate::workload::WorkloadDataMount] {
+    launch
+        .workload
+        .as_ref()
+        .map_or(&[], |plan| plan.data.as_slice())
 }
 
 pub(crate) fn bounded_resources(reservation: KubeResources) -> ResourceRequirements {
@@ -165,6 +178,7 @@ pub(super) fn build_suspended_job(
     staged: &StagedVolumes,
     node: &str,
     pins: Option<(Vec<std::net::IpAddr>, u16, Vec<std::net::IpAddr>)>,
+    deadline: Option<i64>,
 ) -> Result<Job, KubeError> {
     launch
         .validate()
@@ -196,6 +210,11 @@ pub(super) fn build_suspended_job(
     let mut mounts = staged.mounts.clone();
     if let Some(plan) = &launch.workload {
         crate::workload::inject_pod_volumes(plan, &launch.labels.run_id, &mut volumes, &mut mounts);
+        if plan.control.is_some() {
+            let (volume, mount) = crate::control::control_volume(&launch.job_name());
+            volumes.push(volume);
+            mounts.push(mount);
+        }
     }
     let mut env = Vec::new();
     if let Some(plan) = &launch.workload {
@@ -207,6 +226,21 @@ pub(super) fn build_suspended_job(
         });
         // Kubernetes injects credentials from a Secret; staged config contains only the env name.
         env.extend(plan.gateway_env());
+        // Workload admission resolves the image to an immutable OCI reference. Expose
+        // its manifest digest, not the independently calculated profile identity.
+        if plan.agent.is_none() {
+            if let Some((_, digest)) = launch.image.rsplit_once('@') {
+                if digest.strip_prefix("sha256:").is_some_and(|hex| {
+                    hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+                }) {
+                    env.push(EnvVar {
+                        name: "ODIN_IMAGE_DIGEST".to_owned(),
+                        value: Some(digest.to_owned()),
+                        value_from: None,
+                    });
+                }
+            }
+        }
     }
     let container = Container {
         name: crate::job::JOB_WORKER_CONTAINER.to_owned(),
@@ -290,6 +324,11 @@ pub(super) fn build_suspended_job(
         .filter(|_| protected)
         .map(|vpn| vpn.dns);
     let spec = PodSpec {
+        termination_grace_period_seconds: launch
+            .workload
+            .as_ref()
+            .and_then(|plan| plan.termination_grace_seconds)
+            .map(i64::from),
         restart_policy: Some(if launch.service { "OnFailure" } else { "Never" }.to_owned()),
         share_process_namespace: Some(false),
         automount_service_account_token: Some(false),
@@ -304,6 +343,21 @@ pub(super) fn build_suspended_job(
         volumes: Some(volumes),
         security_context: Some(worker_pod_security()),
         node_selector: (!launch.node_selector.is_empty()).then(|| launch.node_selector.clone()),
+        tolerations: (!launch.tolerate.is_empty()).then(|| {
+            launch
+                .tolerate
+                .iter()
+                .map(|name| Toleration {
+                    key: Some(format!(
+                        "{}{name}",
+                        odin_registry::schema::NODE_TAINT_PREFIX
+                    )),
+                    operator: Some("Exists".to_owned()),
+                    effect: Some("NoSchedule".to_owned()),
+                    ..Default::default()
+                })
+                .collect()
+        }),
         // Use node affinity, not node_name, so scheduler resource checks still apply.
         affinity: Some(Affinity {
             node_affinity: Some(NodeAffinity {
@@ -343,7 +397,7 @@ pub(super) fn build_suspended_job(
             } else {
                 0
             }),
-            active_deadline_seconds: launch.deadline_seconds.map(i64::from),
+            active_deadline_seconds: deadline.or(launch.deadline_seconds.map(i64::from)),
             template: PodTemplateSpec {
                 metadata: Some(ObjectMeta {
                     labels: Some(template_labels),
@@ -364,7 +418,143 @@ fn job_worker_correlation(run: &RunId) -> Result<CorrelationId, KubeError> {
     CorrelationId::new(&hex[..32]).map_err(|error| storage(error.to_string()))
 }
 
+/// Campaign authority is immutable; all creation paths use the same node and wall-clock end.
+pub(super) fn campaign_deadline(
+    launch: &JobLaunch,
+    target: Option<&str>,
+) -> Result<Option<i64>, KubeError> {
+    let Some(reservation) = &launch.campaign_reservation else {
+        return Ok(None);
+    };
+    if target.is_some_and(|node| node != reservation.approved_node) {
+        return Err(KubeError::rejected(
+            "campaign recreation must use its approved node",
+        ));
+    }
+    let now = k8s_openapi::jiff::Timestamp::now().as_second();
+    let remaining = reservation.expires_at_unix_seconds.saturating_sub(now);
+    if remaining <= 0 {
+        return Err(KubeError::rejected("campaign compute budget is exhausted"));
+    }
+    Ok(Some(
+        remaining.min(i64::from(
+            launch
+                .deadline_seconds
+                .ok_or_else(|| KubeError::rejected("campaign deadline is missing"))?,
+        )),
+    ))
+}
+
 impl JobReconciler {
+    /// Read-only: whether a launch's new Job would be admitted and has room on a node. Runs
+    /// before any journal or API write, so a refusal leaves no pending create. An existing Job
+    /// already holds its node's room, so it is never re-checked and answers `None`; otherwise
+    /// the node the Job would land on.
+    pub async fn room_for(&self, launch: &JobLaunch) -> Result<Option<String>, KubeError> {
+        launch
+            .validate()
+            .map_err(|reason| KubeError::Rejected { reason })?;
+        campaign_deadline(launch, launch.initial_target_node.as_deref())?;
+        if self.get_job(&launch.job_name()).await?.is_some() {
+            return Ok(None);
+        }
+        // The same seat and lane limits a create checks first: a launch they refuse is not held.
+        self.admit_fresh(launch, Some(&launch.labels.run_id))
+            .await?;
+        let state_node = self.admit_continuation(launch).await?;
+        crate::placement::choose_node(
+            &self.client,
+            &launch.node_requirements(),
+            launch_reservation(launch),
+            launch
+                .initial_target_node
+                .as_deref()
+                .or(state_node.as_deref()),
+            launch_data(launch),
+        )
+        .await
+        .map(Some)
+    }
+
+    /// Refuses a continuation unless it names another finished run of the same profile, seat,
+    /// lane, and project whose state claim still exists. Returns the node holding that state.
+    pub(super) async fn admit_continuation(
+        &self,
+        launch: &JobLaunch,
+    ) -> Result<Option<String>, KubeError> {
+        let Some(from) = &launch.continue_from else {
+            return Ok(None);
+        };
+        let Some(plan) = &launch.workload else {
+            return Err(KubeError::rejected(
+                "continueFrom takes over a run's state; this profile declares no state",
+            ));
+        };
+        if from == &launch.labels.run_id {
+            return Err(KubeError::rejected("a run cannot continue from itself"));
+        }
+        let stored = self.journal.load_launch(from)?.ok_or_else(|| {
+            KubeError::rejected(format!("continueFrom run {from} is not a known pod run"))
+        })?;
+        let profile = stored
+            .workload
+            .as_ref()
+            .map(|stored| stored.profile.as_str());
+        if profile != Some(plan.profile.as_str()) {
+            return Err(KubeError::rejected(format!(
+                "continueFrom run {from} ran profile {}, not {}",
+                profile.unwrap_or("(none)"),
+                plan.profile
+            )));
+        }
+        let (old, new) = (&stored.labels, &launch.labels);
+        if old.seat_id != new.seat_id
+            || old.lane_id != new.lane_id
+            || old.project_id != new.project_id
+        {
+            return Err(KubeError::rejected(format!(
+                "continueFrom run {from} belongs to seat {}, lane {}, project {}; this launch is \
+                 seat {}, lane {}, project {}",
+                old.seat_id, old.lane_id, old.project_id, new.seat_id, new.lane_id, new.project_id
+            )));
+        }
+        if let Some(job) = self.get_job(&crate::job::job_name(from)).await? {
+            if !super::orphans::job_finished(&job) {
+                return Err(KubeError::rejected(format!(
+                    "continueFrom run {from} is still live (running or paused); cancel it or let \
+                     it finish first"
+                )));
+            }
+        }
+        let mut holder =
+            crate::workload::state_binding(&self.client, &launch.labels.run_id).await?;
+        if holder.is_none() {
+            holder = crate::workload::state_binding(&self.client, from).await?;
+        }
+        if holder.is_none() {
+            holder = crate::workload::continued_state_binding(&self.client, &launch.labels.run_id)
+                .await?;
+        }
+        let holder = holder.ok_or_else(|| {
+            KubeError::rejected(format!(
+                "continueFrom run {from}'s state claim is gone; there is no state to continue from"
+            ))
+        })?;
+        let node = holder
+            .admitted_nodes
+            .filter(|nodes| nodes.len() == 1)
+            .and_then(|mut nodes| nodes.pop());
+        if let (Some(target), Some(node)) = (launch.initial_target_node.as_deref(), node.as_deref())
+        {
+            if target != node {
+                return Err(KubeError::rejected(format!(
+                    "continueFrom run {from}'s state is on {node}, not target node {target}"
+                )));
+            }
+        }
+        Ok(node)
+    }
+
     pub(super) async fn create_job(
         &self,
         launch: &JobLaunch,
@@ -373,7 +563,11 @@ impl JobReconciler {
     ) -> Result<JobObservation, KubeError> {
         self.create_job_on(
             launch,
-            launch.initial_target_node.as_deref(),
+            launch
+                .admitted_node
+                .as_deref()
+                .or(launch.initial_target_node.as_deref()),
+            None,
             operation,
             progress,
         )
@@ -381,13 +575,26 @@ impl JobReconciler {
     }
 
     // Restart uses its supplied target, including None, rather than inheriting the initial target.
+    // A restart passes the old Job's remaining time; the admitted launch keeps its declared deadline.
     pub(super) async fn create_job_on(
         &self,
         launch: &JobLaunch,
         target: Option<&str>,
+        deadline: Option<i64>,
         operation: &str,
         progress: &mut Progress,
     ) -> Result<JobObservation, KubeError> {
+        let campaign_remaining = campaign_deadline(launch, target)?;
+        let target = launch
+            .campaign_reservation
+            .as_ref()
+            .map(|reservation| reservation.approved_node.as_str())
+            .or(target);
+        let deadline = match (deadline, campaign_remaining) {
+            (Some(existing), Some(remaining)) => Some(existing.min(remaining)),
+            (None, Some(remaining)) => Some(remaining),
+            (existing, None) => existing,
+        };
         // Reject conflicting run definitions before staging or API writes.
         self.journal.save_launch(launch)?;
         let name = launch.job_name();
@@ -404,6 +611,8 @@ impl JobReconciler {
                 launch
                     .validate()
                     .map_err(|reason| KubeError::Rejected { reason })?;
+                // Boxed: the continuation's futures would otherwise enlarge every create's.
+                Box::pin(self.admit_continuation(launch)).await?;
                 let prepared = self.artifacts.prepare_stage(
                     &launch.labels,
                     &launch.staging,
@@ -412,8 +621,22 @@ impl JobReconciler {
 
                 // Hosts resolve before the claim exists, so a refusal leaves
                 // no volume. The claim is created next, then the resolved policy.
+                let mut target = target.map(str::to_owned);
                 if let Some(plan) = &launch.workload {
                     let resolved = crate::workload::resolve_declared_hosts(plan).await?;
+                    if let Some(from) = &launch.continue_from {
+                        // Node-local state pins the continuation to the node that holds it.
+                        let nodes = Box::pin(crate::workload::hand_over_state_claim(
+                            &self.client,
+                            from,
+                            &launch.labels.run_id,
+                            plan,
+                        ))
+                        .await?;
+                        if let ([node], None) = (nodes.as_slice(), &target) {
+                            target = Some(node.clone());
+                        }
+                    }
                     crate::workload::ensure_state_claim(&self.client, &launch.labels.run_id, plan)
                         .await?;
                     crate::workload::ensure_resolved_egress_policy(
@@ -423,7 +646,7 @@ impl JobReconciler {
                     )
                     .await?;
                     unresolved_hosts = resolved.unresolved;
-                    if let Some(target) = target {
+                    if let Some(target) = target.as_deref() {
                         crate::workload::verify_state_admits_node(
                             &self.client,
                             &launch.labels.run_id,
@@ -435,13 +658,21 @@ impl JobReconciler {
                 }
                 // The Job template is immutable, so publish its mounted files first.
                 let staged = self.artifacts.stage(&self.client, &name, prepared).await?;
+                if launch
+                    .workload
+                    .as_ref()
+                    .is_some_and(|plan| plan.control.is_some())
+                {
+                    crate::control::ensure_control_map(&self.client, &name, &launch.labels).await?;
+                }
                 self.journal
                     .save_staged_paths(&launch.labels.run_id, &staged.staged_paths)?;
                 let node = crate::placement::choose_node(
                     &self.client,
-                    &launch.node_selector,
+                    &launch.node_requirements(),
                     launch_reservation(launch),
-                    target,
+                    target.as_deref(),
+                    launch_data(launch),
                 )
                 .await?;
                 let pins = match launch.workload.as_ref() {
@@ -452,7 +683,7 @@ impl JobReconciler {
                     }
                     _ => None,
                 };
-                let desired = build_suspended_job(launch, &staged, &node, pins)?;
+                let desired = build_suspended_job(launch, &staged, &node, pins, deadline)?;
                 match self.create_job_object(&desired).await {
                     Ok(job) => job,
                     // A replayed or concurrent create won the race; resume
@@ -676,7 +907,10 @@ mod launch_shape_tests {
     use odin_domain::{AttemptId, Digest, LaneId, ProjectId, RunId, SeatId, TaskId};
     use odin_types::{OperationId, WorkerId};
 
-    use super::{build_suspended_job, launch_reservation, StagedVolumes};
+    use super::{
+        build_suspended_job, launch_reservation, StagedVolumes, TRANSPORT_RESERVATION,
+        WORKER_CPU_MILLIS, WORKER_MEMORY_BYTES,
+    };
     use crate::job::JobLaunch;
 
     fn launch(gpu_count: u32, deadline_seconds: Option<u32>) -> JobLaunch {
@@ -705,20 +939,69 @@ mod launch_shape_tests {
             args: vec!["'/cuda-samples/sample'".to_owned()],
             node_selector: BTreeMap::new(),
             initial_target_node: None,
+            admitted_node: None,
+            campaign_reservation: None,
             gpu_count,
+            gpu_min_vram_gib: None,
+            gpu_vram_gib: None,
+            tolerate: Default::default(),
             deadline_seconds,
             service: false,
             workload: None,
             extension: None,
             models_config: None,
+            continue_from: None,
             operation_id: OperationId::new("op-launch-shape").expect("operation id"),
             idempotency_digest: Digest::hash(b"launch-shape"),
         }
     }
 
+    #[test]
+    fn campaign_binding_survives_serialization_and_restricts_node_and_budget() {
+        let mut launch = launch(0, Some(300));
+        let mut plan = workload_plan();
+        plan.agent = None;
+        plan.resources = Some(crate::workload::WorkloadResources {
+            cpu: 2,
+            memory_bytes: 1024,
+            shm_bytes: None,
+        });
+        launch.workload = Some(plan);
+        launch.initial_target_node = Some("mini".to_owned());
+        let now = k8s_openapi::jiff::Timestamp::now().as_second();
+        launch.campaign_reservation = Some(crate::job::CampaignReservation {
+            approved_node: "mini".to_owned(),
+            core_millis_seconds: 600_000,
+            expires_at_unix_seconds: now + 60,
+        });
+        launch.validate().expect("valid campaign binding");
+        let encoded = serde_json::to_string(&launch).unwrap();
+        let replay: JobLaunch = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(replay, launch);
+        assert!(super::campaign_deadline(&replay, Some("other")).is_err());
+        assert!(super::campaign_deadline(&replay, None).unwrap().unwrap() <= 60);
+        launch
+            .campaign_reservation
+            .as_mut()
+            .unwrap()
+            .core_millis_seconds -= 1;
+        assert!(launch.validate().is_err());
+        launch
+            .campaign_reservation
+            .as_mut()
+            .unwrap()
+            .expires_at_unix_seconds = now - 1;
+        assert!(super::campaign_deadline(&launch, None).is_err());
+    }
+
     fn workload_plan() -> crate::workload::WorkloadPodPlan {
         let plan = crate::workload::WorkloadPodPlan {
             resources: None,
+            termination_grace_seconds: None,
+            data: Vec::new(),
+            control: None,
+            keep_finished_seconds: None,
+            on_yield: Default::default(),
             script_gateway: None,
             profile: "browser-container-fixture".to_owned(),
             state_mount: "/state".to_owned(),
@@ -726,6 +1009,7 @@ mod launch_shape_tests {
             export_host_folder: "/srv/odin/export".to_owned(),
             state_storage: "2Gi".to_owned(),
             state_storage_class: None,
+            state_carry: true,
             allow_hosts: vec![],
             network_open: false,
             transport: odin_registry::WorkloadTransport::Direct,
@@ -787,7 +1071,7 @@ mod launch_shape_tests {
             credential_env: "ODIN_GATEWAY_KEY".to_owned(),
         });
         launch.workload = Some(workload_plan());
-        let job = build_suspended_job(&launch, &staged(), "pc", None).expect("suspended job");
+        let job = build_suspended_job(&launch, &staged(), "pc", None, None).expect("suspended job");
         let spec = job
             .spec
             .as_ref()
@@ -882,6 +1166,7 @@ mod launch_shape_tests {
             dns: "198.18.0.1".parse().expect("dns"),
             launcher: "/odin/bin/odin-vpn-tun".to_owned(),
             resolver: None,
+            forwarded: None,
         });
         plan.validate().expect("protected plan");
         launch.workload = Some(plan);
@@ -894,6 +1179,7 @@ mod launch_shape_tests {
                 14000,
                 Vec::new(),
             )),
+            None,
         )
         .expect("protected job");
         let spec = job.spec.expect("spec").template.spec.expect("pod spec");
@@ -919,6 +1205,12 @@ mod launch_shape_tests {
             .as_ref()
             .expect("added");
         assert_eq!(added.as_slice(), ["NET_ADMIN"]);
+        let requests = transport
+            .resources
+            .as_ref()
+            .and_then(|resources| resources.requests.as_ref())
+            .expect("transport requests");
+        assert_eq!(requests["cpu"].0, "250m");
         let worker = &spec.containers[0];
         assert!(worker
             .security_context
@@ -926,6 +1218,50 @@ mod launch_shape_tests {
             .and_then(|context| context.capabilities.as_ref())
             .and_then(|caps| caps.add.as_ref())
             .is_none_or(|added| added.is_empty()));
+    }
+
+    #[test]
+    fn a_declared_reservation_adds_only_the_containers_the_pod_runs() {
+        let gib = 1024 * 1024 * 1024;
+        let mut plan = workload_plan();
+        plan.resources = Some(crate::workload::WorkloadResources {
+            cpu: 1,
+            memory_bytes: gib,
+            shm_bytes: None,
+        });
+        let mut launch = launch(0, None);
+        // Obscura runs no browser container and no transport: the declared worker alone.
+        plan.agent.as_mut().expect("agent").browser_engine = odin_registry::BrowserEngine::Obscura;
+        launch.workload = Some(plan.clone());
+        let request = launch_reservation(&launch);
+        assert_eq!((request.cpu_millis, request.memory_bytes), (1_000, gib));
+        // Chromium adds one browser container share.
+        plan.agent.as_mut().expect("agent").browser_engine =
+            odin_registry::BrowserEngine::ChromiumHeadless;
+        launch.workload = Some(plan.clone());
+        let request = launch_reservation(&launch);
+        assert_eq!(request.cpu_millis, 1_000 + WORKER_CPU_MILLIS);
+        assert_eq!(request.memory_bytes, gib + WORKER_MEMORY_BYTES);
+        // A protected pod adds the lean transport share, not a worker's.
+        plan.transport = odin_registry::WorkloadTransport::VpnRequired;
+        plan.vpn = Some(crate::workload::WorkloadVpnTransportPlan {
+            endpoint: "192.168.15.5".parse().expect("endpoint"),
+            port: 8421,
+            dns: "198.18.0.1".parse().expect("dns"),
+            launcher: "/odin/bin/odin-vpn-tun".to_owned(),
+            resolver: None,
+            forwarded: None,
+        });
+        launch.workload = Some(plan);
+        let request = launch_reservation(&launch);
+        assert_eq!(
+            request.cpu_millis,
+            1_000 + WORKER_CPU_MILLIS + TRANSPORT_RESERVATION.cpu_millis
+        );
+        assert_eq!(
+            request.memory_bytes,
+            gib + WORKER_MEMORY_BYTES + TRANSPORT_RESERVATION.memory_bytes
+        );
     }
 
     #[test]
@@ -937,9 +1273,10 @@ mod launch_shape_tests {
         plan.resources = Some(crate::workload::WorkloadResources {
             cpu: 6,
             memory_bytes: 4 * gib,
+            shm_bytes: None,
         });
         launch.workload = Some(plan);
-        let job = build_suspended_job(&launch, &staged(), "pc", None).expect("suspended job");
+        let job = build_suspended_job(&launch, &staged(), "pc", None, None).expect("suspended job");
         let spec = job
             .spec
             .as_ref()
@@ -965,7 +1302,7 @@ mod launch_shape_tests {
             serde_json::from_value(serde_json::json!({
                 "apiVersion": "v1",
                 "kind": "Node",
-                "metadata": { "name": "pc" },
+                "metadata": { "name": "pc", "labels": { "node-restriction.kubernetes.io/odin-trust": "fleet" } },
                 "status": {
                     "conditions": [{ "type": "Ready", "status": "True" }],
                     "allocatable": {
@@ -976,7 +1313,7 @@ mod launch_shape_tests {
             .expect("node fixture")
         };
         let allowed = std::collections::BTreeSet::from(["pc".to_owned()]);
-        let labels = std::collections::BTreeMap::new();
+        let labels = crate::placement::NodeRequirements::default();
         assert!(crate::placement::select_node(
             vec![node("4")],
             &[],
@@ -991,6 +1328,201 @@ mod launch_shape_tests {
                 .expect("the 8-CPU node fits"),
             "pc"
         );
+    }
+
+    fn pod_spec(launch: &JobLaunch) -> k8s_openapi::api::core::v1::PodSpec {
+        build_suspended_job(launch, &staged(), "pc", None, None)
+            .expect("suspended job")
+            .spec
+            .and_then(|spec| spec.template.spec)
+            .expect("pod spec")
+    }
+
+    #[test]
+    fn script_worker_receives_the_admitted_image_manifest_digest() {
+        let mut launch = launch(0, None);
+        let digest = format!("sha256:{}", "a".repeat(64));
+        launch.image = format!("registry.example/worker:tag@{digest}");
+        let mut plan = workload_plan();
+        plan.agent = None;
+        launch.workload = Some(plan);
+
+        let pod = pod_spec(&launch);
+        let env = pod.containers[0].env.as_ref().expect("worker environment");
+        let matching: Vec<_> = env
+            .iter()
+            .filter(|var| var.name == "ODIN_IMAGE_DIGEST")
+            .collect();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].value.as_deref(), Some(digest.as_str()));
+        assert!(matching[0].value_from.is_none());
+
+        // The value comes from the resolved image, not the profile identity or a tag.
+        launch.image = format!("registry.example/other@sha256:{}", "b".repeat(64));
+        let pod = pod_spec(&launch);
+        let value = pod.containers[0]
+            .env
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|var| var.name == "ODIN_IMAGE_DIGEST")
+            .unwrap();
+        assert_eq!(
+            value.value.as_deref(),
+            launch.image.split_once('@').map(|(_, digest)| digest)
+        );
+    }
+
+    #[test]
+    fn image_digest_is_not_injected_for_agents_or_unpinned_images() {
+        let mut launch = launch(0, None);
+        launch.image = format!("registry.example/worker@sha256:{}", "a".repeat(64));
+        launch.staging.inputs = vec![crate::job::KubeContentIdentity {
+            artifact_id: odin_domain::ArtifactId::new("staging-models-browser-fixture")
+                .expect("artifact id"),
+            content_digest: odin_domain::Digest::hash(b"staging-models-bytes"),
+            byte_len: 128,
+        }];
+        launch.models_config = Some(crate::job::JobModelsConfigLaunch {
+            config_artifact: odin_domain::ArtifactId::new("staging-models-browser-fixture")
+                .expect("artifact id"),
+            config_digest: odin_domain::Digest::hash(b"staging-models-bytes").to_string(),
+            credential_env: "ODIN_GATEWAY_KEY".to_owned(),
+        });
+        launch.workload = Some(workload_plan());
+        let has_digest = |pod: &k8s_openapi::api::core::v1::PodSpec| {
+            pod.containers[0]
+                .env
+                .iter()
+                .flatten()
+                .any(|var| var.name == "ODIN_IMAGE_DIGEST")
+        };
+        assert!(!has_digest(&pod_spec(&launch)));
+        launch.workload.as_mut().unwrap().agent = None;
+        launch.models_config = None;
+        for image in [
+            "registry.example/worker:tag",
+            "registry.example/worker@sha256:bad",
+        ] {
+            launch.image = image.to_owned();
+            assert!(!has_digest(&pod_spec(&launch)));
+        }
+        launch.workload = None;
+        assert!(!has_digest(&pod_spec(&launch)));
+    }
+
+    #[test]
+    fn a_declared_shm_mounts_a_memory_backed_dev_shm() {
+        let gib = 1024 * 1024 * 1024;
+        let mut launch = launch(0, None);
+        let mut plan = workload_plan();
+        plan.agent = None;
+        plan.resources = Some(crate::workload::WorkloadResources {
+            cpu: 2,
+            memory_bytes: 4 * gib,
+            shm_bytes: Some(gib),
+        });
+        launch.workload = Some(plan);
+        let spec = pod_spec(&launch);
+        let volume = spec
+            .volumes
+            .iter()
+            .flatten()
+            .find_map(|volume| {
+                volume
+                    .empty_dir
+                    .as_ref()
+                    .filter(|_| volume.name == "odin-shm")
+            })
+            .expect("shm volume");
+        assert_eq!(volume.medium.as_deref(), Some("Memory"));
+        assert_eq!(
+            volume.size_limit.as_ref().map(|q| q.0.clone()),
+            Some(gib.to_string())
+        );
+        let mounted = |container: &k8s_openapi::api::core::v1::Container| {
+            container
+                .volume_mounts
+                .iter()
+                .flatten()
+                .any(|mount| mount.mount_path == "/dev/shm")
+        };
+        assert!(mounted(&spec.containers[0]));
+        assert!(!spec.init_containers.iter().flatten().any(mounted));
+    }
+
+    #[test]
+    fn declared_data_mounts_are_read_only_host_paths() {
+        let mut launch = launch(0, None);
+        let mut plan = workload_plan();
+        plan.agent = None;
+        plan.data = vec![crate::workload::WorkloadDataMount {
+            name: "stage".to_owned(),
+            host_path: "/srv/project/stage".to_owned(),
+            pod_path: "/stage".to_owned(),
+        }];
+        launch.workload = Some(plan);
+        let spec = pod_spec(&launch);
+        let volume = spec
+            .volumes
+            .iter()
+            .flatten()
+            .find(|volume| volume.name == "odin-data-stage")
+            .and_then(|volume| volume.host_path.as_ref())
+            .expect("data volume");
+        assert_eq!(volume.path, "/srv/project/stage");
+        let mount = spec.containers[0]
+            .volume_mounts
+            .iter()
+            .flatten()
+            .find(|mount| mount.mount_path == "/stage")
+            .expect("data mount");
+        assert_eq!(mount.read_only, Some(true));
+        assert_eq!(mount.recursive_read_only.as_deref(), Some("IfPossible"));
+    }
+
+    #[test]
+    fn a_declared_stop_grace_reaches_the_pod_spec() {
+        let mut launch = launch(0, None);
+        let mut plan = workload_plan();
+        plan.agent = None;
+        launch.workload = Some(plan.clone());
+        assert_eq!(pod_spec(&launch).termination_grace_period_seconds, None);
+        plan.termination_grace_seconds = Some(120);
+        launch.workload = Some(plan);
+        assert_eq!(
+            pod_spec(&launch).termination_grace_period_seconds,
+            Some(120)
+        );
+    }
+
+    #[test]
+    fn a_profile_with_data_only_lands_on_nodes_declaring_the_root() {
+        let data = [crate::workload::WorkloadDataMount {
+            name: "stage".to_owned(),
+            host_path: "/srv/project/stage/sweep-1".to_owned(),
+            pod_path: "/stage".to_owned(),
+        }];
+        let config = crate::KubeConfig {
+            kubeconfig: "/nonexistent/kubeconfig".into(),
+            cluster: "fixture".to_owned(),
+            namespace: "default".to_owned(),
+            allowed_nodes: ["mini", "pc"].map(str::to_owned).into(),
+            node_data_roots: [(
+                "pc".to_owned(),
+                std::collections::BTreeSet::from(["/srv/project/stage".to_owned()]),
+            )]
+            .into(),
+            request_timeout: std::time::Duration::from_secs(5),
+            teardown_timeout: std::time::Duration::from_secs(5),
+            vpn_transport: None,
+        };
+        assert_eq!(
+            crate::placement::data_admitting(&config, &data),
+            std::collections::BTreeSet::from(["pc".to_owned()])
+        );
+        assert!(crate::placement::node_covers(&config, "mini", &[]));
+        assert!(!crate::placement::node_covers(&config, "mini", &data));
     }
 
     // Only the Kubernetes API is simulated; placement, journaling, and lifecycle paths are real.
@@ -1014,7 +1546,7 @@ mod launch_shape_tests {
         serde_json::json!({
             "apiVersion": "v1", "kind": "Node",
             "metadata": {"name": name, "uid": format!("node-{name}"),
-                "labels": {"odin.capability/portable": "true"}},
+                "labels": {"odin.capability/portable": "true", "node-restriction.kubernetes.io/odin-trust": "fleet"}},
             "status": {
                 "conditions": [{"type": "Ready", "status": "True"}],
                 "allocatable": {"cpu": "16", "memory": "32Gi",
@@ -1027,6 +1559,11 @@ mod launch_shape_tests {
         match (value, patch) {
             (serde_json::Value::Object(value), serde_json::Value::Object(patch)) => {
                 for (key, field) in patch {
+                    // A merge patch's null removes the field (RFC 7386).
+                    if field.is_null() {
+                        value.remove(&key);
+                        continue;
+                    }
                     merge_api_object(value.entry(key).or_insert(serde_json::Value::Null), field);
                 }
             }
@@ -1135,6 +1672,7 @@ mod launch_shape_tests {
                 let kind = match path.rsplit('/').next().unwrap_or("List") {
                     "jobs" => "JobList",
                     "persistentvolumeclaims" => "PersistentVolumeClaimList",
+                    "persistentvolumes" => "PersistentVolumeList",
                     "networkpolicies" => "NetworkPolicyList",
                     "configmaps" => "ConfigMapList",
                     "pods" => "PodList",
@@ -1165,6 +1703,7 @@ mod launch_shape_tests {
                 "jobs"
                     | "pods"
                     | "persistentvolumeclaims"
+                    | "persistentvolumes"
                     | "networkpolicies"
                     | "configmaps"
                     | "nodes"
@@ -1330,6 +1869,7 @@ mod launch_shape_tests {
                     cluster: "placement-fixture".to_owned(),
                     namespace: "default".to_owned(),
                     allowed_nodes: allowed.iter().map(|name| (*name).to_owned()).collect(),
+                    node_data_roots: Default::default(),
                     request_timeout: std::time::Duration::from_secs(2),
                     teardown_timeout: std::time::Duration::from_secs(2),
                     vpn_transport: None,
@@ -1450,7 +1990,7 @@ mod launch_shape_tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn initial_target_mini_rehomes_to_pc_preserving_shared_state_and_profile() {
+    async fn admitted_node_rehomes_to_pc_preserving_shared_state_and_profile() {
         let fixture = PlacementFixture::new(&["alpha", "mini", "pc"]);
         // Without a target directive, placement would select alpha instead of mini.
         fixture
@@ -1461,6 +2001,8 @@ mod launch_shape_tests {
             .nodes
             .push(placement_node("alpha"));
         let mut launch = portable_launch();
+        launch.initial_target_node = None;
+        launch.admitted_node = Some("mini".to_owned());
         fixture.checkpoint(&mut launch);
         let first = fixture
             .reconciler
@@ -1517,9 +2059,10 @@ mod launch_shape_tests {
         assert_eq!(stored.node_selector, launch.node_selector);
         assert_eq!(
             stored.initial_target_node.as_deref(),
-            Some("mini"),
-            "immutable admission record, not a permanent pin"
+            None,
+            "host selection does not change the caller's declaration"
         );
+        assert_eq!(stored.admitted_node.as_deref(), Some("mini"));
         assert_eq!(stored.workload, launch.workload);
         assert_eq!(stored.checkpoint, launch.checkpoint);
         assert_eq!(stored.image, launch.image);
@@ -1528,6 +2071,11 @@ mod launch_shape_tests {
         let state = fixture.api.state.lock().expect("API state");
         assert_eq!(state.created_jobs.len(), 2);
         assert_placement(&state.created_jobs[1], "pc", &launch);
+        // The sim never starts the old Job, so the restart keeps the launch's own deadline.
+        assert_eq!(
+            state.created_jobs[1]["spec"]["activeDeadlineSeconds"],
+            serde_json::json!(300)
+        );
         assert_eq!(
             state.objects[&claim_path], claim,
             "same bound claim retains its state binding"
@@ -1555,6 +2103,68 @@ mod launch_shape_tests {
             std::fs::read(fixture.artifact_root.join("counter-state")).expect("checkpoint bytes"),
             b"counter=41\n"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn caller_target_remains_distinct_from_host_selection() {
+        let fixture = PlacementFixture::new(&["alpha", "mini"]);
+        fixture
+            .api
+            .state
+            .lock()
+            .expect("API state")
+            .nodes
+            .push(placement_node("alpha"));
+        let launch = portable_launch();
+        fixture
+            .reconciler
+            .create(launch.clone())
+            .await
+            .expect("targeted create");
+        let state = fixture.api.state.lock().expect("API state");
+        assert_placement(&state.created_jobs[0], "mini", &launch);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restart_with_target_refuses_a_non_carry_state() {
+        let fixture = PlacementFixture::new(&["mini", "pc"]);
+        let mut launch = portable_launch();
+        launch.workload.as_mut().expect("plan").state_carry = false;
+        let first = fixture
+            .reconciler
+            .create(launch.clone())
+            .await
+            .expect("targeted create");
+        let claim_path = format!(
+            "/api/v1/namespaces/default/persistentvolumeclaims/{}",
+            crate::workload::state_claim_name(&launch.labels.run_id)
+        );
+        {
+            let mut state = fixture.api.state.lock().expect("API state");
+            // A node-local volume on mini: moving it to pc would tar the state.
+            state
+                .objects
+                .get_mut(&claim_path)
+                .expect("created state claim")["spec"]["volumeName"] =
+                serde_json::json!("local-volume");
+            state.objects.insert("/api/v1/persistentvolumes/local-volume".to_owned(), serde_json::json!({
+                "apiVersion":"v1", "kind":"PersistentVolume", "metadata":{"name":"local-volume"},
+                "spec":{"capacity":{"storage":"2Gi"}, "accessModes":["ReadWriteOnce"],
+                    "nodeAffinity":{"required":{"nodeSelectorTerms":[{"matchExpressions":[
+                        {"key":"kubernetes.io/hostname","operator":"In","values":["mini"]}]}]}}}
+            }));
+        }
+        let refused = fixture
+            .reconciler
+            .operate(restart_action(&launch, &first, Some("pc")))
+            .await
+            .expect_err("a non-carry state does not rehome");
+        assert!(
+            refused.to_string().contains("state.carry = false"),
+            "names the cause: {refused}"
+        );
+        let state = fixture.api.state.lock().expect("API state");
+        assert_eq!(state.created_jobs.len(), 1, "the old Job keeps running");
     }
 
     impl PlacementFixture {
@@ -2022,6 +2632,15 @@ mod launch_shape_tests {
                 .as_bool()
         };
         assert_eq!(suspended(&fixture), Some(true), "pause suspends the Job");
+        {
+            let mut state = fixture.api.state.lock().expect("API state");
+            let job = state.objects.get_mut(&job_path).expect("suspended Job");
+            job["status"]["startTime"] = serde_json::json!("2026-01-01T00:00:00Z");
+            job["status"]["conditions"] = serde_json::json!([{
+                "type": "Suspended", "status": "True",
+                "lastTransitionTime": "2026-01-01T00:01:00Z"
+            }]);
+        }
         fixture
             .reconciler
             .operate(act(
@@ -2032,6 +2651,12 @@ mod launch_shape_tests {
             .await
             .expect("resume");
         assert_eq!(suspended(&fixture), Some(false), "resume releases the Job");
+        let state = fixture.api.state.lock().expect("API state");
+        assert_eq!(
+            state.objects[&job_path]["spec"]["activeDeadlineSeconds"],
+            serde_json::json!(launch.deadline_seconds),
+            "resume retains the original deadline for Kubernetes to restart"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2070,6 +2695,259 @@ mod launch_shape_tests {
                 .keys()
                 .any(|path| path.contains("/networkpolicies/") || path.contains("/configmaps/")),
             "cancel deletes policy and maps"
+        );
+    }
+
+    /// The finished first run whose claim holds node-local state on pc, and its continuation.
+    async fn finished_run_with_state_on_pc(fixture: &PlacementFixture) -> (JobLaunch, JobLaunch) {
+        let first = portable_launch();
+        fixture
+            .reconciler
+            .create(first.clone())
+            .await
+            .expect("first run");
+        let claim_path = format!(
+            "/api/v1/namespaces/default/persistentvolumeclaims/{}",
+            crate::workload::state_claim_name(&first.labels.run_id)
+        );
+        {
+            let mut state = fixture.api.state.lock().expect("API state");
+            state.objects.get_mut(&claim_path).expect("first claim")["spec"]["volumeName"] =
+                serde_json::json!("counter-volume");
+            state.objects.insert(
+                "/api/v1/persistentvolumes/counter-volume".to_owned(),
+                serde_json::json!({
+                    "apiVersion":"v1", "kind":"PersistentVolume",
+                    "metadata":{"name":"counter-volume", "uid":"counter-volume-uid"},
+                    "spec":{"capacity":{"storage":"2Gi"}, "accessModes":["ReadWriteOnce"],
+                        "storageClassName":"local-path",
+                        "persistentVolumeReclaimPolicy":"Delete",
+                        "claimRef":{"namespace":"default", "name":
+                            crate::workload::state_claim_name(&first.labels.run_id),
+                            "uid":"first-claim-uid"},
+                        "nodeAffinity":{"required":{"nodeSelectorTerms":[{"matchFields":[
+                            {"key":"metadata.name", "operator":"In", "values":["pc"]}]}]}}}
+                }),
+            );
+        }
+        let mut next = first.clone();
+        next.labels.run_id = RunId::new("run-launch-shape-next").expect("run id");
+        next.worker_id = WorkerId::new("worker-launch-shape-next").expect("worker id");
+        next.operation_id = OperationId::new("op-launch-shape-next").expect("operation id");
+        next.idempotency_digest = Digest::hash(b"launch-shape-next");
+        next.initial_target_node = None;
+        next.continue_from = Some(first.labels.run_id.clone());
+        (first, next)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn continuation_recovers_after_old_claim_was_released() {
+        let fixture = PlacementFixture::new(&["mini", "pc"]);
+        let (first, next) = finished_run_with_state_on_pc(&fixture).await;
+        {
+            let mut state = fixture.api.state.lock().expect("API state");
+            let job = format!(
+                "/apis/batch/v1/namespaces/default/jobs/{}",
+                first.job_name()
+            );
+            mark_job_complete(&mut state, &job);
+            let claim = format!(
+                "/api/v1/namespaces/default/persistentvolumeclaims/{}",
+                crate::workload::state_claim_name(&first.labels.run_id)
+            );
+            state.objects.remove(&claim);
+            let pv = state
+                .objects
+                .get_mut("/api/v1/persistentvolumes/counter-volume")
+                .unwrap();
+            pv["metadata"]["annotations"] = serde_json::json!({
+                crate::workload::CONTINUED_BY: crate::workload::state_claim_name(&next.labels.run_id)
+            });
+            pv["spec"]["persistentVolumeReclaimPolicy"] = serde_json::json!("Retain");
+        }
+        fixture
+            .reconciler
+            .create(next.clone())
+            .await
+            .expect("replayed handover");
+        let state = fixture.api.state.lock().expect("API state");
+        let new_claim = crate::workload::state_claim_name(&next.labels.run_id);
+        let claim = &state.objects
+            [&format!("/api/v1/namespaces/default/persistentvolumeclaims/{new_claim}")];
+        assert_eq!(claim["spec"]["volumeName"], "counter-volume");
+        let pv = &state.objects["/api/v1/persistentvolumes/counter-volume"];
+        assert_eq!(pv["spec"]["claimRef"]["name"], new_claim);
+        assert_eq!(pv["spec"]["persistentVolumeReclaimPolicy"], "Delete");
+        assert!(pv["metadata"]["annotations"][crate::workload::CONTINUED_BY].is_null());
+        assert_placement(&state.created_jobs[1], "pc", &next);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn continue_from_reuses_the_finished_runs_claim_on_its_node() {
+        let fixture = PlacementFixture::new(&["mini", "pc"]);
+        let (first, next) = finished_run_with_state_on_pc(&fixture).await;
+        {
+            let mut state = fixture.api.state.lock().expect("API state");
+            let job = format!(
+                "/apis/batch/v1/namespaces/default/jobs/{}",
+                crate::job::job_name(&first.labels.run_id)
+            );
+            mark_job_complete(&mut state, &job);
+        }
+        fixture
+            .reconciler
+            .create(next.clone())
+            .await
+            .expect("continuation");
+        let state = fixture.api.state.lock().expect("API state");
+        let claims = "/api/v1/namespaces/default/persistentvolumeclaims";
+        let new_claim = crate::workload::state_claim_name(&next.labels.run_id);
+        assert!(
+            !state.objects.contains_key(&format!(
+                "{claims}/{}",
+                crate::workload::state_claim_name(&first.labels.run_id)
+            )),
+            "the finished run's claim is released"
+        );
+        let claim = &state.objects[&format!("{claims}/{new_claim}")];
+        assert_eq!(claim["spec"]["volumeName"], "counter-volume");
+        assert_eq!(
+            claim["metadata"]["labels"][crate::job::JOB_LABEL_RUN_ID],
+            crate::job::bounded_label_value(next.labels.run_id.as_str())
+        );
+        let pv = &state.objects["/api/v1/persistentvolumes/counter-volume"];
+        assert_eq!(pv["spec"]["claimRef"]["name"], new_claim.as_str());
+        assert_eq!(pv["spec"]["persistentVolumeReclaimPolicy"], "Delete");
+        assert!(pv["metadata"]["annotations"][crate::workload::CONTINUED_BY].is_null());
+        // No target was named: the volume's node places the continuation.
+        assert_placement(&state.created_jobs[1], "pc", &next);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn continuation_refuses_a_different_target_before_moving_state() {
+        let fixture = PlacementFixture::new(&["mini", "pc"]);
+        let (first, mut next) = finished_run_with_state_on_pc(&fixture).await;
+        {
+            let mut state = fixture.api.state.lock().expect("API state");
+            let job = format!(
+                "/apis/batch/v1/namespaces/default/jobs/{}",
+                crate::job::job_name(&first.labels.run_id)
+            );
+            mark_job_complete(&mut state, &job);
+        }
+        next.initial_target_node = Some("mini".to_owned());
+        let error = fixture
+            .reconciler
+            .create(next)
+            .await
+            .expect_err("wrong node");
+        assert!(error.to_string().contains("not target node"), "{error}");
+        let state = fixture.api.state.lock().expect("API state");
+        assert!(state.objects.contains_key(&format!(
+            "/api/v1/namespaces/default/persistentvolumeclaims/{}",
+            crate::workload::state_claim_name(&first.labels.run_id)
+        )));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn continue_from_refuses_a_live_unknown_or_foreign_run() {
+        let fixture = PlacementFixture::new(&["mini", "pc"]);
+        let (first, next) = finished_run_with_state_on_pc(&fixture).await;
+        let refusal = |result: Result<Option<String>, crate::KubeError>| match result {
+            Err(crate::KubeError::Rejected { reason }) => reason,
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+        let live = refusal(fixture.reconciler.room_for(&next).await);
+        assert!(live.contains("still live"), "{live}");
+        let mut unknown = next.clone();
+        unknown.continue_from = Some(RunId::new("run-never-launched").expect("run id"));
+        let unknown = refusal(fixture.reconciler.room_for(&unknown).await);
+        assert!(unknown.contains("not a known pod run"), "{unknown}");
+        let mut foreign = next.clone();
+        foreign.workload.as_mut().expect("plan").profile = "other-profile".to_owned();
+        let foreign = refusal(fixture.reconciler.room_for(&foreign).await);
+        assert!(foreign.contains("ran profile state-counter"), "{foreign}");
+        let state = fixture.api.state.lock().expect("API state");
+        assert!(
+            state.objects.contains_key(&format!(
+                "/api/v1/namespaces/default/persistentvolumeclaims/{}",
+                crate::workload::state_claim_name(&first.labels.run_id)
+            )),
+            "a refused continuation leaves the finished run's state alone"
+        );
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn campaign_create_and_resume_release_with_current_wall_deadline() {
+        let fixture = PlacementFixture::new(&["mini", "pc"]);
+        let mut launch = portable_launch();
+        launch.workload.as_mut().unwrap().resources = Some(crate::workload::WorkloadResources {
+            cpu: 2,
+            memory_bytes: 1024,
+            shm_bytes: None,
+        });
+        let expiry = k8s_openapi::jiff::Timestamp::now().as_second() + 120;
+        launch.campaign_reservation = Some(crate::job::CampaignReservation {
+            approved_node: "mini".to_owned(),
+            core_millis_seconds: 600_000,
+            expires_at_unix_seconds: expiry,
+        });
+        let created = fixture
+            .reconciler
+            .create(launch.clone())
+            .await
+            .expect("create campaign");
+        let job_path = format!(
+            "/apis/batch/v1/namespaces/default/jobs/{}",
+            launch.job_name()
+        );
+        {
+            let state = fixture.api.state.lock().unwrap();
+            let spec = &state.objects[&job_path]["spec"];
+            assert_eq!(spec["suspend"], false);
+            assert!(spec["activeDeadlineSeconds"].as_i64().unwrap() <= 120);
+        }
+        let action = |kind, observation: &crate::JobObservation, op: &str| crate::JobAction {
+            run_id: launch.labels.run_id.clone(),
+            kind,
+            expected_resource_version: observation.projection.identity.resource_version.clone(),
+            operation_id: OperationId::new(op).unwrap(),
+            idempotency_digest: Digest::hash(op.as_bytes()),
+            target_node: None,
+        };
+        let paused = fixture
+            .reconciler
+            .operate(action(
+                odin_domain::huginn::KubeOperationKind::Pause,
+                &created,
+                "op-campaign-pause",
+            ))
+            .await
+            .expect("pause");
+        // Simulate a stale deadline left on the suspended Job before release.
+        fixture
+            .api
+            .state
+            .lock()
+            .unwrap()
+            .objects
+            .get_mut(&job_path)
+            .unwrap()["spec"]["activeDeadlineSeconds"] = serde_json::json!(300);
+        fixture
+            .reconciler
+            .operate(action(
+                odin_domain::huginn::KubeOperationKind::Resume,
+                &paused,
+                "op-campaign-resume",
+            ))
+            .await
+            .expect("resume");
+        let state = fixture.api.state.lock().unwrap();
+        let spec = &state.objects[&job_path]["spec"];
+        assert_eq!(spec["suspend"], false);
+        let remaining = spec["activeDeadlineSeconds"].as_i64().unwrap();
+        assert!(
+            remaining > 0
+                && remaining <= expiry - k8s_openapi::jiff::Timestamp::now().as_second() + 1
         );
     }
 }

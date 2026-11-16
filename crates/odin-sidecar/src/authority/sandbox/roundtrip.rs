@@ -22,8 +22,8 @@ use std::time::Duration;
 use super::broker::RoundTripBroker;
 use super::stop::{in_flight_identity, retire_effector, EffectReaders};
 use super::{
-    require_string, strict_field, EffectorExecutor, EFFECTOR_STOP_GRACE, EFFECTOR_TX_ID,
-    EFFECTOR_WP_ID, EFFECT_POLL,
+    require_string, strict_field, EffectorExecutor, EFFECTOR_MEMORY_MAX, EFFECTOR_STOP_GRACE,
+    EFFECTOR_TASKS_MAX, EFFECTOR_TX_ID, EFFECTOR_WP_ID, EFFECT_POLL,
 };
 
 impl EffectorExecutor {
@@ -185,8 +185,8 @@ impl EffectorExecutor {
             lifetime: ScopeLifetime::Bounded(Duration::from_millis(remaining_ms)),
             timeout_stop: EFFECTOR_STOP_GRACE,
             memory_high: None,
-            memory_max: None,
-            tasks_max: None,
+            memory_max: Some(EFFECTOR_MEMORY_MAX),
+            tasks_max: Some(EFFECTOR_TASKS_MAX),
         };
         let launch = stop_auth
             .launch_registered_service(naming, &correlation, &spec, limits, &binding)

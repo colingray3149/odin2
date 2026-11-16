@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use odin_domain::huginn::{self as live, GATEWAY_PROVIDER};
@@ -16,8 +16,7 @@ use serde::Deserialize;
 
 const CACHE_FOR: Duration = Duration::from_secs(10 * 60);
 const RUN_BOUND: Duration = Duration::from_secs(20);
-/// How often the listing child is checked for exit.
-const RUN_POLL: Duration = Duration::from_millis(50);
+const RUN_OUTPUT_LIMIT: usize = 16 << 20;
 
 pub(super) struct ModelCatalog {
     omp: PathBuf,
@@ -86,50 +85,27 @@ impl ModelCatalog {
 }
 
 fn run_omp(omp: &Path) -> Result<Vec<LiveModel>, String> {
-    let mut child = Command::new(omp)
-        .args(["models", "--json"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("could not run {}: {error}", omp.display()))?;
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let out = std::thread::spawn(move || {
-        let mut buf = String::new();
-        if let Some(mut pipe) = stdout {
-            let _ = std::io::Read::read_to_string(&mut pipe, &mut buf);
-        }
-        buf
-    });
-    let err = std::thread::spawn(move || {
-        let mut buf = String::new();
-        if let Some(mut pipe) = stderr {
-            let _ = std::io::Read::read_to_string(&mut pipe, &mut buf);
-        }
-        buf
-    });
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() > RUN_BOUND => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("omp models --json timed out".to_owned());
-            }
-            Ok(None) => std::thread::sleep(RUN_POLL),
-            Err(error) => return Err(format!("omp models --json: {error}")),
-        }
-    };
-    let stdout = out.join().unwrap_or_default();
-    let stderr = err.join().unwrap_or_default();
+    let output = odin_process::run_bounded(
+        Command::new(omp).args(["models", "--json"]),
+        None,
+        odin_process::ChildBounds {
+            timeout: RUN_BOUND,
+            max_stdout_bytes: RUN_OUTPUT_LIMIT,
+            max_stderr_bytes: RUN_OUTPUT_LIMIT,
+        },
+    )
+    .map_err(|error| format!("could not run {}: {error}", omp.display()))?;
+    let status = output.status.ok_or("omp models --json timed out")?;
     if !status.success() {
-        return Err(
-            first_line(&stderr).unwrap_or_else(|| format!("omp models --json exited {status}"))
-        );
+        return Err(first_line(&output.stderr_text())
+            .unwrap_or_else(|| format!("omp models --json exited {status}")));
     }
-    parse_omp(&stdout)
+    if output.stdout.truncated() {
+        return Err(format!(
+            "omp models --json printed more than {RUN_OUTPUT_LIMIT} bytes"
+        ));
+    }
+    parse_omp(&output.stdout_text())
 }
 
 fn first_line(text: &str) -> Option<String> {

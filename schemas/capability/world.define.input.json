@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/world.define.input.json",
+  "title": "world.define input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "word": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "word"
+  ]
+}

@@ -27,8 +27,7 @@ use crate::job::{
 pub use odin_domain::huginn::{ArtifactKind, ArtifactRef};
 
 const MAX_MAP_BYTES: u64 = 512 * 1024;
-const MAX_INPUTS: usize = 64;
-const BINDING_ANNOTATION: &str = "odin.dev/staging-binding";
+pub(crate) const BINDING_ANNOTATION: &str = "odin.dev/staging-binding";
 /// Written on a run's own residue once its Job is Complete or Failed.
 pub(crate) const RUN_FINISHED: &str = "odin.dev/run-finished";
 
@@ -65,6 +64,17 @@ struct PreparedCheckpoint {
     bytes: Vec<u8>,
 }
 
+impl PreparedStaging {
+    /// The verified inputs under the names a Job mounts them by.
+    pub fn into_files(self) -> Vec<(String, Vec<u8>)> {
+        self.inputs
+            .into_iter()
+            .enumerate()
+            .map(|(index, input)| (format!("input-{index}"), input.bytes))
+            .collect()
+    }
+}
+
 impl ArtifactStore {
     pub fn new(ledger: Arc<Mutex<Ledger>>, root: PathBuf) -> Self {
         Self { ledger, root }
@@ -77,9 +87,6 @@ impl ArtifactStore {
         staging: &KubeStagingProjection,
         checkpoint: Option<&KubeCheckpointProjection>,
     ) -> Result<PreparedStaging, KubeError> {
-        if staging.inputs.len() > MAX_INPUTS {
-            return Err(rejected("too many Job staging inputs"));
-        }
         if staging.resumed_from.as_ref() != checkpoint.map(|value| &value.checkpoint_id) {
             return Err(rejected(
                 "resume checkpoint identity does not match staging",
@@ -540,6 +547,7 @@ impl ArtifactStore {
         for name in [
             staging_configmap_name(&job),
             checkpoint_configmap_name(&job),
+            crate::control::control_configmap_name(&job),
         ] {
             let existing = tokio::time::timeout(client.config.request_timeout, api.get_opt(&name))
                 .await
@@ -579,6 +587,7 @@ impl ArtifactStore {
         for name in [
             staging_configmap_name(&job),
             checkpoint_configmap_name(&job),
+            crate::control::control_configmap_name(&job),
         ] {
             let existing = tokio::time::timeout(client.config.request_timeout, api.get_opt(&name))
                 .await
@@ -632,6 +641,7 @@ impl ArtifactStore {
         for name in [
             staging_configmap_name(&job),
             checkpoint_configmap_name(&job),
+            crate::control::control_configmap_name(&job),
         ] {
             let existing = tokio::time::timeout(client.config.request_timeout, api.get_opt(&name))
                 .await
@@ -647,7 +657,7 @@ impl ArtifactStore {
     }
 }
 
-fn binding_is_run(map: &ConfigMap, run_id: &RunId) -> bool {
+pub(crate) fn binding_is_run(map: &ConfigMap, run_id: &RunId) -> bool {
     map.metadata
         .annotations
         .as_ref()

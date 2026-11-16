@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/knowledge.search.input.json",
+  "title": "knowledge.search input",
+  "properties": {
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16
+    },
+    "folder": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Only pages under this brain/ folder, for example people or projects/odin."
+    },
+    "rerank": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "off",
+        "deep"
+      ],
+      "description": "auto reranks 16 candidates; deep reranks 32 (slower, about 0.9 s); off skips it."
+    },
+    "include_reference": {
+      "type": "boolean",
+      "description": "true (default): also return up to 3 `reference` hits from the parsed reference text (papers, manuals, library), each with its local file path."
+    }
+  },
+  "required": [
+    "query"
+  ]
+}

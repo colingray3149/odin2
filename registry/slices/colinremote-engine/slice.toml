@@ -19,7 +19,6 @@ capabilities = [
   "incident.raise",
   "artifact.write",
   "artifact.read",
-  "memory.forget",
   "codemap.get_architecture", "codemap.list_projects", "codemap.search_graph", "codemap.trace_path", "codemap.get_code_snippet", "codemap.query_graph", "codemap.search_code", "codemap.detect_changes", "codemap.index_status", "codemap.check_index_coverage",
 ]
 variables = {}
@@ -69,7 +68,6 @@ allow = [
   "incident_raise",
   "artifact_write",
   "artifact_read",
-  "memory_forget",
 ]
 deny = []
 

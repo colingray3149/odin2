@@ -154,6 +154,79 @@ pub(super) const OFFICE_KINDS: &[&str] = &[
     "docx", "odt", "doc", "rtf", "pptx", "ppt", "xlsx", "xls", "ods", "odp",
 ];
 
+/// Whether `name` is an office document LibreOffice renders to PDF.
+pub fn is_office(name: &str) -> bool {
+    Path::new(name).extension().is_some_and(|extension| {
+        OFFICE_KINDS.contains(&extension.to_string_lossy().to_ascii_lowercase().as_str())
+    })
+}
+
+/// A PDF of an office document, made the way docs.convert makes one, for a send
+/// that carries both (files send, files drop): written into `out`, with its page count.
+pub fn office_pdf(ctx: &Ctx, input: &Path, out: &Path) -> Result<(PathBuf, u32), Failure> {
+    std::fs::create_dir_all(out).map_err(|error| {
+        Failure::unavailable(format!("could not create {}: {error}", out.display()))
+    })?;
+    let pdf = office(ctx, input, "pdf", out)?;
+    let pages = page_count(ctx, &pdf)?;
+    Ok((pdf, pages))
+}
+
+/// Refuses bytes that are not the file `name` says they are, before a send
+/// (files send, files drop): a spilled tool result (a JSON object carrying
+/// `artifact`) under any name, or an office, PDF or image extension whose magic
+/// bytes do not match. `what` names the source in the cause. Unknown extensions pass.
+pub fn check_send(what: &str, name: &str, bytes: &[u8]) -> Result<(), String> {
+    let extension = Path::new(name)
+        .extension()
+        .map(|extension| extension.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if bytes.trim_ascii_start().starts_with(b"{") {
+        let result = serde_json::from_slice::<Value>(bytes).ok();
+        if result.is_some_and(|value| value.get("artifact").is_some()) {
+            let kind = if extension.is_empty() {
+                "file".to_owned()
+            } else {
+                format!(".{extension} file")
+            };
+            return Err(format!(
+                "{what} is a tool result (JSON), not a {kind}; send the result's `artifact` field"
+            ));
+        }
+    }
+    let fits = match extension.as_str() {
+        "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" => bytes.starts_with(b"PK\x03\x04"),
+        "doc" | "xls" | "ppt" => bytes.starts_with(&[0xd0, 0xcf, 0x11, 0xe0]),
+        "pdf" => bytes.starts_with(b"%PDF"),
+        "png" => bytes.starts_with(b"\x89PNG"),
+        "jpg" | "jpeg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+        "gif" => bytes.starts_with(b"GIF8"),
+        "webp" => bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP"),
+        _ => true,
+    };
+    if fits {
+        Ok(())
+    } else {
+        Err(format!(
+            "{what} is not a .{extension} file: its bytes do not start like one"
+        ))
+    }
+}
+
+/// [`check_send`] for a file on disk: reads its head, and all of it only when it
+/// may be a JSON tool result.
+pub fn check_send_file(what: &str, name: &str, path: &Path) -> Result<(), String> {
+    use std::io::Read;
+    let mut head = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(16).read_to_end(&mut head))
+        .map_err(|error| format!("{what} is unreadable: {error}"))?;
+    if head.trim_ascii_start().starts_with(b"{") {
+        head = std::fs::read(path).map_err(|error| format!("{what} is unreadable: {error}"))?;
+    }
+    check_send(what, name, &head)
+}
+
 /// The one document a call names.
 pub(super) enum Doc {
     /// Inline `source` text.

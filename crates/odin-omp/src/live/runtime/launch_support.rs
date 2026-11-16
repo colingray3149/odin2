@@ -153,6 +153,8 @@ pub(super) async fn ensure_bridge_run(
         };
         lane_run::create_run(conn, &new_run)
             .map_err(|error| LiveError::unavailable("bridge_ledger_run_create", error))?;
+        lane_run::start_live_run(conn, &new_run.run_id, OffsetDateTime::now_utc())
+            .map_err(|error| LiveError::unavailable("bridge_ledger_run_start", error))?;
         Ok(())
     })
     .await

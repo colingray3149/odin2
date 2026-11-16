@@ -467,6 +467,21 @@ pub(super) fn compile_registry(
                 deserialize_template::<crate::schema::FeatureToml>(document, contract, kind)?,
             ))
         }
+        RegistryKind::BrainRole => {
+            ObjectConfig::BrainRole(Box::new(deserialize_template::<
+                crate::schema::BrainRoleToml,
+            >(document, contract, kind)?))
+        }
+        RegistryKind::ComputeTarget => {
+            ObjectConfig::ComputeTarget(Box::new(deserialize_template::<
+                crate::schema::ComputeTargetToml,
+            >(document, contract, kind)?))
+        }
+        RegistryKind::ComputeProvider => {
+            ObjectConfig::ComputeProvider(Box::new(deserialize_template::<
+                crate::schema::ComputeProviderToml,
+            >(document, contract, kind)?))
+        }
     };
     let relative_config = canonical_relative_config(kind, &destination_id);
     let canonical_toml = canonical_config_toml(&config).map_err(|message| {
@@ -611,6 +626,9 @@ pub(super) fn canonical_config_toml(config: &ObjectConfig) -> Result<Vec<u8>, St
         ObjectConfig::ContextProfile(value) => canonical_toml_bytes(value.as_ref()),
         ObjectConfig::Toolset(value) => canonical_toml_bytes(value.as_ref()),
         ObjectConfig::Feature(value) => canonical_toml_bytes(value.as_ref()),
+        ObjectConfig::BrainRole(value) => canonical_toml_bytes(value.as_ref()),
+        ObjectConfig::ComputeTarget(value) => canonical_toml_bytes(value.as_ref()),
+        ObjectConfig::ComputeProvider(value) => canonical_toml_bytes(value.as_ref()),
     }
 }
 
@@ -706,6 +724,7 @@ fn compile_patch_document(
                     )?,
                     slice,
                     action: Default::default(),
+                    patch: None,
                 }),
             ))
         }

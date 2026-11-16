@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, jest, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { PNG } from "pngjs";
+import { ImageProtocol, TERMINAL } from "../omp/terminal-capabilities";
 import { initThemeSync, theme } from "../omp/theme/theme";
 import { App } from "../src/app";
 import type { BridgeMessage, SeatInfo, ViewCommand } from "../src/protocol";
@@ -332,7 +334,9 @@ test("returning to a Claude tab replays it and ignores responses from the previo
 	if (first?.t !== "claude") throw new Error("no transcript request");
 	key("\t"); // Models
 	key("\t"); // Overview
-	key("\t"); // Capabilities, the last tab
+	key("\t"); // Missions
+	key("\t"); // Capabilities
+	key("\t"); // Brain, the last tab
 	key("\t"); // Claude, rebuilt from its first page
 	const current = sent.at(-1);
 	if (current?.t !== "claude") throw new Error("no new transcript request");
@@ -685,6 +689,19 @@ test("a model book error settles the tab with its cause and F5 retries", () => {
 	expect(sent.at(-1)).toEqual({ t: "models" });
 });
 
+test("the overview shows lane compute usage and effective caps", () => {
+	const { app, key, plain } = view();
+	app.onMessage(seats(null, "s1"));
+	key("\t");
+	key("\t");
+	app.onMessage({ t: "budgets", lanes: [{ lane: "sweep", windowDays: 7,
+		coreHours: { used: 12.5, cap: 100 }, gpuHours: { used: 2, cap: null },
+		computeUsd: { used: 3.5, cap: 20 } }] });
+	expect(plain()).toContain("sweep (7d): 12.5/100 core-h");
+	expect(plain()).toContain("2.0/unlimited GPU-h");
+	expect(plain()).toContain("$3.5/20");
+});
+
 test("a failed compute snapshot says why instead of a dim none, and a later snapshot replaces it", () => {
 	const { app, key, plain } = view();
 	app.onMessage(seats(null, "s1"));
@@ -724,16 +741,17 @@ test("a failed compute snapshot says why instead of a dim none, and a later snap
 	expect(recovered).not.toContain("computeUnavailable");
 });
 
-test("the Capabilities tab is last, renders red/gray/green rows with their detail, F5 sends one refresh and keeps the draft", () => {
+test("the Capabilities tab is second to last, renders red/gray/green rows with their detail, F5 sends one refresh and keeps the draft", () => {
 	const { app, sent, plain, key } = view();
 	app.onMessage(seats("a", "a"));
 	app.editor.setText("unsent draft");
 	key("\t"); // → Models
 	key("\t"); // → Overview
-	key("\t"); // → Capabilities, the last tab
+	key("\t"); // → Missions
+	key("\t"); // → Capabilities
 	const bar = plain().split("\n")[0] ?? "";
 	expect(bar.indexOf("Overview")).toBeLessThan(bar.indexOf("Capabilities"));
-	expect(bar.trimEnd().endsWith("Capabilities")).toBe(true);
+	expect(bar.trimEnd().endsWith("Brain")).toBe(true);
 	expect(plain()).toContain("reading the capabilities…");
 	const at = new Date().toISOString();
 	const minutes = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
@@ -775,6 +793,30 @@ test("the Capabilities tab is last, renders red/gray/green rows with their detai
 	expect(plain()).toContain("not tested");
 	expect(plain()).toContain("no capabilities declared");
 	expect(app.editor.getText()).toBe("unsent draft");
+});
+
+test("the Brain tab shows parts by area and F5 sends the features request", () => {
+	const { app, sent, plain, key } = view();
+	app.onMessage(seats("a", "a"));
+	for (let n = 0; n < 5; n++) key("\t"); // Models, Overview, Missions, Capabilities, Brain
+	expect(plain()).toContain("reading the brain…");
+	const at = new Date().toISOString();
+	const part = (id: string, area: string, state: "green" | "paused" | "red", text: string) => ({ id, title: id, area, kind: "", state, text });
+	app.onMessage({ t: "knowledge", value: { evaluated_at: at, error: null, counts: { parts: 3, green: 1, paused: 1, behind: 0, red: 1, grey: 0 },
+		parts: [part("postgres", "services", "green", "running"), part("embedder", "services", "paused", "paused by sinmara 2m ago: test"), part("drive", "pullers", "red", "kb-pull-drive.service failed (exit-code)")],
+		recent: [{ ts: at, actor: "colin", op: "edit", path: "brain/me/profile.md" }] } });
+	const screen = plain();
+	expect(screen).toContain("Brain · 3 parts · 1 green · 1 paused · 0 behind · 1 red · 0 grey");
+	expect(screen).toContain("✕ drive kb-pull-drive.service failed (exit-code)");
+	expect(screen).toContain("◐ embedder paused by sinmara 2m ago: test");
+	expect(screen).toContain("brain/me/profile.md");
+	const asked = sent.length;
+	key("\x1b[15~");
+	expect(sent.length).toBe(asked + 1);
+	expect(sent.at(-1)).toEqual({ t: "features" });
+	expect(plain()).toContain("refreshing…");
+	app.onMessage({ t: "features", note: "answered" });
+	expect(plain()).not.toContain("refreshing…");
 });
 
 test("F2 shows the latest injected context for the seat tab, and a message may start with the letter i", () => {
@@ -899,4 +941,87 @@ test("the models page keeps missing usage unknown and says an estimated limit is
 	expect(screen).not.toContain("$0.00");
 	expect(screen).toContain("per month 40 requests; estimated throughput 205000 (not a cap)");
 	expect(screen).toContain("per week 7 of 100 requests");
+});
+
+test("the overview shows each seat's own plan with its to-dos, a blocked one marked", () => {
+	const { app, plain, key } = view();
+	app.onMessage(seats("a", "a"));
+	app.onMessage({
+		t: "plans",
+		rows: [
+			{
+				seat: "gungnir",
+				session: "s1",
+				objective: "ship the listing change",
+				todos: [
+					{ id: "t1", title: "measure the bytes", status: "completed" },
+					{ id: "t2", title: "wait for the gate", status: "blocked" },
+				],
+			},
+		],
+	});
+	key("\t"); // → Models
+	key("\t"); // → the overview
+	expect(plain()).toContain("Plans");
+	expect(plain()).toContain("ship the listing change");
+	expect(plain()).toContain("1/2 done");
+	expect(plain()).toContain("blocked");
+	expect(plain()).toContain("wait for the gate");
+	app.onMessage({ t: "plans", rows: [] });
+	expect(plain()).not.toContain("Plans");
+});
+
+test("the Missions tab lists the board, opens a mission and asks the bridge for its frame", () => {
+	const { app, sent, plain, key } = view();
+	app.onMessage(seats("a", "a"));
+	for (let n = 0; n < 3; n++) key("\t"); // Models, Overview, Missions
+	expect(sent.at(-1)).toEqual({ t: "missions", open: true, run: undefined });
+	expect(plain()).toContain("reading the board…");
+	const at = new Date().toISOString();
+	app.onMessage({ t: "missions", value: { rows: [
+		{ run: "run-1", label: "shock-tube", stage: "running", node: "mini", updatedAt: at, sampleAt: at,
+			lastSample: { residual: 0.25 }, series: { residual: [1, 0.5, 0.25] }, checkpoints: 2, renderers: ["field"], openRenders: 0,
+			frame: { artifact: "artifact:huginn:ab", mediaType: "image/svg+xml", renderer: "field", seq: 17, at } },
+	] } });
+	expect(plain()).toContain("shock-tube running mini");
+	key("\r");
+	expect(sent.at(-1)).toEqual({ t: "missions", open: true, run: "run-1" });
+	expect(plain()).toContain("residual");
+	expect(plain()).toContain("frame field #17");
+	expect(plain()).toContain("fetching the frame…");
+	key("r");
+	expect(sent.at(-1)).toMatchObject({ t: "render", run: "run-1" });
+	app.onMessage({ t: "frame", run: "run-1", artifact: "artifact:huginn:ab", error: "gone" });
+	expect(plain()).toContain("frame unreadable: gone");
+	app.onMessage({ t: "frame", run: "run-1", artifact: "artifact:huginn:ab", mediaType: "image/svg+xml", data: "PHN2Zy8+" });
+	expect(plain()).toContain("frame available as image/svg+xml (inline display unsupported)");
+	app.onMessage({ t: "frame", run: "run-1", artifact: "artifact:huginn:ab", data: "PHN2Zy8+" });
+	expect(plain()).toContain("frame available as unknown format");
+	app.onMessage({ t: "frame", run: "run-1", artifact: "artifact:huginn:ab", mediaType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=" });
+	expect(plain()).toContain("[image/png]");
+	app.onMessage({ t: "frame", run: "run-1", artifact: "artifact:huginn:ab", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=" });
+	expect(plain()).toContain("[image/png]");
+});
+
+test("an opened mission frame fits the initial SIXEL viewport", async () => {
+	const previous = TERMINAL.imageProtocol;
+	TERMINAL.imageProtocol = ImageProtocol.Sixel;
+	try {
+		const { app, key } = view();
+		app.onMessage(seats("a", "a"));
+		for (let n = 0; n < 3; n++) key("\t");
+		const at = new Date().toISOString();
+		app.onMessage({ t: "missions", value: { rows: [{ run: "run", label: "frame smoke", stage: "running", updatedAt: at, checkpoints: 1, renderers: ["field"], openRenders: 0, series: { tick: [1, 2, 3] }, frame: { artifact: "frame", mediaType: "image/png", renderer: "field", seq: 1, at } }] } });
+		key("\r");
+		const png = new PNG({ width: 128, height: 64 });
+		png.data.fill(255);
+		app.onMessage({ t: "frame", run: "run", artifact: "frame", mediaType: "image/png", data: PNG.sync.write(png).toString("base64") });
+		app.render(100); // starts asynchronous encoding
+		await Promise.resolve();
+		const screen = app.render(100).join("\n");
+		expect(screen).toContain("\x1bPq");
+		expect(screen).not.toContain("lines below");
+	} finally {
+		TERMINAL.imageProtocol = previous;
+	}
 });

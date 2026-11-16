@@ -10,6 +10,8 @@ use std::time::{Duration, SystemTime};
 use evdev::raw_stream::RawDevice;
 use rustix::event::{poll, PollFd, PollFlags, Timespec};
 
+use crate::Step;
+
 const TICK: Duration = Duration::from_millis(100);
 
 #[derive(Default)]
@@ -131,6 +133,22 @@ impl Watch {
             }
             self.poll_stop_file(&mut seen_stop, stop_file);
         }
+    }
+}
+
+/// Whether a step types, clicks or acts inside an app, which the owner's
+/// mouse or the stop keys must be able to stop.
+pub(crate) fn drives_input(step: &Step) -> bool {
+    match step {
+        Step::Click { .. }
+        | Step::Point { .. }
+        | Step::Drag { .. }
+        | Step::Scroll { .. }
+        | Step::Type { .. }
+        | Step::Key { .. }
+        | Step::Structure { .. } => true,
+        Step::Scene { steps, .. } => steps.iter().any(drives_input),
+        _ => false,
     }
 }
 

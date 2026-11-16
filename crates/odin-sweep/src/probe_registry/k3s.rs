@@ -115,7 +115,7 @@ pub(super) fn k3s_verdict(probe: &BoundedOutput) -> Result<String, (CheckStatus,
             "command-timeout: kubectl did not answer within the bounded window".to_owned(),
         ));
     }
-    if probe.stdout_truncated != 0 || probe.stderr_truncated != 0 {
+    if probe.stdout_truncated || probe.stderr_truncated {
         return Err((
             CheckStatus::Blocked,
             "command-output-truncated: kubectl output exceeded the bounded \

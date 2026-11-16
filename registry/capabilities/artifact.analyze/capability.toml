@@ -10,7 +10,7 @@ handler = { id = "artifact_analyze" }
 input_schema = "schemas/capability/artifact.analyze.input.json"
 output_schema = "schemas/capability/artifact.analyze.output.json"
 effect_class = "R1"
-seat_tags = ["builder"]
+seat_tags = ["builder", "operator"]
 timeout_seconds = 1260
 idempotency = "required"
 retry = { max_attempts = 0 }

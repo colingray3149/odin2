@@ -1,0 +1,12 @@
+schema = "odin.registry.v1"
+kind = "brain-role"
+enabled = true
+description = "Scanned pages, photos of text and handwriting to text: local qwen3-vl-8b first, luna when it fails."
+role = "ocr"
+engine = "lane"
+lanes = ["local/qwen3-vl-8b", "luna"]
+[params]
+max_output = 4096
+effort = "low"
+temperature = 0
+max_parallel = 2

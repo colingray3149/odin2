@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/world.time.input.json",
+  "title": "world.time input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "place": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A city or place name; omitted is home."
+    }
+  }
+}

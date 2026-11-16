@@ -63,7 +63,7 @@ use crate::capability::{
 };
 use crate::config::{ConfigError, FrameLimits};
 use crate::download::{DownloadError, DownloadManager, QuarantineRecord};
-use crate::policy::{ActionRule, BrowserPolicySnapshot, PolicyInvalidation, StructuralAction};
+use crate::policy::{ActionRule, BrowserPolicySnapshot, StructuralAction};
 use crate::profile::ProfileError;
 use crate::safety::BrowserSafetyGate;
 use crate::stream::{FrameRecord, FrameStream, FrameStreamError};
@@ -397,35 +397,6 @@ pub struct TakeoverLeaseExpiry {
     pub outstanding_after_expiry: u64,
     /// Control revision after the expiry bump. Every action or frame token
     /// bound to a lower value is stale and is rejected at execute time.
-    pub control_revision: u64,
-}
-
-/// One atomic snapshot of serialized browser control truth for exact
-/// expiry/restart holder, token, revision, and pending-action observation.
-/// Reading it never substitutes for the internal durable CAS owner.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BrowserControlSnapshot {
-    /// Session control generation stamped onto frames and prepared actions.
-    pub control_revision: u64,
-    /// Per-session takeover status and its independent coordinator revision.
-    pub takeover: BrowserTakeoverView,
-    /// Current remote device holder; `None` when available or locally reclaimed.
-    pub remote_holder: Option<DeviceId>,
-    /// Durable token of the held lease; `None` when no remote holder survives.
-    pub lease_token: Option<u64>,
-    /// Current held lease deadline; `None` when no remote holder survives.
-    pub lease_deadline: Option<OffsetDateTime>,
-    /// Sole in-flight prepared action, if any.
-    pub pending_action: Option<ActionId>,
-}
-
-/// Outcome of a compare-and-swap policy update.
-#[derive(Clone, Debug)]
-pub struct PolicyUpdateReport {
-    pub snapshot: BrowserPolicySnapshot,
-    pub invalidation: PolicyInvalidation,
-    /// Pending action abandoned because the update superseded its binding.
-    pub abandoned: Option<ActionId>,
     pub control_revision: u64,
 }
 

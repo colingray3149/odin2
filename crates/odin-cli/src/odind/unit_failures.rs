@@ -37,6 +37,10 @@ pub(super) fn arm_unit_failure_pump(
                             desk.restate(incident(&unit, failure.detail));
                             open.insert(unit, failure.invocation);
                         }
+                        // A transient scope or a removed unit cannot run again.
+                        Ok(state) if !state.loaded => {
+                            desk.clear(&signature(&unit), GONE);
+                        }
                         Ok(_) => {}
                         Err(error) => tracing::warn!("failed-unit recall: {error}"),
                     }
@@ -76,6 +80,10 @@ pub(super) fn arm_unit_failure_pump(
                         desk.clear(&signature(unit), "a later invocation ran clean");
                         cleared.push(unit.clone());
                     }
+                    Ok(state) if !state.loaded => {
+                        desk.clear(&signature(unit), GONE);
+                        cleared.push(unit.clone());
+                    }
                     Ok(state) if running_again(&state, invocation) => {
                         let reason = format!("running again since {}", when(&state.active_entered));
                         desk.clear(&signature(unit), &reason);
@@ -91,6 +99,8 @@ pub(super) fn arm_unit_failure_pump(
         }
     });
 }
+
+const GONE: &str = "the unit no longer exists";
 
 fn incident(unit: &str, detail: String) -> RaisedIncident {
     RaisedIncident {
@@ -315,5 +325,12 @@ mod tests {
         queued.queued = true;
         assert!(!queued.ran_clean_since("a1"));
         assert!(!state("b2", "inactive", "1").ran_clean_since("a1"));
+    }
+
+    /// A transient scope that is gone reads as not loaded, which clears its card.
+    #[test]
+    fn a_vanished_unit_reads_as_not_loaded() {
+        assert!(!state_of("LoadState=not-found\nInvocationID=\n".to_owned()).loaded);
+        assert!(state_of("LoadState=loaded\n".to_owned()).loaded);
     }
 }

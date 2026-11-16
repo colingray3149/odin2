@@ -40,7 +40,18 @@ pub(crate) fn context(arguments: ContextArgs, output: &mut impl Write) -> Result
             .map_err(|error| error.to_string())?;
         return Ok(());
     }
-    for record in records {
+    let mut lanes = std::collections::BTreeMap::<&str, (u64, u64)>::new();
+    for record in &records {
+        let Some(measured) = record.prefix.as_ref().map(|prefix| &prefix.measured) else {
+            continue;
+        };
+        if let (Some(lane), Some(prompt)) = (&measured.lane, measured.prompt_tokens) {
+            let entry = lanes.entry(lane.as_str()).or_default();
+            entry.0 += prompt;
+            entry.1 += measured.cached_tokens.unwrap_or(0);
+        }
+    }
+    for record in &records {
         let turn = record
             .turn
             .map_or_else(String::new, |turn| format!(" turn={turn}"));
@@ -56,6 +67,21 @@ pub(crate) fn context(arguments: ContextArgs, output: &mut impl Write) -> Result
                 &prefix.hash.hex()[..12]
             )
             .map_err(|error| error.to_string())?;
+            let measured = &prefix.measured;
+            let count =
+                |value: Option<u64>| value.map_or_else(|| "?".to_owned(), |n| n.to_string());
+            if measured.prompt_tokens.is_some() || measured.history_bytes.is_some() {
+                writeln!(
+                    output,
+                    "  lane {}, history {} B, tool results {} B, prompt {} tokens, cached {}",
+                    measured.lane.as_deref().unwrap_or("?"),
+                    count(measured.history_bytes),
+                    count(measured.tool_result_bytes),
+                    count(measured.prompt_tokens),
+                    count(measured.cached_tokens),
+                )
+                .map_err(|error| error.to_string())?;
+            }
         }
         for block in &record.blocks {
             let sources = if block.sources.is_empty() {
@@ -73,6 +99,14 @@ pub(crate) fn context(arguments: ContextArgs, output: &mut impl Write) -> Result
                 writeln!(output, "    {line}").map_err(|error| error.to_string())?;
             }
         }
+    }
+    for (lane, (prompt, cached)) in lanes {
+        let share = (cached * 100).checked_div(prompt).unwrap_or(0);
+        writeln!(
+            output,
+            "lane {lane}: {cached} of {prompt} prompt tokens cached ({share}%)"
+        )
+        .map_err(|error| error.to_string())?;
     }
     Ok(())
 }

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/knowledge.pause.input.json",
+  "title": "knowledge.pause input",
+  "properties": {
+    "part": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "until": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "why": {
+      "type": "string",
+      "maxLength": 300
+    }
+  },
+  "required": [
+    "part"
+  ]
+}

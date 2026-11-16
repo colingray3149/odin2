@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+seat_ops = { sinmara = { toolset = "odin", op = "edit", expose = "on_demand" } }
+toolset = "odin"
+op = "edit"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Change a tunable of an existing declaration. Set tunable keys or use unset, a list of dotted key names, to remove whole tunable keys; remove instead removes items from a list. Applies to an existing pod profile, lane, seat, project, node or context profile — pod resources, limits, lifetimes, monitoring cadence, lane budgets, context sizes, rollover — keeping the file's comments and markers, validates the whole registry, commits to odin main and publishes. Pods pick it up at their next launch; seats and lanes after odind's next idle reload. Done on the owner's request in the thread; permission keys use registry.edit.grant."
+handler = { id = "registry_edit" }
+input_schema = "schemas/capability/registry.edit.input.json"
+output_schema = "schemas/capability/registry.edit.output.json"
+effect_class = "R2"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_registry_edit_evidence" }
+tests = [
+  "odin-cli::bin/odind registry_edit::tests::a_tunable_is_set_in_place",
+]

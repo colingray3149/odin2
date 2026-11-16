@@ -80,6 +80,8 @@ pub fn parse_owner_answer(content: &str) -> Option<OwnerAnswer> {
         word if YES.contains(&word) => (YES_TAIL_WORDS, rest),
         "go" if rest.first() == Some(&"ahead") => (YES_TAIL_WORDS, &rest[1..]),
         "do" if rest.first() == Some(&"it") => (YES_TAIL_WORDS, &rest[1..]),
+        // "go" opens requests too ("go check the pod"), so only alone is it a yes.
+        "go" if rest.is_empty() => (YES_TAIL_WORDS, rest),
         word if MILD_YES.contains(&word) => (MILD_YES_TAIL_WORDS, rest),
         _ => {
             return if NO.contains(first)
@@ -153,7 +155,7 @@ pub fn approval_question(declared_description: &str, detail: Option<&str>) -> St
         Some(first) => format!("{}{}", first.to_lowercase(), chars.as_str()),
         None => String::new(),
     };
-    match detail.map(str::trim).filter(|text| !text.is_empty()) {
+    match detail.filter(|text| !text.trim().is_empty()) {
         Some(detail) => format!("May I {action}: {detail}?"),
         None => format!("May I {action}?"),
     }
@@ -342,6 +344,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn approval_detail_preserves_bound_whitespace() {
+        assert_eq!(
+            approval_question("Change it.", Some("value  ")),
+            "May I change it: value  ?"
+        );
+    }
+
+    #[test]
     fn a_leading_yes_or_no_answers_and_a_conditional_yes_approves_nothing() {
         for text in [
             "yes",
@@ -351,6 +361,10 @@ mod tests {
             "ok do it",
             "yes, please",
             "yes, go ahead",
+            "go",
+            "yes go",
+            "okay go",
+            "do it",
         ] {
             assert!(
                 matches!(parse_owner_answer(text), Some(OwnerAnswer::Yes(_))),
@@ -391,6 +405,7 @@ mod tests {
             "stop the deploy",
             "cancel my dinner booking",
             "ok so check my calendar for tomorrow",
+            "go check the pod",
             "yes and while you are at it please look at my calendar for next week too",
         ] {
             assert_eq!(parse_owner_answer(text), None, "{text}");

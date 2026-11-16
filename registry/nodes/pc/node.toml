@@ -7,8 +7,24 @@ role = "worker"
 capabilities = ["cuda", "gpu", "cfd", "render", "k3s-agent", "desktop"]
 allow_workloads = true
 authoritative_state = false
+# Host folders workload [[data]] mounts may read (dotfiles odin.node.dataRoots creates them).
+data_roots = ["/srv/project/stage", "/srv/project/data"]
 
 # The node-local gateway the pods placed on this node reach: host authority
 # is the declared reachable (tailnet) address of this node, the port is the
 # declared node-facing LiteLLM service port, and the path is the API base.
 gateway_endpoint = "http://100.64.0.10:14000/v1"
+
+# the owner's games come first: in these modes (gamemode and Sunshine report them) pc is
+# cordoned and each pod pauses, moves or stays per its profile's on_yield.
+[yield]
+modes = ["gaming"]
+stale_hours = 24
+stale_check_seconds = 900
+# The one card in pc. Labelled odin.gpu/vram-gib and odin.gpu/model for placement;
+# desktop_reserve_mib is the memory the desktop keeps beside a run's declared need.
+[gpu]
+model = "rtx-3070"
+vram_gib = 8
+count = 1
+desktop_reserve_mib = 512

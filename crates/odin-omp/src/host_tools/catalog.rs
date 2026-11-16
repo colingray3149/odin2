@@ -1,10 +1,5 @@
-use std::collections::BTreeSet;
-use std::sync::Arc;
-
 use super::context_read::{CONTEXT_READ_EVIDENCE_ID, CONTEXT_READ_HANDLER_ID};
 use super::delegation;
-use super::dispatch::{HostToolRegistry, InternalBindingKey};
-use super::{HostTool, HostToolError};
 
 mod capsule;
 use capsule::{
@@ -15,6 +10,10 @@ mod desktop;
 
 mod deploy;
 use deploy::{ODIN_DEPLOY_BINDING, ODIN_DEPLOY_STATUS_BINDING};
+
+mod inventory;
+pub(super) use inventory::is_store_executable_form;
+pub use inventory::CompiledHostToolCatalog;
 
 /// One compiled binding of an enabled registry capability to the production
 /// handlers that serve it.
@@ -80,228 +79,6 @@ impl CompiledHandlerBinding {
     }
 }
 
-/// The compiled pre-admitted catalog: the sole authority that binds
-/// capability handlers to production host tools.
-///
-/// A host tool being registered in a [`HostToolRegistry`] is never
-/// sufficient: only a cataloged builtin handler id resolves, and only to the
-/// tool registered under that exact id. No HostTool binding may live outside
-/// this catalog.
-#[derive(Clone, Debug, Default)]
-pub struct CompiledHostToolCatalog {
-    bindings: Vec<&'static CompiledCapabilityBinding>,
-    builtin_handlers: BTreeSet<&'static str>,
-}
-
-impl CompiledHostToolCatalog {
-    /// Compiles pre-admitted tuples, rejecting duplicate handlers and incompatible
-    /// extractor reuse. Extractors may serve distinct handlers with the same
-    /// version and output schema; exec bindings remain fully static store references.
-    pub fn compile(
-        bindings: &'static [&'static CompiledCapabilityBinding],
-    ) -> Result<Self, HostToolError> {
-        let mut catalog = Self::default();
-        for &binding in bindings {
-            let rejected = |detail: String| HostToolError::Catalog {
-                detail: format!("binding for {}: {detail}", binding.input_schema),
-            };
-            if binding.version == 0 {
-                return Err(rejected("version must be positive".to_owned()));
-            }
-            if binding.input_schema.is_empty() || binding.output_schema.is_empty() {
-                return Err(rejected(
-                    "dedicated input and output schemas must be declared".to_owned(),
-                ));
-            }
-            if binding.input_schema == binding.output_schema {
-                return Err(rejected(
-                    "input and output schemas must be distinct".to_owned(),
-                ));
-            }
-            validate_compiled_handler("handler", &binding.handler)?;
-            validate_compiled_handler("evidence_extractor", &binding.evidence_extractor)?;
-            if catalog.bindings.contains(&binding) {
-                return Err(HostToolError::Catalog {
-                    detail: "duplicate admitted binding tuple".to_owned(),
-                });
-            }
-            for (is_extractor, builtin) in
-                [(false, binding.handler), (true, binding.evidence_extractor)]
-            {
-                if let CompiledHandlerBinding::Builtin { id } = builtin {
-                    if catalog.builtin_handlers.insert(id) {
-                        continue;
-                    }
-                    // A reused builtin can only be an extractor for an identical
-                    // output contract, never a handler or a handler/extractor alias.
-                    let shared_extractor = is_extractor
-                        && binding.handler != builtin
-                        && catalog.bindings.iter().all(|previous| {
-                            previous.handler != builtin
-                                && (previous.evidence_extractor != builtin
-                                    || (previous.version == binding.version
-                                        && previous.output_schema == binding.output_schema))
-                        });
-                    if !shared_extractor {
-                        return Err(HostToolError::Catalog {
-                            detail: format!(
-                                "builtin binding {id:?} is bound by more than one capability field"
-                            ),
-                        });
-                    }
-                }
-            }
-            catalog.bindings.push(binding);
-        }
-        Ok(catalog)
-    }
-
-    /// Every compiled admitted tuple.
-    pub fn bindings(&self) -> impl Iterator<Item = &CompiledCapabilityBinding> {
-        self.bindings.iter().copied()
-    }
-
-    /// Resolves one builtin capability handler or evidence extractor to the
-    /// registered production host tool serving it.
-    ///
-    /// Denied unless the exact builtin id is cataloged — a registered tool is
-    /// never sufficient on its own — and a host tool is registered under it.
-    pub fn resolve(
-        &self,
-        builtin_id: &str,
-        registry: &HostToolRegistry,
-    ) -> Result<Arc<dyn HostTool>, HostToolError> {
-        if !self.builtin_handlers.contains(builtin_id) {
-            return Err(HostToolError::Catalog {
-                detail: format!(
-                    "builtin binding {builtin_id:?} is not bound in the compiled catalog"
-                ),
-            });
-        }
-        registry.binding(&InternalBindingKey::Builtin(builtin_id.to_owned()))
-    }
-
-    /// Validates every cataloged handler/extractor has a concrete HostTool.
-    ///
-    /// Builtin ids resolve through internal bindings or listed tools. Exec
-    /// identities resolve only through an internal HostTool registered under
-    /// the exact executable+argv; compile does not admit Exec without that.
-    pub fn validate_production_composition(
-        &self,
-        registry: &HostToolRegistry,
-    ) -> Result<(), HostToolError> {
-        for &admitted in &self.bindings {
-            for compiled in [admitted.handler, admitted.evidence_extractor] {
-                let key = InternalBindingKey::from_compiled(compiled)?;
-                if !registry.resolves_key(&key) {
-                    return Err(HostToolError::Catalog {
-                        detail: match &key {
-                            InternalBindingKey::Builtin(id) => format!(
-                                "pre-admitted builtin {id:?} has no concrete production HostTool owner"
-                            ),
-                            InternalBindingKey::Exec { executable, argv } => format!(
-                                "pre-admitted exec {executable:?} {argv:?} has no concrete production HostTool owner"
-                            ),
-                        },
-                    });
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-fn validate_compiled_handler(
-    field: &'static str,
-    binding: &CompiledHandlerBinding,
-) -> Result<(), HostToolError> {
-    let detail = match binding {
-        CompiledHandlerBinding::Builtin { id: "" } => {
-            Some(format!("{field} builtin id must not be empty"))
-        }
-        CompiledHandlerBinding::Builtin { id } if !is_compiled_builtin_id(id) => Some(format!(
-            "{field} builtin id {id:?} must match the registry id grammar"
-        )),
-        CompiledHandlerBinding::Exec { executable, .. }
-            if !is_store_executable_form(executable) =>
-        {
-            Some(format!(
-                "{field} executable {executable:?} must be one normalized /nix/store path"
-            ))
-        }
-        CompiledHandlerBinding::Exec { argv, .. }
-            if argv.iter().any(|element| {
-                element.is_empty()
-                    || element.chars().any(char::is_whitespace)
-                    || element.chars().any(is_compiled_shell_syntax)
-            }) =>
-        {
-            Some(format!(
-                "{field} argv must be fully static tokens without whitespace or shell syntax"
-            ))
-        }
-        _ => None,
-    };
-    match detail {
-        Some(detail) => Err(HostToolError::Catalog { detail }),
-        None => Ok(()),
-    }
-}
-
-fn is_compiled_builtin_id(value: &str) -> bool {
-    let mut chars = value.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    first.is_ascii_alphanumeric()
-        && chars.all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
-        })
-}
-
-/// The 32-character Nix base32 alphabet; `e`, `o`, `u`, and `t` are absent.
-const NIX_STORE_HASH_ALPHABET: &str = "0123456789abcdfghijklmnpqrsvwxyz";
-
-/// Whether the path is the exact lexical `/nix/store/<hash>-<name>/...` form.
-/// Purely lexical: no filesystem reachability, `PATH`, or caller environment
-/// is ever consulted.
-pub(super) fn is_store_executable_form(executable: &str) -> bool {
-    if executable.is_empty()
-        || executable.chars().any(char::is_whitespace)
-        || executable.chars().any(is_compiled_shell_syntax)
-    {
-        return false;
-    }
-    let Some(rest) = executable.strip_prefix("/nix/store/") else {
-        return false;
-    };
-    let Some((store_component, tail)) = rest.split_once('/') else {
-        return false;
-    };
-    if tail.is_empty()
-        || tail
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
-    {
-        return false;
-    }
-    let Some((hash, name)) = store_component.split_once('-') else {
-        return false;
-    };
-    hash.len() == 32
-        && hash
-            .bytes()
-            .all(|byte| NIX_STORE_HASH_ALPHABET.as_bytes().contains(&byte))
-        && !name.is_empty()
-}
-
-fn is_compiled_shell_syntax(character: char) -> bool {
-    matches!(
-        character,
-        '$' | '`' | ';' | '&' | '|' | '\n' | '\r' | '>' | '<'
-    )
-}
-
 pub static PRE_ADMITTED_BINDINGS: &[&CompiledCapabilityBinding] = &[
     &BROWSER_CONSEQUENTIAL_BINDING,
     &BROWSER_INTERACT_BINDING,
@@ -311,17 +88,19 @@ pub static PRE_ADMITTED_BINDINGS: &[&CompiledCapabilityBinding] = &[
     &CODE_REWRITE_BINDING,
     &CODE_LOOK_BINDING,
     &CONTEXT_READ_BINDING,
-    &BRAIN_SEARCH_BINDING,
-    &BRAIN_READ_BINDING,
     &TASK_NOTE_BINDING,
     &KUBE_HEALTH_READ_BINDING,
     &KUBE_SNAPSHOT_READ_BINDING,
     &KUBE_WORKLOAD_CANCEL_BINDING,
     &KUBE_WORKLOAD_CREATE_BINDING,
+    &KUBE_WORKLOAD_CREATE_MANY_BINDING,
     &KUBE_WORKLOAD_PAUSE_BINDING,
     &KUBE_WORKLOAD_RESTART_BINDING,
     &KUBE_WORKLOAD_RESUME_BINDING,
+    &KUBE_WORKLOAD_STEER_BINDING,
     &KUBE_WORKLOAD_SUMMARIZE_BINDING,
+    &KUBE_WORKLOAD_QUEUE_BINDING,
+    &KUBE_WORKLOAD_QUEUE_DROP_BINDING,
     &TASK_CREATE_BINDING,
     &TASK_READ_BINDING,
     &TASK_PAUSE_BINDING,
@@ -375,31 +154,6 @@ static CONTEXT_READ_BINDING: CompiledCapabilityBinding = CompiledCapabilityBindi
         id: CONTEXT_READ_EVIDENCE_ID,
     },
 };
-
-static BRAIN_SEARCH_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
-    version: 1,
-    input_schema: "schemas/capability/brain.search.input.json",
-    output_schema: "schemas/capability/brain.search.output.json",
-    handler: CompiledHandlerBinding::Builtin {
-        id: super::brain::SEARCH_HANDLER,
-    },
-    evidence_extractor: CompiledHandlerBinding::Builtin {
-        id: super::brain::SEARCH_EVIDENCE,
-    },
-};
-
-static BRAIN_READ_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
-    version: 1,
-    input_schema: "schemas/capability/brain.read.input.json",
-    output_schema: "schemas/capability/brain.read.output.json",
-    handler: CompiledHandlerBinding::Builtin {
-        id: super::brain::READ_HANDLER,
-    },
-    evidence_extractor: CompiledHandlerBinding::Builtin {
-        id: super::brain::READ_EVIDENCE,
-    },
-};
-
 
 static TASK_NOTE_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
     version: 1,
@@ -461,6 +215,18 @@ static KUBE_WORKLOAD_CREATE_BINDING: CompiledCapabilityBinding = CompiledCapabil
     },
 };
 
+static KUBE_WORKLOAD_CREATE_MANY_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
+    version: 1,
+    input_schema: "schemas/capability/kube.workload.create_many.input.json",
+    output_schema: "schemas/capability/kube.workload.create_many.output.json",
+    handler: CompiledHandlerBinding::Builtin {
+        id: "odin_kube.workload.create_many",
+    },
+    evidence_extractor: CompiledHandlerBinding::Builtin {
+        id: "odin_kube.workload.create_many_evidence",
+    },
+};
+
 static KUBE_WORKLOAD_PAUSE_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
     version: 1,
     input_schema: "schemas/capability/kube.workload.pause.input.json",
@@ -497,6 +263,18 @@ static KUBE_WORKLOAD_RESUME_BINDING: CompiledCapabilityBinding = CompiledCapabil
     },
 };
 
+static KUBE_WORKLOAD_STEER_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
+    version: 1,
+    input_schema: "schemas/capability/kube.workload.steer.input.json",
+    output_schema: "schemas/capability/kube.workload.steer.output.json",
+    handler: CompiledHandlerBinding::Builtin {
+        id: "odin_kube.workload.steer",
+    },
+    evidence_extractor: CompiledHandlerBinding::Builtin {
+        id: "odin_kube.workload.steer_evidence",
+    },
+};
+
 static KUBE_WORKLOAD_SUMMARIZE_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
     version: 1,
     input_schema: "schemas/capability/kube.workload.summarize.input.json",
@@ -506,6 +284,30 @@ static KUBE_WORKLOAD_SUMMARIZE_BINDING: CompiledCapabilityBinding = CompiledCapa
     },
     evidence_extractor: CompiledHandlerBinding::Builtin {
         id: "odin_kube.workload.summarize_evidence",
+    },
+};
+
+static KUBE_WORKLOAD_QUEUE_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
+    version: 1,
+    input_schema: "schemas/capability/kube.workload.queue.input.json",
+    output_schema: "schemas/capability/kube.workload.queue.output.json",
+    handler: CompiledHandlerBinding::Builtin {
+        id: "odin_kube.workload.queue",
+    },
+    evidence_extractor: CompiledHandlerBinding::Builtin {
+        id: "odin_kube.workload.queue_evidence",
+    },
+};
+
+static KUBE_WORKLOAD_QUEUE_DROP_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
+    version: 1,
+    input_schema: "schemas/capability/kube.workload.queue_drop.input.json",
+    output_schema: "schemas/capability/kube.workload.queue_drop.output.json",
+    handler: CompiledHandlerBinding::Builtin {
+        id: "odin_kube.workload.queue_drop",
+    },
+    evidence_extractor: CompiledHandlerBinding::Builtin {
+        id: "odin_kube.workload.queue_drop_evidence",
     },
 };
 
@@ -759,18 +561,6 @@ static VAULT_WRITE_GENERATED_BINDING: CompiledCapabilityBinding = CompiledCapabi
     },
 };
 
-static MEMORY_REMEMBER_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
-    version: 1,
-    input_schema: "schemas/capability/memory.remember.input.json",
-    output_schema: "schemas/capability/memory.remember.output.json",
-    handler: CompiledHandlerBinding::Builtin {
-        id: "memory_remember",
-    },
-    evidence_extractor: CompiledHandlerBinding::Builtin {
-        id: "odin_hermes_memory_remember_evidence",
-    },
-};
-
 
 static INCIDENT_RAISE_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
     version: 1,
@@ -781,18 +571,6 @@ static INCIDENT_RAISE_BINDING: CompiledCapabilityBinding = CompiledCapabilityBin
     },
     evidence_extractor: CompiledHandlerBinding::Builtin {
         id: "odin_hermes_incident_raise_evidence",
-    },
-};
-
-static MEMORY_FORGET_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
-    version: 1,
-    input_schema: "schemas/capability/memory.forget.input.json",
-    output_schema: "schemas/capability/memory.forget.output.json",
-    handler: CompiledHandlerBinding::Builtin {
-        id: "memory_forget",
-    },
-    evidence_extractor: CompiledHandlerBinding::Builtin {
-        id: "odin_hermes_memory_forget_evidence",
     },
 };
 
@@ -873,6 +651,30 @@ static REGISTRY_AUTHOR_GRANT_BINDING: CompiledCapabilityBinding = CompiledCapabi
     },
     evidence_extractor: CompiledHandlerBinding::Builtin {
         id: "odin_hermes_registry_author_grant_evidence",
+    },
+};
+
+static REGISTRY_EDIT_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
+    version: 1,
+    input_schema: "schemas/capability/registry.edit.input.json",
+    output_schema: "schemas/capability/registry.edit.output.json",
+    handler: CompiledHandlerBinding::Builtin {
+        id: "registry_edit",
+    },
+    evidence_extractor: CompiledHandlerBinding::Builtin {
+        id: "odin_hermes_registry_edit_evidence",
+    },
+};
+
+static REGISTRY_EDIT_GRANT_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
+    version: 1,
+    input_schema: "schemas/capability/registry.edit.grant.input.json",
+    output_schema: "schemas/capability/registry.edit.grant.output.json",
+    handler: CompiledHandlerBinding::Builtin {
+        id: "registry_edit_grant",
+    },
+    evidence_extractor: CompiledHandlerBinding::Builtin {
+        id: "odin_hermes_registry_edit_grant_evidence",
     },
 };
 
@@ -1086,6 +888,28 @@ static ODIN_PLAN_SET_BINDING: CompiledCapabilityBinding = CompiledCapabilityBind
         id: "odin_plan_set_evidence",
     },
 };
+static ODIN_PLAN_ACCEPT_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
+    version: 1,
+    input_schema: "schemas/capability/odin.plan_accept.input.json",
+    output_schema: "schemas/capability/odin.plan_accept.output.json",
+    handler: CompiledHandlerBinding::Builtin {
+        id: "odin_plan_accept",
+    },
+    evidence_extractor: CompiledHandlerBinding::Builtin {
+        id: "odin_plan_accept_evidence",
+    },
+};
+static ODIN_PLAN_GET_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
+    version: 1,
+    input_schema: "schemas/capability/odin.plan_get.input.json",
+    output_schema: "schemas/capability/odin.plan_get.output.json",
+    handler: CompiledHandlerBinding::Builtin {
+        id: "odin_plan_get",
+    },
+    evidence_extractor: CompiledHandlerBinding::Builtin {
+        id: "odin_plan_get_evidence",
+    },
+};
 static ODIN_TODO_UPDATE_BINDING: CompiledCapabilityBinding = CompiledCapabilityBinding {
     version: 1,
     input_schema: "schemas/capability/odin.todo_update.input.json",
@@ -1160,8 +984,6 @@ pub(crate) static STATIC_BINDING_SLICE: &[&CompiledCapabilityBinding] = &[
     &CODE_REWRITE_BINDING,
     &CODE_LOOK_BINDING,
     &CONTEXT_READ_BINDING,
-    &BRAIN_SEARCH_BINDING,
-    &BRAIN_READ_BINDING,
     &TASK_NOTE_BINDING,
     &DISCORD_INTAKE_BINDING,
     &FLEET_DRAIN_BINDING,
@@ -1171,10 +993,14 @@ pub(crate) static STATIC_BINDING_SLICE: &[&CompiledCapabilityBinding] = &[
     &KUBE_SNAPSHOT_READ_BINDING,
     &KUBE_WORKLOAD_CANCEL_BINDING,
     &KUBE_WORKLOAD_CREATE_BINDING,
+    &KUBE_WORKLOAD_CREATE_MANY_BINDING,
     &KUBE_WORKLOAD_PAUSE_BINDING,
     &KUBE_WORKLOAD_RESTART_BINDING,
     &KUBE_WORKLOAD_RESUME_BINDING,
+    &KUBE_WORKLOAD_STEER_BINDING,
     &KUBE_WORKLOAD_SUMMARIZE_BINDING,
+    &KUBE_WORKLOAD_QUEUE_BINDING,
+    &KUBE_WORKLOAD_QUEUE_DROP_BINDING,
     &SEAT_ASK_BINDING,
     &SEAT_MODEL_SET_BINDING,
     &TASK_CREATE_BINDING,
@@ -1190,18 +1016,25 @@ pub(crate) static STATIC_BINDING_SLICE: &[&CompiledCapabilityBinding] = &[
     &desktop::DESKTOP_DISPLAY_BINDING,
     &VAULT_SEARCH_BINDING,
     &VAULT_WRITE_GENERATED_BINDING,
-    &MEMORY_REMEMBER_BINDING,
     &PROJECT_CREATE_BINDING,
     &SEAT_CREATE_BINDING,
     &SEAT_PROPOSE_BINDING,
+    &ODIN_PLAN_GET_BINDING,
     &ODIN_PLAN_SET_BINDING,
+    &ODIN_PLAN_ACCEPT_BINDING,
     &ODIN_TODO_UPDATE_BINDING,
     &ODIN_LANE_STATUS_BINDING,
     &ODIN_ATLAS_QUERY_BINDING,
     &ODIN_APPROVAL_REQUEST_BINDING,
     &REGISTRY_READ_BINDING,
     &SPEND_READ_BINDING,
+    &hermes_binding!("compute.lease.create", "compute_lease_create"),
+    &hermes_binding!("compute.lease.destroy", "compute_lease_destroy"),
+    &hermes_binding!("compute.lease.enroll", "compute_lease_enroll"),
+    &hermes_binding!("compute.lease.list", "compute_lease_list"),
     &hermes_binding!("run.stats", "run_stats"),
+    &hermes_binding!("simulation.read", "simulation_read"),
+    &hermes_binding!("simulation.frame", "simulation_frame"),
     &hermes_binding!("models.read", "models_read"),
     &hermes_binding!("local.models", "local_models"),
     &hermes_binding!("time.get_current_time", "time_get_current_time"),
@@ -1209,16 +1042,18 @@ pub(crate) static STATIC_BINDING_SLICE: &[&CompiledCapabilityBinding] = &[
     &hermes_binding!("files.list", "files_list"),
     &hermes_binding!("files.share", "files_share"),
     &hermes_binding!("files.save", "files_save"),
+    &hermes_binding!("intake.copy", "intake_copy"),
     &REGISTRY_SKELETON_READ_BINDING,
     &REGISTRY_AUTHOR_BINDING,
     &REGISTRY_AUTHOR_GRANT_BINDING,
+    &REGISTRY_EDIT_BINDING,
+    &REGISTRY_EDIT_GRANT_BINDING,
     &INCIDENT_RAISE_BINDING,
     &ROUTINE_SET_BINDING,
     &ROUTINE_REMOVE_BINDING,
     &hermes_binding!("artifact.write", "artifact_write"),
     &hermes_binding!("artifact.read", "artifact_read"),
     &hermes_binding!("artifact.analyze", "artifact_analyze"),
-    &MEMORY_FORGET_BINDING,
     &BUILD_RUN_BINDING,
     &CHECK_RUN_BINDING,
     &CODE_NAVIGATE_BINDING,
@@ -1226,6 +1061,7 @@ pub(crate) static STATIC_BINDING_SLICE: &[&CompiledCapabilityBinding] = &[
     &TEST_RUN_BINDING,
     &CODE_REVIEW_REQUEST_BINDING,
     &CODE_REVIEW_VERDICT_BINDING,
+    &hermes_binding!("science.review.verdict", "science_review_verdict"),
     &GIT_PATCH_PROPOSE_BINDING,
     &GIT_BRANCH_MERGE_BINDING,
     &INTAKE_READ_BINDING,
@@ -1244,6 +1080,22 @@ pub(crate) static STATIC_BINDING_SLICE: &[&CompiledCapabilityBinding] = &[
     &MODEL_CONSULT_BINDING,
     &MODEL_COMPLETE_BINDING,
     &hermes_binding!("device.run", "device_run"),
+    &hermes_binding!("knowledge.search", "knowledge_search"),
+    &hermes_binding!("knowledge.read", "knowledge_read"),
+    &hermes_binding!("knowledge.dig", "knowledge_dig"),
+    &hermes_binding!("knowledge.add", "knowledge_add"),
+    &hermes_binding!("knowledge.pull", "knowledge_pull"),
+    &hermes_binding!("knowledge.edit", "knowledge_edit"),
+    &hermes_binding!("knowledge.remember", "knowledge_remember"),
+    &hermes_binding!("knowledge.forget", "knowledge_forget"),
+    &hermes_binding!("knowledge.promote", "knowledge_promote"),
+    &hermes_binding!("knowledge.exile", "knowledge_exile"),
+    &hermes_binding!("knowledge.delete", "knowledge_delete"),
+    &hermes_binding!("knowledge.new", "knowledge_new"),
+    &hermes_binding!("knowledge.status", "knowledge_status"),
+    &hermes_binding!("knowledge.pause", "knowledge_pause"),
+    &hermes_binding!("knowledge.resume", "knowledge_resume"),
+    &hermes_binding!("knowledge.where", "knowledge_where"),
     &ODIN_DEPLOY_BINDING,
     &ODIN_DEPLOY_STATUS_BINDING,
 ];

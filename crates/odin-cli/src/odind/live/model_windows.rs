@@ -39,6 +39,23 @@ pub(super) fn selectable_card_windows(
     Ok(windows)
 }
 
+/// The declared context counter of every selectable card, by card id: the
+/// same cards `selectable_card_windows` names, so a lane's counter is read
+/// from the card its window came from.
+pub(super) fn selectable_card_tokenizers(
+    registry: &[odin_registry::RegistryObject],
+) -> std::collections::BTreeMap<String, odin_registry::ModelTokenizer> {
+    registry
+        .iter()
+        .filter_map(|object| match &object.config {
+            odin_registry::ObjectConfig::Model(card) if card.enabled && card.seats => {
+                card.tokenizer.map(|tokenizer| (card.id.clone(), tokenizer))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// `contextWindow` of every AVAILABLE entry by `selector`. An entry the
 /// provider leaves null maps to `None`; an unreadable catalog refuses the
 /// composition by name instead of degrading to card-only facts.

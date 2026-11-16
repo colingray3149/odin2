@@ -10,7 +10,7 @@ use super::{inputs, Doc, PANDOC_CODES, PANDOC_LIMIT};
 use crate::sandbox::{Net, Sandbox};
 use crate::{args, cause, Call, Ctx, Failure};
 
-const RENDER_LIMIT: Duration = Duration::from_secs(60);
+pub(super) const RENDER_LIMIT: Duration = Duration::from_secs(60);
 /// Inline or staged source text above this is refused.
 const MAX_SOURCE_BYTES: u64 = 400 * 1024;
 /// Compile errors quoted in a failure, and warnings kept in a result.
@@ -260,6 +260,7 @@ pub(super) fn compile(
             ))
         })?;
     }
+    let text = &named_by_content(job, text);
     if typst {
         write(job, "main.typ", &research_body(text, look))?;
     } else {
@@ -311,6 +312,64 @@ pub(super) fn compile(
         page_count: pages,
         warnings,
     })
+}
+
+/// Typst reads a picture by its extension, and a saved page often names a WebP or PNG `.jpg`:
+/// each image in `job` whose bytes say otherwise gets a copy named for what it is, and `text`
+/// points at that copy.
+pub(super) fn named_by_content(job: &Path, text: &str) -> String {
+    let mut text = text.to_owned();
+    let mut folders = vec![job.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for path in entries.flatten().map(|entry| entry.path()) {
+            if path.is_dir() {
+                folders.push(path);
+                continue;
+            }
+            let Some(named) = path.extension().and_then(|ext| ext.to_str()) else {
+                continue;
+            };
+            let named = named.to_ascii_lowercase();
+            if !matches!(named.as_str(), "jpg" | "jpeg" | "png" | "gif" | "webp") {
+                continue;
+            }
+            let Some(real) = image_kind(&path) else {
+                continue;
+            };
+            if real == named || (real == "jpg" && named == "jpeg") {
+                continue;
+            }
+            let renamed = path.with_extension(real);
+            let (Ok(from), Ok(to)) = (path.strip_prefix(job), renamed.strip_prefix(job)) else {
+                continue;
+            };
+            if copy_into(&path, &renamed).is_ok() {
+                text = text.replace(&*from.to_string_lossy(), &to.to_string_lossy());
+            }
+        }
+    }
+    text
+}
+
+/// What an image file is, by its first bytes.
+fn image_kind(path: &Path) -> Option<&'static str> {
+    let mut head = [0u8; 12];
+    let read = std::io::Read::read(&mut std::fs::File::open(path).ok()?, &mut head).ok()?;
+    let head = &head[..read];
+    if head.starts_with(b"\x89PNG") {
+        Some("png")
+    } else if head.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("jpg")
+    } else if head.starts_with(b"GIF8") {
+        Some("gif")
+    } else if head.len() == 12 && head.starts_with(b"RIFF") && &head[8..] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
 }
 
 /// `job/in.md` to `job/main.typ` through the template library.

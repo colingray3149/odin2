@@ -375,6 +375,64 @@ pub fn transition_run(
         matches!(to, RunStatus::Running),
     )
 }
+/// Marks a live session's new run running: the session is starting.
+pub fn start_live_run(c: &Connection, id: &RunId, now: OffsetDateTime) -> LedgerResult<()> {
+    let revision = transition_run(c, id, RunStatus::Planning, 1, now)?;
+    transition_run(c, id, RunStatus::Running, revision, now).map(drop)
+}
+
+/// Closes the run of a live session that has ended: a running run
+/// succeeded, one that never reached running is cancelled. A closed or
+/// missing run is left as it is.
+pub fn close_live_run(c: &Connection, session: &str, now: OffsetDateTime) -> LedgerResult<()> {
+    let run = RunId::new(format!("run:live:{session}"))
+        .map_err(|error| LedgerError::invalid_data(error.to_string()))?;
+    let Some((status, revision)) = c
+        .query_row(
+            "SELECT status,revision FROM runs WHERE run_id=?1",
+            [run.to_string()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?
+    else {
+        return Ok(());
+    };
+    let status = decode_run_status(&status)?;
+    if status.is_terminal() {
+        return Ok(());
+    }
+    let to = if status.can_transition_to(RunStatus::Succeeded) {
+        RunStatus::Succeeded
+    } else {
+        RunStatus::Cancelled
+    };
+    transition_run(c, &run, to, revision, now).map(drop)
+}
+
+/// Closes every open live-session run whose session has ended, or whose
+/// session row is gone and that was created before `orphaned_before`.
+/// A failed session can still be resumed, so its run stays open.
+pub fn close_ended_live_runs(
+    c: &Connection,
+    orphaned_before: OffsetDateTime,
+    now: OffsetDateTime,
+) -> LedgerResult<usize> {
+    let sessions = c
+        .prepare(
+            "SELECT substr(r.run_id, 10) FROM runs r \
+             LEFT JOIN live_sessions s ON s.session_id = substr(r.run_id, 10) \
+             WHERE r.run_id LIKE 'run:live:%' AND r.ended_at IS NULL \
+               AND (s.state = 'ended' OR (s.session_id IS NULL AND r.created_at < ?1))",
+        )?
+        .query_map([encode_utc(orphaned_before)?], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for session in &sessions {
+        close_live_run(c, session, now)?;
+    }
+    Ok(sessions.len())
+}
 pub fn transition_attempt(
     c: &Connection,
     id: &AttemptId,

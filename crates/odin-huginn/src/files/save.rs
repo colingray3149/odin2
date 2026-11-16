@@ -53,13 +53,17 @@ pub fn validate_save(
     }
     if name.is_empty()
         || name.len() > 200
-        || name.starts_with('.')
+        || name == "."
+        || name == ".."
         || name.contains(['/', '\0'])
         || name.chars().any(char::is_control)
     {
         return Err(invalid_file(format!("{name:?} is not a plain file name")));
     }
-    if !media_type_for_name(name).is_some_and(|media| root.media_policy.allows(media)) {
+    // A type no extension names is `application/octet-stream`: only a root
+    // that declares it (raw data such as TDMS or HDF5) takes such a file.
+    let media = media_type_for_name(name).unwrap_or("application/octet-stream");
+    if !root.media_policy.allows(media) {
         return Err(invalid_file(format!(
             "{name}: its type is not one {} accepts",
             root.root_id
@@ -81,7 +85,41 @@ pub fn save_stream_into_root(
     byte_len: u64,
     digest: odin_domain::Digest,
 ) -> Result<RelativePath, HuginnProtocolError> {
-    save_stream(root, folder, name, reader, byte_len, digest, None)
+    save_stream(
+        root,
+        folder,
+        name,
+        VerifiedStream {
+            reader,
+            byte_len,
+            digest,
+        },
+        None,
+        true,
+    )
+}
+
+/// Like [`save_stream_into_root`] at the root's top, but a taken name is
+/// refused instead of numbered: the file is created as `name` or not at all.
+pub fn save_new_into_root(
+    root: &FileRoot,
+    name: &str,
+    reader: &mut dyn std::io::Read,
+    byte_len: u64,
+    digest: odin_domain::Digest,
+) -> Result<RelativePath, HuginnProtocolError> {
+    save_stream(
+        root,
+        None,
+        name,
+        VerifiedStream {
+            reader,
+            byte_len,
+            digest,
+        },
+        None,
+        false,
+    )
 }
 
 /// A durable transfer id makes a retry after lost acknowledgement reuse its
@@ -106,10 +144,13 @@ pub fn save_stream_into_root_with_id(
         root,
         folder,
         name,
-        reader,
-        byte_len,
-        digest,
+        VerifiedStream {
+            reader,
+            byte_len,
+            digest,
+        },
         Some(&mut receipt),
+        true,
     )
 }
 
@@ -144,15 +185,25 @@ fn copy_verified(
     Ok(())
 }
 
+struct VerifiedStream<'a> {
+    reader: &'a mut dyn std::io::Read,
+    byte_len: u64,
+    digest: odin_domain::Digest,
+}
+
 fn save_stream(
     root: &FileRoot,
     folder: Option<&RelativePath>,
     name: &str,
-    reader: &mut dyn std::io::Read,
-    byte_len: u64,
-    digest: odin_domain::Digest,
+    stream: VerifiedStream<'_>,
     mut receipt: Option<&mut receipt::Receipt>,
+    numbered: bool,
 ) -> Result<RelativePath, HuginnProtocolError> {
+    let VerifiedStream {
+        reader,
+        byte_len,
+        digest,
+    } = stream;
     validate_save(root, name, byte_len)?;
     let mut dir = open_root(root)?;
     if let Some(folder) = folder {
@@ -165,6 +216,12 @@ fn save_stream(
     for candidate in candidates(name) {
         let mut file = match create_beneath(&dir, &candidate) {
             Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && !numbered => {
+                return Err(invalid_file(format!(
+                    "{candidate} already exists in {} and is never overwritten",
+                    root.root_id
+                )))
+            }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
                 return Err(invalid_file(format!(
@@ -232,6 +289,24 @@ mod tests {
             "application/pdf",
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn jsonl_evidence_saves_as_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let writable = FileRoot::new(test_root_init(
+            "pc-downloads",
+            dir.path(),
+            FileRootAccess::ReadWrite,
+            "application/json",
+        ))
+        .unwrap();
+        // The OSINT tools retain their evidence as line-delimited JSON; it
+        // classifies as JSON, so a downloads folder that takes JSON takes it.
+        let first = save_into_root(&writable, None, "graph.jsonl", b"{}\n").unwrap();
+        assert_eq!(first.as_str(), "graph.jsonl");
+        let second = save_into_root(&writable, None, "graph.jsonl", b"{}\n").unwrap();
+        assert_eq!(second.as_str(), "graph (2).jsonl");
     }
 
     #[test]
@@ -395,12 +470,16 @@ mod tests {
         );
         assert!(std::fs::read_dir(outside.path()).unwrap().next().is_none());
 
-        for name in ["../x.pdf", ".hidden.pdf", "a/b.pdf", "notes.exe"] {
+        for name in ["../x.pdf", "a/b.pdf", "notes.exe", ".", ".."] {
             assert!(
                 save_into_root(&writable, None, name, b"x").is_err(),
                 "{name}"
             );
         }
+        // A leading dot is a naming convention, not traversal: an exported
+        // evidence file like `.seeds` saves like any other name, still confined.
+        let dotted = save_into_root(&writable, None, ".hidden.pdf", b"x").unwrap();
+        assert_eq!(dotted.as_str(), ".hidden.pdf");
         assert!(save_into_root(&writable, None, "big.pdf", &[0; 2048]).is_err());
         let read_only = root(dir.path(), FileRootAccess::ReadOnly);
         assert!(save_into_root(&read_only, None, "r.pdf", b"x").is_err());

@@ -72,6 +72,7 @@ options = { limit = "-l" }
         exec,
         web_save: None,
         research: None,
+        host_recon: None,
     })
 }
 
@@ -80,6 +81,7 @@ fn direct_target() -> PodTarget {
         run: run_id(),
         export_dir: "/export".to_owned(),
         network_transport: odin_registry::WorkloadTransport::Direct,
+        recon: None,
     }
 }
 
@@ -204,6 +206,7 @@ fn a_failed_fetch_never_writes_to_the_pod() {
         exec: Arc::clone(&exec) as Arc<dyn PodWorkerExec>,
         web_save: Some(fetcher),
         research: None,
+        host_recon: None,
     });
     let refused = tool
         .run(
@@ -321,6 +324,7 @@ fn every_shipped_pod_exec_capability_runs_its_declared_argv_and_fails_typed() {
             exec: Arc::clone(&exec) as Arc<dyn PodWorkerExec>,
             web_save: None,
             research: None,
+            host_recon: None,
         });
         let run = |outputs: Vec<WorkerOutput>| {
             *exec.outputs.lock() = outputs;
@@ -418,6 +422,7 @@ view = "path"
         exec: Arc::clone(&exec) as Arc<dyn PodWorkerExec>,
         web_save: None,
         research: None,
+        host_recon: None,
     });
     let result = tool
         .run(
@@ -477,6 +482,7 @@ fn a_hung_fetch_is_killed_at_the_contract_timeout() {
         exec: Arc::clone(&exec) as Arc<dyn PodWorkerExec>,
         web_save: Some(fetcher),
         research: None,
+        host_recon: None,
     });
     let refused = tool
         .run(
@@ -517,6 +523,7 @@ fn saved_through(
         exec: Arc::clone(&exec) as Arc<dyn PodWorkerExec>,
         web_save: Some(fetcher),
         research: Some(Arc::new(research)),
+        host_recon: None,
     });
     let result = tool.run(
         &contract,
@@ -556,3 +563,6 @@ fn an_allowed_site_is_fetched_directly() {
     assert_eq!(exec.stdins.lock()[0].as_deref(), Some(b"1".as_slice()));
     assert!(asked.lock().unwrap().is_empty());
 }
+
+
+

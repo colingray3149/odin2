@@ -14,13 +14,13 @@ use std::{
     path::{Component, Path, PathBuf},
     process::Command,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 type ReviewError = Box<dyn std::error::Error>;
 
-/// How often the review child is checked for exit while it runs.
-const REVIEW_POLL: Duration = Duration::from_millis(100);
+/// The reviewer's answer and diagnostics are each read up to this many bytes.
+const REVIEW_OUTPUT_LIMIT: usize = 4 << 20;
 const MISSING_WORKLOAD: &str = "claude-review workload is disabled or missing";
 const MISSING_CAPABILITY: &str = "claude.review capability is disabled or missing";
 const OPAQUE: &str = "cannot verify artifact source; use a non-sensitive brain-relative path";
@@ -264,7 +264,6 @@ fn invoke(
     let prompt = format!(
         "Review the read-only files in the current directory. Report material findings briefly.\nQuestion: {question}"
     );
-    private_file(&launch.join("prompt"), prompt.as_bytes())?;
     let settings = json!({
         "permissions": {"deny": [format!("Read({HOME}/**)")]},
         "env": {
@@ -334,30 +333,24 @@ fn invoke(
     command.args(["--mcp-config", &mcp_path, "--settings", &settings_path]);
     command.args(["--no-session-persistence", "--output-format", "json"]);
     command.env_clear();
-    command.stdin(fs::File::open(launch.join("prompt"))?);
-    command.stdout(fs::File::create(launch.join("stdout"))?);
-    command.stderr(fs::File::create(launch.join("stderr"))?);
-    let mut child = command.spawn()?;
-    let started = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(std::io::Error::other("review exceeded declared timeout"));
-        }
-        std::thread::sleep(REVIEW_POLL);
-    };
+    let output = odin_process::run_bounded(
+        &mut command,
+        Some(prompt.into_bytes()),
+        odin_process::ChildBounds {
+            timeout,
+            max_stdout_bytes: REVIEW_OUTPUT_LIMIT,
+            max_stderr_bytes: REVIEW_OUTPUT_LIMIT,
+        },
+    )?;
+    // The reviewer's diagnostics stay beside the launch files.
+    private_file(&launch.join("stderr"), output.stderr.as_bytes())?;
+    let status = output
+        .status
+        .ok_or_else(|| std::io::Error::other("review exceeded declared timeout"))?;
     if !status.success() {
         return Err(std::io::Error::other(format!("claude exited {status}")));
     }
-    let mut bytes = Vec::new();
-    fs::File::open(launch.join("stdout"))?
-        .take(4 << 20)
-        .read_to_end(&mut bytes)?;
-    serde_json::from_slice(&bytes).map_err(std::io::Error::other)
+    serde_json::from_slice(output.stdout.as_bytes()).map_err(std::io::Error::other)
 }
 
 #[cfg(test)]

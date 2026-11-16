@@ -1,8 +1,8 @@
 // The overview page: approvals waiting on the owner first, open incidents, then every seat working or quiet with its spend today, Odin's
-// pods, Claude sessions with their branch and compaction, and one CI line per declared repo. One plain line per item,
+// own plans, pods, Claude sessions with their branch and compaction, and one CI line per declared repo. One plain line per item,
 // columns aligned, in the Cyber Blossom palette.
 import { theme } from "../omp/theme/theme";
-import type { ApprovalRow, CiRow, IncidentRow, LocalClaude, PodRow, SeatInfo, SessionInfo, Spent } from "./protocol";
+import type { ApprovalRow, CiRow, IncidentRow, LocalClaude, PlanRow, PodRow, SeatInfo, SessionInfo, Spent } from "./protocol";
 import { quietBadge, shortModel, spentLabel } from "./protocol";
 import { formatDuration, stateStyle } from "./render";
 import { wrapCells } from "./compute";
@@ -36,6 +36,8 @@ export function overviewRows(
 		pods: readonly PodRow[];
 		local: LocalClaude | undefined;
 		ci: { rows: readonly CiRow[]; note?: string } | undefined;
+		/** The open seat sessions' own plans. */
+		plans?: readonly PlanRow[];
 		/** Today's gateway spend per seat id. */
 		spend?: Record<string, Spent>;
 		/** The authority's model book, rendered by the same reader as `odin models`. */
@@ -96,6 +98,17 @@ export function overviewRows(
 		rows.push(
 			row(width, theme.fg("muted", theme.status.disabled), theme.fg("dim", `${offline.map(seat => seat.name).join(" · ")} offline`)),
 		);
+	}
+
+	// Shown only while a seat keeps a to-do list: each seat's objective, then its to-dos.
+	if ((input.plans?.length ?? 0) > 0) section("Plans");
+	for (const plan of input.plans ?? []) {
+		const done = plan.todos.filter(todo => todo.status === "completed").length;
+		rows.push(row(width, theme.fg("accent", theme.status.pending), theme.bold(plan.seat), plan.objective, theme.fg("dim", `${done}/${plan.todos.length} done`)));
+		for (const todo of plan.todos) {
+			const color = todo.status === "blocked" ? "error" : todo.status === "active" ? "warning" : "dim";
+			rows.push(row(width, "  ", theme.fg(color, todo.status), todo.status === "completed" || todo.status === "cancelled" ? theme.fg("dim", todo.title) : todo.title));
+		}
 	}
 
 	section("Pods");

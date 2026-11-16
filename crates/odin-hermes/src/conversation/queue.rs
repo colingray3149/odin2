@@ -757,7 +757,6 @@ impl ConversationRoot {
                     .deliver_wake_reply(&mut record, &mut wake, None)
                     .map(Answered::Settled);
             }
-            let mut refused = false;
             let mut terminal_outcome = None;
             let answer = if lost {
                 terminal_outcome = Some(format!("{:?}", IntentFailure::VehicleLost));
@@ -846,7 +845,6 @@ impl ConversationRoot {
                             prompt.asks.len(),
                             self.conversation_id
                         );
-                        refused = true;
                         terminal_outcome = Some(format!("{failure:?}"));
                         crate::natural::natural_intent_failure(&failure)
                     }
@@ -859,19 +857,6 @@ impl ConversationRoot {
                 .map(|ask| ask.idempotency_key.clone())
                 .collect();
             record.remember_answer_for(&keys, &answer);
-            if !lost && !refused {
-                self.egress.turn_answered(crate::runtime::review::Exchange {
-                    seat: self.binding.seat_id.clone(),
-                    session: prompt.session_id.clone(),
-                    parent_session: None,
-                    project: Some(self.project.clone()),
-                    trigger: "turn",
-                    turn_keys: keys.clone(),
-                    sequence: None,
-                    asked: prompt.content.clone(),
-                    answered: answer.clone(),
-                });
-            }
             tracing::info!(
                 "odind: conversation-queue answered asks={} lost={lost} conversation={}",
                 keys.len(),

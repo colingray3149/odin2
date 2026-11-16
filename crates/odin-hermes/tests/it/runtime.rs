@@ -24,6 +24,8 @@ mod ownership;
 mod pump;
 #[path = "runtime/registry_author.rs"]
 mod registry_author;
+#[path = "runtime/root_consent.rs"]
+mod root_consent;
 #[path = "runtime/schedule.rs"]
 mod schedule;
 #[path = "runtime/seats.rs"]

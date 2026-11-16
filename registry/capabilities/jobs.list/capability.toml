@@ -5,7 +5,7 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "List running and finished jobs. Lists the conversation seat's background jobs: each call still running after a few seconds, with its tool, what it is about, how long it has run and its deadline, and recently finished jobs with how they ended. Worth it when the owner asks how something is going."
+description = "Your own slow tool calls still running in the background (not Odin's pods: those are pods). Lists the conversation seat's background jobs: each call still running after a few seconds, with its tool, what it is about, how long it has run and its deadline, and recently finished jobs with how they ended. Worth it when the owner asks how something is going."
 handler = { id = "jobs_list" }
 input_schema = "schemas/capability/jobs.list.input.json"
 output_schema = "schemas/capability/jobs.list.output.json"

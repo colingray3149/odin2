@@ -6,7 +6,7 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Summarize project workloads. Summarizes the pods a seat launched or its project runs (the conversation seat sees all of them), or one by run: newest first, with profile, state, launching seat, node, start and finish, and a running pod's latest status. Worth it when the owner asks which pods ran, when or where."
+description = "What Odin is running: its pods and workloads (what the owner calls Odin's jobs), newest first. Summarizes the pods a seat launched or its project runs (the conversation seat sees all of them), or one by run: newest first, with profile, state, launching seat, node, start and finish, and a running pod's latest status; with logLines, one run's newest log lines, redacted. Worth it when the owner asks which pods ran, when or where."
 handler = { id = "odin_kube.workload.summarize" }
 input_schema = "schemas/capability/kube.workload.summarize.input.json"
 output_schema = "schemas/capability/kube.workload.summarize.output.json"

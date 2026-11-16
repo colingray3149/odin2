@@ -23,6 +23,21 @@
         }
       ]
     },
+    "lanes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "lane": { "type": "string" },
+          "windowDays": { "type": "integer", "minimum": 1 },
+          "coreHours": { "$ref": "#/$defs/budget" },
+          "gpuHours": { "$ref": "#/$defs/budget" },
+          "computeUsd": { "$ref": "#/$defs/budget" }
+        },
+        "required": ["lane", "windowDays", "coreHours", "gpuHours", "computeUsd"]
+      }
+    },
     "reason": {
       "type": "string",
       "minLength": 1,
@@ -32,6 +47,13 @@
   "required": [
     "status"
   ],
+  "$defs": {
+    "budget": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "used": { "type": "number", "minimum": 0 }, "cap": { "type": ["integer", "null"], "minimum": 1 } },
+      "required": ["used", "cap"]
+    }
+  },
   "allOf": [
     {
       "if": {

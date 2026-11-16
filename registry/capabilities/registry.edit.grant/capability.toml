@@ -1,0 +1,25 @@
+schema = "odin.registry.v1"
+seat_ops = { sinmara = { toolset = "odin", op = "edit_grant", expose = "on_demand" } }
+toolset = "odin"
+op = "edit_grant"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Change who may do what in an existing declaration, or create or delete a seat, after the owner's approval. For a seat lifecycle operation supply kind seat, operation create or delete, id, reason, and the complete exact seat.toml as declaration: for deletion read the current file without changing it. The approval card binds the whole declaration; stale or invalid changes are refused. Remove references separately before deletion. Existing edits set permission keys, add or remove list items, or use unset, a list of dotted key names, to remove whole permission keys, retaining comments and markers. Supply expected current values for every changed key, including unset keys; use null if absent. The approval card shows the changes and stale edits are refused. Every change validates the whole registry, commits to odin main and publishes."
+handler = { id = "registry_edit_grant" }
+input_schema = "schemas/capability/registry.edit.grant.input.json"
+output_schema = "schemas/capability/registry.edit.grant.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "owner"
+preview = "card"
+evidence_extractor = { id = "odin_hermes_registry_edit_grant_evidence" }
+tests = [
+  "odin-cli::bin/odind registry_edit::tests::a_permission_list_gains_and_loses_an_item_in_place",
+  "odin-cli::bin/odind project_authoring::tests::seat_lifecycle_binds_the_complete_declaration_and_validates_the_candidate",
+]

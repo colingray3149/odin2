@@ -319,6 +319,57 @@
       ],
       "description": "Anti-stuck ladder: when the pod stalls the kernel authorizes one step at a time — restart_worker (its seat restarts it) up to max_attempts, then escalate (an incident to the owner)."
     },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outputReserveTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Output tokens the context guard keeps free for the answer."
+        },
+        "checkpointPercent": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 99,
+          "description": "Percent of the context window at which the run checkpoints."
+        },
+        "maxRollovers": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "description": "Context rollovers the run may take before it stops."
+        },
+        "toolResultBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Largest tool result, in bytes, the run keeps inline."
+        }
+      },
+      "description": "The profile's declared run limits (the lifetime stays deadlineSeconds). Launches may lower each one; omitted: the field is not declared."
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpu",
+        "memory"
+      ],
+      "properties": {
+        "cpu": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Whole CPUs the worker container reserves."
+        },
+        "memory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16,
+          "description": "Memory the worker reserves, a binary-suffixed quantity such as 4Gi."
+        }
+      },
+      "description": "The worker container's CPU and memory reservation; omitted: the platform defaults."
+    },
     "tools": {
       "type": "array",
       "maxItems": 32,
@@ -327,7 +378,7 @@
         "minLength": 1,
         "maxLength": 128
       },
-      "description": "Host capabilities the pod's agent may call — a subset of its seat's tools (e.g. memory.remember); a pod never launches pods, asks seats or creates. Omitted: none."
+      "description": "Host capabilities the pod's agent may call — a subset of its seat's tools (e.g. knowledge.search); a pod never launches pods, asks seats or creates. Omitted: none."
     }
   },
   "required": [

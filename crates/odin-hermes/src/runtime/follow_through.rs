@@ -1,10 +1,12 @@
 //! Follow-through on delegated work. A job (a pod or a child seat) that ends
 //! without its result leaves the owner's ask open: the wake names what is
-//! undone, what was tried and what was not, and the ask wakes the seat again
-//! every [`HermesSettings::open_ask_minutes`] until a result is delivered, the
-//! seat relaunches it (a running pod holds the wake back) or drops it with
-//! `reminder_cancel`. Live memory lists the pods and the ask under the job that
-//! launched them, so the notes pinned to that job show beside them.
+//! undone, what was tried and what was not. Each job that ends unmet keeps its
+//! own ask, and the seat is woken once for that job
+//! [`HermesSettings::open_ask_minutes`] later if nothing runs for it, until a
+//! result is delivered, the seat relaunches it (a running pod holds the wake
+//! back) or drops it with `reminder_cancel`. Live memory lists the pods and the
+//! ask under the job that launched them, so the notes pinned to that job show
+//! beside them.
 //!
 //! [`HermesSettings::open_ask_minutes`]: crate::config::HermesSettings::open_ask_minutes
 
@@ -30,9 +32,10 @@ pub struct RunningJob {
 /// What a delegated job that ended without its result left behind.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Unmet<'a> {
-    /// What the ask is about: the same for a job and its relaunch.
+    /// What the ask is about, as the owner names it. Display only: the ask is kept per job.
     pub subject: &'a str,
-    /// The job that ended; notes pinned to it show in live memory.
+    /// The job that ended. The ask is keyed by it, so two jobs for one subject are two asks;
+    /// notes pinned to it show in live memory.
     pub job: &'a str,
     /// What the job left undone.
     pub items: &'a [String],
@@ -46,16 +49,16 @@ const ASK_PREFIX: &str = "follow-";
 /// Hex digits of the subject's digest in an ask's id.
 const ASK_DIGITS: usize = 8;
 
-/// The id `reminder_cancel` takes to drop the ask about `subject`.
-fn ask_id(subject: &str) -> String {
-    let digest = odin_domain::Digest::hash(subject.as_bytes()).to_string();
+/// The id `reminder_cancel` takes to drop the ask about `job`.
+fn ask_id(job: &str) -> String {
+    let digest = odin_domain::Digest::hash(job.as_bytes()).to_string();
     format!("{ASK_PREFIX}{}", &digest[digest.len() - ASK_DIGITS..])
 }
 
-/// The ask a wake id of [`HermesRuntime::wake_open_asks`] belongs to.
+/// The ask a wake id of [`HermesRuntime::wake_open_asks`] belongs to: `{ask}-{job}`.
 pub(super) fn ask_of_wake(wake_id: &str) -> Option<&str> {
-    let (ask, due) = wake_id.split_at_checked(ASK_PREFIX.len() + ASK_DIGITS)?;
-    (ask.starts_with(ASK_PREFIX) && due.strip_prefix('-')?.parse::<i64>().is_ok()).then_some(ask)
+    let (ask, rest) = wake_id.split_at_checked(ASK_PREFIX.len() + ASK_DIGITS)?;
+    (ask.starts_with(ASK_PREFIX) && rest.starts_with('-')).then_some(ask)
 }
 
 fn bounded(text: &str) -> String {
@@ -80,9 +83,8 @@ fn minutes_between(from_ms: i64, to_ms: i64) -> i64 {
 
 impl HermesRuntime {
     /// Queues the wake for a job that ended without its result, `lead` being
-    /// the account of how it ended, and keeps the ask about `unmet.subject`
-    /// open. The same report observed again opens nothing new and moves no
-    /// wake.
+    /// the account of how it ended, and keeps the ask about `unmet.job` open.
+    /// The same report observed again opens nothing new and moves no wake.
     pub fn report_unmet(
         &self,
         wake_id: &str,
@@ -91,7 +93,7 @@ impl HermesRuntime {
     ) -> Result<bool, String> {
         let now = Timestamp::now();
         let now_ms = now.as_millisecond();
-        let id = ask_id(unmet.subject);
+        let id = ask_id(unmet.job);
         self.schedule.open_ask(&OpenAsk {
             id: id.clone(),
             subject: bounded(unmet.subject),
@@ -121,17 +123,44 @@ impl HermesRuntime {
         let text = format!(
             "{lead}\n{owner}'s ask \"{}\" is still open and stays open until its result is \
              delivered, you relaunch it, or {owner} drops it.\nUnmet:\n{items}\n{methods}This \
-             wakes you again every {} minutes while nothing runs for it. If you tell {owner} it \
-             cannot be done, or it is dropped, call reminder_cancel with id \"{id}\".",
+             wakes you once more, {} minutes from now, if nothing runs for it. If you tell {owner} \
+             it cannot be done, or it is dropped, call reminder_cancel with id \"{id}\".",
             bounded(unmet.subject),
             self.settings.open_ask_minutes,
         );
         self.wake_once(wake_id, &text)
     }
 
-    /// The ask about `subject` is delivered: its wakes stop.
-    pub fn ask_delivered(&self, subject: &str) -> Result<bool, String> {
-        self.schedule.close_ask(&ask_id(subject))
+    /// The ask about `job` is delivered: its wakes stop.
+    pub fn ask_delivered(&self, job: &str) -> Result<bool, String> {
+        self.schedule.close_ask(&ask_id(job))
+    }
+
+    /// The open ask about `old` follows `replacement` instead: its key and job
+    /// become the replacement's, keeping the subject, why it opened and when,
+    /// so the ask closes when the replacement delivers rather than waking
+    /// about a job that is over. Nothing moves when no ask about `old` is
+    /// open; `false` then, `true` when the ask moved.
+    pub fn rekey_ask(&self, old: &str, replacement: &str) -> Result<bool, String> {
+        let Some(ask) = self
+            .schedule
+            .open_asks()?
+            .into_iter()
+            .find(|ask| ask.id == ask_id(old))
+        else {
+            return Ok(false);
+        };
+        let moved = OpenAsk {
+            id: ask_id(replacement),
+            subject: ask.subject,
+            job: replacement.to_owned(),
+            unmet: ask.unmet,
+            opened_ms: ask.opened_ms,
+            next_wake_ms: ask.next_wake_ms,
+        };
+        self.schedule.close_ask(&ask.id)?;
+        self.schedule.open_ask(&moved)?;
+        Ok(true)
     }
 
     /// Drops the open ask `id` names (`reminder_cancel`), as the reminder it
@@ -266,8 +295,9 @@ impl HermesRuntime {
     }
 
     /// Wakes the seat for every open ask whose interval has passed, unless a
-    /// pod is running: that look moves one interval on either way. The wake
-    /// shows how long the ask has been open.
+    /// pod is running: that look moves one interval on either way. Each job's
+    /// ask wakes once: its wake id is the ask and the job, so the same state
+    /// observed again queues nothing. The wake shows how long the ask has been open.
     pub(super) fn wake_open_asks(&self, now: Timestamp) -> Result<(), String> {
         let now_ms = now.as_millisecond();
         for ask in self.schedule.open_asks()? {
@@ -298,7 +328,7 @@ impl HermesRuntime {
                 ask.id
             );
             self.schedule
-                .wake_once(&format!("{}-{}", ask.id, ask.next_wake_ms), &text, now)?;
+                .wake_once(&format!("{}-{}", ask.id, ask.job), &text, now)?;
         }
         Ok(())
     }

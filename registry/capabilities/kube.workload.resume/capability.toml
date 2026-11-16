@@ -4,7 +4,7 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Resumes one suspended finite Job by run id, given the resourceVersion observed at admission."
+description = "Resumes one suspended pod Job (a finite job or a long-lived service) by run id, given the resourceVersion observed at admission."
 handler = { id = "odin_kube.workload.resume" }
 input_schema = "schemas/capability/kube.workload.resume.input.json"
 output_schema = "schemas/capability/kube.workload.resume.output.json"
@@ -20,5 +20,5 @@ evidence_extractor = { id = "odin_kube.workload.resume_evidence" }
 tests = [
   "odin-cli::bin/odind kube_runtime::execution::job_verbs::resume_unsuspends_a_paused_job",
   "odin-kube reconciler::create::launch_shape_tests::a_paused_run_suspends_its_job_and_resume_starts_it_again",
-  "odin-kube reconciler::recreation::deadline_tests::a_resumed_pod_keeps_the_time_it_had_left",
+  "odin-kube reconciler::create::launch_shape_tests::campaign_create_and_resume_release_with_current_wall_deadline",
 ]

@@ -22,6 +22,7 @@ pub mod time;
 // Non-personal families, each owned by one lane.
 pub mod data;
 pub mod docs;
+pub mod world;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -63,7 +64,7 @@ pub struct Workflow {
 }
 
 /// Non-personal families, each a `WORKFLOWS: &[Workflow]` slice owned by one lane.
-pub const FAMILIES: &[&[Workflow]] = &[docs::WORKFLOWS, data::WORKFLOWS];
+pub const FAMILIES: &[&[Workflow]] = &[docs::WORKFLOWS, data::WORKFLOWS, world::WORKFLOWS];
 
 /// Per call: the kernel command id (idempotency key), the calling seat, the
 /// owner's time zone and the staged input files.

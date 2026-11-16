@@ -180,7 +180,6 @@ fn fixture_with_nodes(nodes: &[(&str, String)]) -> Proof {
             "source_root = \"\"\n",
             "default_seat = \"operator\"\n",
             "memory_namespaces = [\"atlas.personal\"]\n",
-            "artifact_policy = \"standard\"\n",
         ),
     )
     .expect("project");
@@ -228,6 +227,16 @@ fn fixture_with_nodes(nodes: &[(&str, String)]) -> Proof {
         )),
     )
     .expect("capability");
+    let capability = worktree.join("registry/capabilities/kube.workload.create_many");
+    std::fs::create_dir_all(&capability).expect("batch capability directory");
+    std::fs::write(
+        capability.join("capability.toml"),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../registry/capabilities/kube.workload.create_many/capability.toml"
+        )),
+    )
+    .expect("batch capability");
     // Its toolsets: research by default and kube in Kubert's own view.
     for (toolset, op) in [("research", "investigate"), ("kube", "launch")] {
         let directory = worktree.join("registry/toolsets").join(toolset);
@@ -245,6 +254,8 @@ fn fixture_with_nodes(nodes: &[(&str, String)]) -> Proof {
     for schema in [
         "kube.workload.create.input.json",
         "kube.workload.create.output.json",
+        "kube.workload.create_many.input.json",
+        "kube.workload.create_many.output.json",
     ] {
         let declared = std::fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -501,6 +512,7 @@ fn assert_initial_target_checked_before_settled_replay(mut launch: odin_kube::Jo
         ))
         .expect("lazy kube client"),
         config: KubeConfig {
+            node_data_roots: Default::default(),
             kubeconfig: dir.path().join("kubeconfig"),
             cluster: "unit-cluster".to_owned(),
             namespace: "unit-namespace".to_owned(),
@@ -670,30 +682,34 @@ async fn dispatch_create_with_target_to_verdict(
             Arc::clone(&ledger),
             channel,
         ));
-        KubeRuntimeCell::new(CellInputs {
-            config: KubeConfig {
-                kubeconfig: proof.root.join("kubeconfig"),
-                cluster: "unit-cluster".to_owned(),
-                namespace: "unit-namespace".to_owned(),
-                allowed_nodes: nodes.iter().map(|node| (*node).to_owned()).collect(),
-                request_timeout: Duration::from_secs(5),
-                teardown_timeout: Duration::from_secs(5),
-                vpn_transport: None,
+        KubeRuntimeCell::new_published(
+            CellInputs {
+                config: KubeConfig {
+                    node_data_roots: Default::default(),
+                    kubeconfig: proof.root.join("kubeconfig"),
+                    cluster: "unit-cluster".to_owned(),
+                    namespace: "unit-namespace".to_owned(),
+                    allowed_nodes: nodes.iter().map(|node| (*node).to_owned()).collect(),
+                    request_timeout: Duration::from_secs(5),
+                    teardown_timeout: Duration::from_secs(5),
+                    vpn_transport: None,
+                },
+                ledger,
+                stops,
+                artifact_root: proof.root.join("artifacts"),
+                snapshot: proof.pin.current(),
+                config_revision: 1,
+                launch_binding: None,
+                workload_identity: crate::kube::WorkloadExtensionIdentity {
+                    artifact: odin_domain::ArtifactId::new(
+                        Digest::hash(b"preflight-placement-identity").to_string(),
+                    )
+                    .expect("artifact id"),
+                    deployment: Default::default(),
+                },
             },
-            ledger,
-            stops,
-            artifact_root: proof.root.join("artifacts"),
-            snapshot: proof.pin.current(),
-            config_revision: 1,
-            launch_binding: None,
-            workload_identity: crate::kube::WorkloadExtensionIdentity {
-                artifact: odin_domain::ArtifactId::new(
-                    Digest::hash(b"preflight-placement-identity").to_string(),
-                )
-                .expect("artifact id"),
-                deployment: Default::default(),
-            },
-        })
+            Arc::clone(&proof.pin),
+        )
     });
     let coordinator = Arc::new(KubeCommandCoordinator::new(cell).with_models_path(Some(
         crate::kube_runtime::models_config::models_fixture(&proof.root, MODEL),
@@ -1050,10 +1066,16 @@ async fn explicit_attempt_mismatch_refuses_preflight_and_mints_no_approval_row()
         args: vec!["exec true".to_owned()],
         node_selector: BTreeMap::new(),
         initial_target_node: None,
+        admitted_node: None,
+        campaign_reservation: None,
         gpu_count: 0,
+        gpu_min_vram_gib: None,
+        gpu_vram_gib: None,
+        tolerate: Default::default(),
         deadline_seconds: None,
         service: false,
         workload: None,
+        continue_from: None,
         operation_id: odin_types::OperationId::new("op-000000000000000000000000deadbeef")
             .expect("operation id"),
         idempotency_digest: Digest::hash(b"preflight-attempt-idempotency"),
@@ -1087,30 +1109,34 @@ async fn explicit_attempt_mismatch_refuses_preflight_and_mints_no_approval_row()
         Arc::clone(&ledger),
         channel,
     ));
-    let cell = KubeRuntimeCell::new(CellInputs {
-        config: KubeConfig {
-            kubeconfig: root.join("kubeconfig"),
-            cluster: "unit-cluster".to_owned(),
-            namespace: "unit-namespace".to_owned(),
-            allowed_nodes: BTreeSet::new(),
-            request_timeout: Duration::from_secs(5),
-            teardown_timeout: Duration::from_secs(5),
-            vpn_transport: None,
+    let cell = KubeRuntimeCell::new_published(
+        CellInputs {
+            config: KubeConfig {
+                node_data_roots: Default::default(),
+                kubeconfig: root.join("kubeconfig"),
+                cluster: "unit-cluster".to_owned(),
+                namespace: "unit-namespace".to_owned(),
+                allowed_nodes: BTreeSet::new(),
+                request_timeout: Duration::from_secs(5),
+                teardown_timeout: Duration::from_secs(5),
+                vpn_transport: None,
+            },
+            ledger: Arc::clone(&ledger),
+            stops,
+            artifact_root: root.join("artifacts"),
+            snapshot: proof.pin.current(),
+            config_revision: 1,
+            launch_binding: None,
+            workload_identity: crate::kube::WorkloadExtensionIdentity {
+                artifact: odin_domain::ArtifactId::new(
+                    Digest::hash(b"preflight-attempt-identity").to_string(),
+                )
+                .expect("artifact id"),
+                deployment: Default::default(),
+            },
         },
-        ledger: Arc::clone(&ledger),
-        stops,
-        artifact_root: root.join("artifacts"),
-        snapshot: proof.pin.current(),
-        config_revision: 1,
-        launch_binding: None,
-        workload_identity: crate::kube::WorkloadExtensionIdentity {
-            artifact: odin_domain::ArtifactId::new(
-                Digest::hash(b"preflight-attempt-identity").to_string(),
-            )
-            .expect("artifact id"),
-            deployment: Default::default(),
-        },
-    });
+        Arc::clone(&proof.pin),
+    );
 
     let coordinator = Arc::new(
         KubeCommandCoordinator::new(Some(cell)).with_models_path(Some(
@@ -1530,6 +1556,7 @@ async fn selected_node_binds_its_own_endpoint_into_models_config_and_egress_pin(
 
     let rendered = serde_json::to_value(odin_kube::workload::egress_rules(
         &odin_kube::workload::ResolvedEgress {
+            deny_ingress: false,
             sites: BTreeMap::new(),
             unresolved: BTreeMap::new(),
             pinned: vec![(
@@ -1630,10 +1657,16 @@ fn a_restart_onto_a_replaced_workload_image_is_refused() {
         args: Vec::new(),
         node_selector: BTreeMap::new(),
         initial_target_node: None,
+        admitted_node: None,
+        campaign_reservation: None,
         gpu_count: 0,
+        gpu_min_vram_gib: None,
+        gpu_vram_gib: None,
+        tolerate: Default::default(),
         deadline_seconds: None,
         service: false,
         workload: None,
+        continue_from: None,
         operation_id: odin_types::OperationId::new("op-000000000000000000000000deadbeef")
             .expect("operation id"),
         idempotency_digest: Digest::hash(b"restart-idempotency"),
@@ -1649,4 +1682,118 @@ fn a_restart_onto_a_replaced_workload_image_is_refused() {
     launch.image = old.to_owned();
     launch.extension = None;
     assert_eq!(super::replaced_image_refusal(&launch, deployed), None);
+}
+
+#[test]
+fn runtime_cell_reads_new_publications_without_changing_existing_pins() {
+    let proof = fixture();
+    let ledger = Arc::new(Mutex::new(Ledger::open_in_memory().expect("ledger")));
+    let bus = odin_process::BusAddress::unix_socket(proof.root.join("live-stop.sock"))
+        .expect("bus address");
+    let channel = odin_process::WorkerChannel::for_recovery(bus).expect("worker channel");
+    let cell = KubeRuntimeCell::new_published(
+        CellInputs {
+            config: KubeConfig {
+                node_data_roots: Default::default(),
+                kubeconfig: proof.root.join("kubeconfig"),
+                cluster: "unit-cluster".to_owned(),
+                namespace: "unit-namespace".to_owned(),
+                allowed_nodes: BTreeSet::new(),
+                request_timeout: Duration::from_secs(5),
+                teardown_timeout: Duration::from_secs(5),
+                vpn_transport: None,
+            },
+            stops: Arc::new(odin_kernel::stop::StopAuthority::new(
+                Arc::clone(&ledger),
+                channel,
+            )),
+            ledger,
+            artifact_root: proof.root.join("artifacts"),
+            snapshot: proof.pin.current(),
+            config_revision: 1,
+            launch_binding: None,
+            workload_identity: crate::kube::WorkloadExtensionIdentity {
+                artifact: odin_domain::ArtifactId::new(
+                    Digest::hash(b"live-publication").to_string(),
+                )
+                .expect("artifact id"),
+                deployment: Default::default(),
+            },
+        },
+        Arc::clone(&proof.pin),
+    );
+    let old = cell.snapshot();
+    let old_profile = old.workload_profile(PROFILE).expect("profile");
+    let old_deadline = old_profile
+        .profile
+        .lifetime
+        .as_ref()
+        .expect("lifetime")
+        .deadline_seconds;
+    let seat_limit = |snapshot: &odin_registry::Snapshot| match &snapshot
+        .object(odin_registry::RegistryKind::Seat, SEAT)
+        .expect("seat")
+        .config
+    {
+        odin_registry::ObjectConfig::Seat(seat) => seat.limits.max_parallel_runs,
+        _ => panic!("expected seat"),
+    };
+    let old_limit = seat_limit(&old);
+    let worktree = proof.root.join("authoring");
+    let path = worktree
+        .join("registry/workloads")
+        .join(PROFILE)
+        .join("profile.toml");
+    let text = std::fs::read_to_string(&path).expect("profile text");
+    let replacement = old_deadline + 1;
+    let changed = text.replace(
+        &format!("deadline_seconds = {old_deadline}"),
+        &format!("deadline_seconds = {replacement}"),
+    );
+    assert_ne!(text, changed);
+    std::fs::write(path, changed).expect("update profile");
+    let seat_path = worktree.join("registry/seats").join(SEAT).join("seat.toml");
+    let seat_text = std::fs::read_to_string(&seat_path).expect("seat text");
+    let changed_seat = seat_text.replace(
+        &format!("max_parallel_runs = {old_limit}"),
+        &format!("max_parallel_runs = {}", old_limit + 1),
+    );
+    assert_ne!(seat_text, changed_seat);
+    std::fs::write(seat_path, changed_seat).expect("update seat");
+    let commit = commit_all(&worktree, "update workload deadline");
+    let candidate = ValidatedSnapshotCandidate::from_committed_worktree(
+        &worktree,
+        &commit,
+        odin_omp::host_tools::production_bindings()
+            .iter()
+            .map(|binding| binding.to_admitted_binding()),
+    )
+    .expect("candidate");
+    SnapshotStore::new(&proof.store)
+        .publish_committed(&candidate, old.revision + 1)
+        .expect("publish");
+    proof.pin.reload().expect("reload");
+    assert_eq!(
+        old.workload_profile(PROFILE)
+            .expect("old profile")
+            .profile
+            .lifetime
+            .as_ref()
+            .expect("lifetime")
+            .deadline_seconds,
+        old_deadline
+    );
+    assert_eq!(
+        cell.snapshot()
+            .workload_profile(PROFILE)
+            .expect("current profile")
+            .profile
+            .lifetime
+            .as_ref()
+            .expect("lifetime")
+            .deadline_seconds,
+        replacement
+    );
+    assert_eq!(seat_limit(&old), old_limit);
+    assert_eq!(seat_limit(&cell.snapshot()), old_limit + 1);
 }

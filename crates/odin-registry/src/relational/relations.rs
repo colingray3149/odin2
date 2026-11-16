@@ -86,7 +86,15 @@ pub fn validate(objects: &[RegistryObject], context: &RelationContext) -> Vec<Re
         })
         .flat_map(|node| node.capabilities.iter().map(String::as_str))
         .collect();
+    let workload_nodes: Vec<&crate::schema::NodeToml> = objects
+        .iter()
+        .filter_map(|object| match &object.config {
+            ObjectConfig::Node(node) if node.enabled && node.allow_workloads => Some(&**node),
+            _ => None,
+        })
+        .collect();
 
+    let mut workload_owners = BTreeMap::new();
     for object in objects {
         match &object.config {
             ObjectConfig::Seat(value) => {
@@ -275,6 +283,17 @@ pub fn validate(objects: &[RegistryObject], context: &RelationContext) -> Vec<Re
                     &indices,
                     &mut findings,
                 );
+                for (role, lane) in &value.agents {
+                    let card_id = format!("{GATEWAY_PROVIDER}/{lane}");
+                    if !cards.get(card_id.as_str()).is_some_and(|card| card.enabled) {
+                        findings.push(relation_failure(
+                            object,
+                            format!(
+                                "agents.{role} = {lane:?} names no enabled model card {card_id:?}"
+                            ),
+                        ));
+                    }
+                }
                 if let Some(deploy) = &value.deploy {
                     for host in std::iter::once(&deploy.host).chain(&deploy.targets) {
                         validate_ref(
@@ -297,6 +316,17 @@ pub fn validate(objects: &[RegistryObject], context: &RelationContext) -> Vec<Re
                     &indices,
                     &mut findings,
                 );
+                if value.owns_workloads {
+                    if let Some(other) = workload_owners.insert(&value.project, &object.id) {
+                        findings.push(relation_failure(
+                            object,
+                            format!(
+                                "owns_workloads: project {:?} is already owned by lane {other:?}",
+                                value.project.as_str()
+                            ),
+                        ));
+                    }
+                }
                 validate_ref(
                     object,
                     "default_seat",
@@ -378,6 +408,48 @@ pub fn validate(objects: &[RegistryObject], context: &RelationContext) -> Vec<Re
                     &mut findings,
                 );
                 admit_pod_harness(object, value, &harnesses, &mut findings);
+                for target in value.offload.iter().flat_map(|offload| &offload.targets) {
+                    let declared = objects
+                        .iter()
+                        .find_map(|candidate| match &candidate.config {
+                            ObjectConfig::ComputeTarget(declared) if &candidate.id == target => {
+                                Some(declared)
+                            }
+                            _ => None,
+                        });
+                    match declared {
+                        None => findings.push(relation_failure(
+                            object,
+                            format!("offload target {target:?} is not a declared compute target"),
+                        )),
+                        Some(declared)
+                            if !declared
+                                .allowed_projects
+                                .contains(value.seat.project.as_str()) =>
+                        {
+                            findings.push(relation_failure(
+                                object,
+                                format!(
+                                    "offload target {target:?} does not admit project {:?}",
+                                    value.seat.project.as_str()
+                                ),
+                            ))
+                        }
+                        Some(declared)
+                            if value
+                                .offload
+                                .as_ref()
+                                .is_some_and(|offload| offload.restricted_data)
+                                && !declared.restricted_data =>
+                        {
+                            findings.push(relation_failure(
+                                object,
+                                format!("offload target {target:?} does not take restricted data"),
+                            ))
+                        }
+                        Some(_) => {}
+                    }
+                }
                 validate_workload_relations(
                     object,
                     value,
@@ -386,6 +458,22 @@ pub fn validate(objects: &[RegistryObject], context: &RelationContext) -> Vec<Re
                     &node_capabilities,
                     &mut findings,
                 );
+                let placeable = value.data.is_empty()
+                    || workload_nodes.iter().any(|node| {
+                        value
+                            .placement
+                            .iter()
+                            .all(|capability| node.capabilities.contains(capability))
+                            && node
+                                .covers_data(value.data.iter().map(|data| data.host_path.as_str()))
+                    });
+                if !placeable {
+                    findings.push(relation_failure(
+                        object,
+                        "workload-data-unplaceable: no enabled workload node satisfying the \
+                         placement declares data_roots covering every [[data]] host_path",
+                    ));
+                }
                 if let Some(lane) = value.seat.gateway_lane.as_deref() {
                     let card_id = format!("{GATEWAY_PROVIDER}/{lane}");
                     if !cards.contains_key(card_id.as_str()) {
@@ -403,10 +491,24 @@ pub fn validate(objects: &[RegistryObject], context: &RelationContext) -> Vec<Re
                     findings.push(relation_failure(object, problem));
                 }
             }
+            ObjectConfig::BrainRole(value) if value.enabled => {
+                for lane in value.lanes() {
+                    let card_id = format!("{GATEWAY_PROVIDER}/{lane}");
+                    if !cards.contains_key(card_id.as_str()) && !family_member(&cards, lane) {
+                        findings.push(relation_failure(
+                            object,
+                            format!("lane {lane:?} references a missing model card {card_id:?}"),
+                        ));
+                    }
+                }
+            }
+            ObjectConfig::BrainRole(_) => {}
             ObjectConfig::Harness(_)
             | ObjectConfig::ContextProfile(_)
             | ObjectConfig::Toolset(_)
-            | ObjectConfig::Feature(_) => {}
+            | ObjectConfig::Feature(_)
+            | ObjectConfig::ComputeTarget(_)
+            | ObjectConfig::ComputeProvider(_) => {}
             ObjectConfig::Environment(value) => {
                 for seat in &value.seats {
                     if !seats.contains_key(seat.as_str()) {

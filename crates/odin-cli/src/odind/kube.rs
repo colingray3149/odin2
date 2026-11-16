@@ -9,25 +9,14 @@ use std::time::Duration as StdDuration;
 use async_trait::async_trait;
 
 use odin_cli::browser_runtime;
-use odin_domain::extension_policy::{EXTENSION_POLICY_DIGEST_ENV, EXTENSION_POLICY_PATH_ENV};
 use odin_domain::huginn as live;
-use odin_domain::huginn::LiveError;
-use odin_domain::huginn::SessionManifest;
 use odin_domain::ApprovalId;
 use odin_huginn::dispatch::AuthenticatedCommandPort;
 use odin_huginn::NodePosture;
 use odin_kernel::{ApprovalCommand, ApprovalGate, ApprovalRedirect, ConsumeOutcome, StopAuthority};
 
-use odin_kube::exec::{decompose, exec_fixed, WorkloadExecStream, WorkloadLauncherSpec};
-use odin_kube::job::{JobExtensionLaunch, JobModelsConfigLaunch};
 use odin_ledger::approval::{Approval, ApprovalScope, NewApproval};
-use odin_ledger::stop::JobStopAction;
 use odin_ledger::Ledger;
-use odin_omp::process::{
-    HarnessStdin, OmpProcessSpec, RemoteAttachError, RemoteExit, RemoteHarnessAdmission,
-    RemoteHarnessChannel, RemoteHarnessFactory,
-};
-use odin_types::WorkerId;
 use time::OffsetDateTime;
 
 use crate::huginn_conformance;
@@ -56,6 +45,7 @@ pub(super) struct KubeRuntimeCell {
     pod_lifecycle: Arc<odin_kube::pod_worker::PodLifecycle>,
     artifact_root: PathBuf,
     snapshot: Arc<odin_registry::Snapshot>,
+    published: Option<Arc<odin_registry::SnapshotHandle>>,
     /// The generated controller config revision, pinned once at composition
     /// — the admitted generation's revision, never a value re-read at call
     /// time.
@@ -66,6 +56,8 @@ pub(super) struct KubeRuntimeCell {
     workload_identity: WorkloadExtensionIdentity,
     connected:
         tokio::sync::Mutex<Option<(Arc<odin_huginn::kube::KubeControl>, odin_kube::KubeClient)>>,
+    jobs: odin_kube::watch::JobCache,
+    offload: Arc<Mutex<Option<Arc<crate::live::offload::Offload>>>>,
 }
 pub(super) struct CellInputs {
     pub config: odin_kube::config::KubeConfig,
@@ -79,7 +71,22 @@ pub(super) struct CellInputs {
 }
 
 impl KubeRuntimeCell {
+    #[cfg(test)]
     pub(super) fn new(inputs: CellInputs) -> Arc<Self> {
+        Self::with_publication(inputs, None)
+    }
+
+    pub(super) fn new_published(
+        inputs: CellInputs,
+        published: Arc<odin_registry::SnapshotHandle>,
+    ) -> Arc<Self> {
+        Self::with_publication(inputs, Some(published))
+    }
+
+    fn with_publication(
+        inputs: CellInputs,
+        published: Option<Arc<odin_registry::SnapshotHandle>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             config: inputs.config,
             ledger: inputs.ledger,
@@ -87,11 +94,17 @@ impl KubeRuntimeCell {
             pod_lifecycle: Arc::default(),
             artifact_root: inputs.artifact_root,
             snapshot: inputs.snapshot,
+            published,
             config_revision: inputs.config_revision,
             launch_binding: inputs.launch_binding,
             workload_identity: inputs.workload_identity,
             connected: tokio::sync::Mutex::new(None),
+            jobs: odin_kube::watch::JobCache::default(),
+            offload: Arc::default(),
         })
+    }
+    pub(super) fn set_offload(&self, offload: Arc<crate::live::offload::Offload>) {
+        *self.offload.lock().expect("offload binding") = Some(offload);
     }
 
     /// The connected cluster client (connected once, shared).
@@ -115,7 +128,7 @@ impl KubeRuntimeCell {
         client: &odin_kube::KubeClient,
         seat: &odin_domain::SeatId,
     ) -> Result<(), odin_kube::KubeError> {
-        odin_kube::admit_parallel_run(client, &self.snapshot, seat, None).await
+        odin_kube::admit_parallel_run(client, &self.snapshot(), seat, None).await
     }
 
     /// Caller holds [`Self::pod_lifecycle`] until the object exists.
@@ -128,7 +141,7 @@ impl KubeRuntimeCell {
         lane: &odin_domain::LaneId,
     ) -> Result<(), odin_kube::KubeError> {
         let huginn = self.artifact_root.parent();
-        odin_kube::admit_lane_pod_budget(client, &self.snapshot, lane, huginn, None).await
+        odin_kube::admit_lane_pod_budget(client, &self.snapshot(), lane, huginn, None).await
     }
 
     /// Refuses when a live worker of this lane has filled `limits.wall_seconds`.
@@ -137,7 +150,12 @@ impl KubeRuntimeCell {
         &self,
         lane: &odin_domain::LaneId,
     ) -> Result<(), odin_kube::KubeError> {
-        odin_kube::admit_lane_wall(&self.snapshot, lane, self.artifact_root.parent())
+        odin_kube::admit_lane_wall(&self.snapshot(), lane, self.artifact_root.parent())
+    }
+
+    /// Where lane budgets, raises and metered compute usage live.
+    pub(crate) fn huginn_root(&self) -> Option<&std::path::Path> {
+        self.artifact_root.parent()
     }
 
     pub fn workload_identity(&self) -> &WorkloadExtensionIdentity {
@@ -173,6 +191,11 @@ impl KubeRuntimeCell {
         &self.config
     }
 
+    /// Owned Jobs from the live job watch; `None` while that watch is down.
+    pub fn job_cache(&self) -> &odin_kube::watch::JobCache {
+        &self.jobs
+    }
+
     /// Currently connected control, if any. `None` means the cell has not
     /// connected yet, or a connect is in progress: not a per-run release
     /// failure. Callers that need to force a connect use [`Self::parts`].
@@ -194,15 +217,14 @@ impl KubeRuntimeCell {
             .map(|(control, _)| Arc::clone(control))
     }
 
-    /// The pinned published container profile by registry id. Only enabled
+    /// The current published container profile by registry id. Only enabled
     /// declarations are candidates; the caller owns seat/capability checks.
-    pub fn container_profile(&self, name: &str) -> Option<&odin_registry::schema::ContainerToml> {
-        let object = self
-            .snapshot
-            .object(odin_registry::RegistryKind::Container, name)?;
+    pub fn container_profile(&self, name: &str) -> Option<odin_registry::schema::ContainerToml> {
+        let snapshot = self.snapshot();
+        let object = snapshot.object(odin_registry::RegistryKind::Container, name)?;
         match &object.config {
             odin_registry::schema::ObjectConfig::Container(container) if container.enabled => {
-                Some(container.as_ref())
+                Some(container.as_ref().clone())
             }
             _ => None,
         }
@@ -213,7 +235,7 @@ impl KubeRuntimeCell {
     pub fn monitored_profiles(
         &self,
     ) -> Vec<(odin_domain::Digest, odin_registry::schema::ContainerToml)> {
-        self.snapshot
+        self.snapshot()
             .objects
             .iter()
             .filter_map(|object| match &object.config {
@@ -232,7 +254,7 @@ impl KubeRuntimeCell {
     pub fn monitored_workloads(
         &self,
     ) -> Vec<(String, odin_registry::schema::WorkloadMonitoringToml)> {
-        odin_registry::compose_workload_profiles(&self.snapshot.objects)
+        odin_registry::compose_workload_profiles(&self.snapshot().objects)
             .into_iter()
             .filter_map(|profile| {
                 let monitoring = profile.profile.monitoring?;
@@ -243,13 +265,14 @@ impl KubeRuntimeCell {
 
     /// Enabled profiles with executable images, in registry order.
     pub fn launchable_profiles(&self) -> Vec<odin_omp::host_tools::LaunchableProfile> {
-        spheres::launchable_profiles(&self.snapshot)
+        spheres::launchable_profiles(&self.snapshot())
     }
 
-    /// The pinned published snapshot. Profile admission reads the caller's
-    /// project sphere from it; listing and create must see the same pin.
-    pub fn snapshot(&self) -> &odin_registry::Snapshot {
-        &self.snapshot
+    /// Pin the current published snapshot for the duration of a request.
+    pub fn snapshot(&self) -> Arc<odin_registry::Snapshot> {
+        self.published
+            .as_ref()
+            .map_or_else(|| Arc::clone(&self.snapshot), |handle| handle.current())
     }
 
     /// Real label composition context for Job creation, or `None` when the
@@ -282,14 +305,38 @@ impl KubeRuntimeCell {
                 self.config.namespace.clone(),
             )?))
             .map_err(|error| odin_kube::KubeError::unavailable(error.to_string()))?;
-        let reconciler = odin_kube::JobReconciler::new(
+        let mut reconciler = odin_kube::JobReconciler::new(
             client.clone(),
             Arc::clone(&self.ledger),
             Arc::clone(&self.stops),
             Arc::clone(&self.pod_lifecycle),
             self.artifact_root.clone(),
-        )?
-        .with_seat_limits(Arc::clone(&self.snapshot));
+        )?;
+        if let Some(published) = &self.published {
+            reconciler = reconciler.with_seat_limits(Arc::clone(published));
+        }
+        let offload = Arc::clone(&self.offload);
+        reconciler = reconciler.with_external_compute(Arc::new(move |lane, exempt| {
+            let binding = offload.lock().expect("offload binding");
+            binding.as_ref().map_or((0.0, 0.0, 0.0), |offload| {
+                offload
+                    .runs()
+                    .iter()
+                    .filter(|run| {
+                        !run.state.finished()
+                            && exempt != Some(&run.run_id)
+                            && run.lanes.iter().any(|id| id == lane.as_str())
+                    })
+                    .fold((0.0, 0.0, 0.0), |(cores, gpus, usd), run| {
+                        let seconds = run.remaining_seconds() as f64;
+                        (
+                            cores + f64::from(run.cores) * seconds,
+                            gpus + f64::from(run.gpus) * seconds,
+                            usd + run.usd_per_hour * seconds / 3_600.0,
+                        )
+                    })
+            })
+        }));
 
         let session = live::LiveSessionId::parse(KUBE_SURFACE_SESSION)
             .map_err(|error| odin_kube::KubeError::unavailable(error.to_string()))?;
@@ -337,8 +384,10 @@ pub(super) struct RuntimeCommandPort {
     kube_frame_sequence: AtomicU64,
     conversation: Option<Arc<crate::conversation_surface::ConversationSurface>>,
     live: Option<Arc<dyn live::OmpLivePlane>>,
+    recovery: Option<Arc<odin_omp::live::runtime::ProductionBridgeRuntimeFactory>>,
     /// Without a board, simulation commands return unavailable.
     simulation: Option<Arc<crate::simulation::SimulationDesk>>,
+    project_events: Option<Arc<crate::project_event::ProjectIntake>>,
     /// The device-bound session authority; without it, an authenticated
     /// open answers a typed unavailable.
     device_open: Option<Arc<super::device_open::DeviceOpenAuthority>>,
@@ -377,7 +426,9 @@ impl RuntimeCommandPort {
             kube_frame_sequence: AtomicU64::new(0),
             conversation: None,
             live: None,
+            recovery: None,
             simulation: None,
+            project_events: None,
             device_open: None,
             catalog: None,
             gateway: None,
@@ -388,6 +439,14 @@ impl RuntimeCommandPort {
             owner_preview: std::collections::BTreeSet::new(),
             features: None,
         }
+    }
+
+    pub(super) fn with_recovery(
+        mut self,
+        factory: Arc<odin_omp::live::runtime::ProductionBridgeRuntimeFactory>,
+    ) -> Self {
+        self.recovery = Some(factory);
+        self
     }
 
     pub(super) fn with_features(mut self, features: crate::features::FeatureRefresh) -> Self {
@@ -409,6 +468,14 @@ impl RuntimeCommandPort {
     }
 
 
+
+    pub(super) fn with_project_events(
+        mut self,
+        intake: Option<Arc<crate::project_event::ProjectIntake>>,
+    ) -> Self {
+        self.project_events = intake;
+        self
+    }
 
     pub(super) fn with_simulation(
         mut self,
@@ -743,6 +810,7 @@ impl live::HuginnCommandPort for RuntimeCommandPort {
             | live::HuginnRequest::BrowserCommand(_)
             | live::HuginnRequest::KubeCommand(_)
             | live::HuginnRequest::ApprovalDecision(_)
+            | live::HuginnRequest::RecoverCfdOperation(_)
             | live::HuginnRequest::ConversationStatus
             | live::HuginnRequest::ConversationThread(_)
             | live::HuginnRequest::ConversationSay(_)
@@ -756,6 +824,7 @@ impl live::HuginnCommandPort for RuntimeCommandPort {
             | live::HuginnRequest::Compute
             | live::HuginnRequest::LaneCommand(_)
             | live::HuginnRequest::SimulationCommand(_)
+            | live::HuginnRequest::ProjectEvent(_)
             | live::HuginnRequest::OpenSession(_)
             | live::HuginnRequest::EmergencyStop(_) => {
                 Err(live::HuginnProtocolError::Unauthenticated)
@@ -827,6 +896,9 @@ impl RuntimeCommandPort {
             (_, live::HuginnRequest::KubeCommand(command)) => {
                 self.execute_kube(device, command).await
             }
+            (_, live::HuginnRequest::RecoverCfdOperation(command)) => {
+                self.recover_cfd_operation(device, command).await
+            }
             (_, live::HuginnRequest::SimulationCommand(command)) => {
                 self.execute_simulation(device, command).await
             }
@@ -844,7 +916,16 @@ impl RuntimeCommandPort {
                 self.conversation()?.set_model(device, request).await
             }
             (_, live::HuginnRequest::Spend(request)) => {
-                crate::huginn_spend::read(self.gateway.clone(), request).await
+                let root = self
+                    .claude_runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.compute_usage_root())
+                    .or_else(|| {
+                        self.kube
+                            .as_ref()
+                            .and_then(|cell| cell.huginn_root().map(std::path::Path::to_path_buf))
+                    });
+                crate::huginn_spend::read(self.gateway.clone(), request, root.as_deref()).await
             }
             (_, live::HuginnRequest::Models) => {
                 crate::huginn_spend::models(self.gateway.clone()).await
@@ -914,6 +995,13 @@ impl RuntimeCommandPort {
             (_, live::HuginnRequest::EmergencyStop(request)) => {
                 crate::emergency_stop::start(device, &request)
             }
+            (_, live::HuginnRequest::ProjectEvent(report)) => match &self.project_events {
+                Some(intake) => intake.report(device, report).await,
+                None => Err(live::HuginnProtocolError::unavailable(
+                    "projectEventUnavailable",
+                    "this plane has no project event router",
+                )),
+            },
             (_, live::HuginnRequest::LaneCommand(command)) => match &self.live {
                 Some(plane) => crate::lane_command::execute(&self.ledger, plane, command).await,
                 None => Err(live::HuginnProtocolError::unavailable(
@@ -973,6 +1061,8 @@ fn unsupported(operation: &str) -> live::HuginnProtocolError {
 
 #[path = "kube_approval.rs"]
 mod approval;
+#[path = "kube_recovery.rs"]
+mod recovery;
 
 #[cfg(test)]
 #[path = "tests/kube.rs"]
@@ -988,457 +1078,6 @@ mod pod_exec;
 mod pod_lifecycle_tests;
 pub(crate) use pod_exec::KubePodWorkerExec;
 
-/// Transport constant of the in-image env executable the exec argv is
-/// composed through (imageRoot coreutils; build-validated in-image by the
-/// image contract). Mechanism only — never a profile field.
-const WORKLOAD_ENV_EXECUTABLE: &str = "/bin/env";
-/// Bounds of the composed env carriage: few, bounded, NUL-free pairs.
-const WORKLOAD_ENV_MAX_PAIRS: usize = 16;
-const WORKLOAD_ENV_PAIR_BYTES_MAX: usize = 4096;
-
-fn bad_env(reason: String) -> RemoteAttachError {
-    RemoteAttachError { detail: reason }
-}
-
-fn validate_env_pair(key: &str, value: &str) -> Result<(), RemoteAttachError> {
-    if key.is_empty() || value.contains('\0') || key.contains('\0') {
-        return Err(bad_env(
-            "workload env pair is empty-keyed or carries NUL".to_owned(),
-        ));
-    }
-    if key.len() > 128 || value.len() > WORKLOAD_ENV_PAIR_BYTES_MAX {
-        return Err(bad_env(
-            "workload env pair exceeds the composed bounds".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
-/// The kube-admitted remote carrier resolver: proves one workload binding's
-/// operation against the durable kube launch journal, then attaches the
-/// exact admitted pod exec channel of that run. The pinned launcher,
-/// extension binding, and digest-pinned image come from the durable launch
-/// record and the pinned image identity — never from a live declaration
-/// re-read. No local fallback exists.
-pub(crate) struct KubeWorkloadCarrier {
-    cell: Arc<KubeRuntimeCell>,
-    /// The controller's pinned OMP source revision, carried into the remote
-    /// spec exactly as the local composition pins it.
-    omp_revision: String,
-    /// Browser tools open an in-pod browser through these routes.
-    browsers: Arc<browser_runtime::BrowserRoutes>,
-    /// The profiles whose pods run their own browser.
-    browser_profiles: std::collections::BTreeSet<String>,
-    /// Pod-exec capabilities reach a session's pod through these bindings.
-    pod_sessions: Arc<odin_omp::host_tools::pod_exec::PodSessions>,
-}
-
-impl KubeWorkloadCarrier {
-    pub fn new(
-        cell: Arc<KubeRuntimeCell>,
-        omp_revision: String,
-        browsers: Arc<browser_runtime::BrowserRoutes>,
-        browser_profiles: std::collections::BTreeSet<String>,
-        pod_sessions: Arc<odin_omp::host_tools::pod_exec::PodSessions>,
-    ) -> Self {
-        Self {
-            cell,
-            omp_revision,
-            browsers,
-            browser_profiles,
-            pod_sessions,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl odin_omp::live::runtime::WorkloadCarrierPort for KubeWorkloadCarrier {
-    async fn carrier_for(
-        &self,
-        binding: &odin_domain::huginn::WorkloadSessionBinding,
-        manifest: &SessionManifest,
-    ) -> Result<Arc<dyn RemoteHarnessFactory>, LiveError> {
-        let control = self.cell.control().ok_or_else(|| {
-            LiveError::unavailable("workload_carrier", "the k3s API server is unreachable")
-        })?;
-        let reconciler = control.reconciler();
-        let Some((run, launch)) = reconciler
-            .operation_launch(&binding.operation)
-            .map_err(|error| LiveError::unavailable("workload_carrier", error))?
-        else {
-            return Err(LiveError::unavailable(
-                "workload_carrier",
-                format!(
-                    "operation {} admits no durable launch record",
-                    binding.operation
-                ),
-            ));
-        };
-        // Declared identity must agree across binding, durable launch
-        // record, and live manifest: profile, seat, and project. Node
-        // placement is Kubernetes-selected and carries no durable field;
-        // serving-node identity was proven at open against the seat
-        // binding's allowed-node set.
-        let Some(plan) = launch.workload.as_ref() else {
-            return Err(LiveError::unavailable(
-                "workload_carrier",
-                "the admitted launch carries no workload plan",
-            ));
-        };
-        let Some(extension) = launch.extension.as_ref() else {
-            return Err(LiveError::unavailable(
-                "workload_carrier",
-                "the admitted launch carries no extension binding",
-            ));
-        };
-        let mut staged_paths = reconciler
-            .staged_paths(&run)
-            .map_err(|error| LiveError::unavailable("workload_carrier", error))?;
-        let Some(staged_policy_path) = staged_paths.remove(&extension.policy_artifact) else {
-            return Err(LiveError::unavailable(
-                "workload_carrier",
-                format!(
-                    "the staged policy artifact {} has no recorded staging path for run {run}",
-                    extension.policy_artifact
-                ),
-            ));
-        };
-        let Some(models) = launch.models_config.as_ref() else {
-            return Err(LiveError::unavailable(
-                "workload_carrier",
-                "the admitted launch carries no models document",
-            ));
-        };
-        let Some(staged_models_path) = staged_paths.remove(&models.config_artifact) else {
-            return Err(LiveError::unavailable(
-                "workload_carrier",
-                format!(
-                    "the staged models artifact {} has no recorded staging path for run {run}",
-                    models.config_artifact
-                ),
-            ));
-        };
-        // The unique per-run agent dir lives under the declared state mount:
-        // session-persistent, never the read-only staging mount, never a
-        // shared persistent user state.
-        let agent_dir = format!("{}/.omp-agent/{}", plan.state_mount, run);
-        let spec = compose_remote_spec(
-            &AdmittedCarrierComposition {
-                extension,
-                models,
-                staged_policy_path: &staged_policy_path,
-                staged_models_path: &staged_models_path,
-                agent_dir: &agent_dir,
-            },
-            plan,
-            &self.omp_revision,
-        )
-        .map_err(|reason| LiveError::InvalidRequest {
-            code: "workload_carrier_spec".to_owned(),
-            message: reason,
-        })?;
-        if plan.profile != binding.profile
-            || launch.labels.run_id != run
-            || launch.labels.seat_id != manifest.seat_id
-            || launch.labels.project_id != manifest.project_id
-        {
-            return Err(LiveError::InvalidRequest {
-                code: "workload_carrier_identity".to_owned(),
-                message: "the admitted launch record disagrees with the session binding".to_owned(),
-            });
-        }
-        let owner =
-            odin_domain::SessionId::new(manifest.session_id.to_string()).map_err(|error| {
-                LiveError::InvalidRequest {
-                    code: "pod_session_owner".to_owned(),
-                    message: error.to_string(),
-                }
-            })?;
-        self.pod_sessions.bind(
-            owner.clone(),
-            odin_omp::host_tools::pod_exec::PodTarget {
-                run: run.clone(),
-                export_dir: plan.export_mount.clone(),
-                network_transport: plan.transport,
-            },
-        );
-        // Reserve the derived browser session for reattachment, then open it when the pod runs.
-        if self.browser_profiles.contains(&plan.profile) {
-            let session = live::pod_browser_session_id(&manifest.session_id);
-            if self.browsers.reserve(session, owner) {
-                tokio::spawn(open_pod_browser(
-                    reconciler.exec_client(),
-                    run.clone(),
-                    plan.clone(),
-                    session,
-                    Arc::clone(&self.browsers),
-                ));
-            }
-        }
-        Ok(Arc::new(KubeExecHarness {
-            client: reconciler.exec_client(),
-            run,
-            worker_id: launch.worker_id.clone(),
-            admission: RemoteHarnessAdmission {
-                profile: binding.profile.clone(),
-                image: launch.image.clone(),
-            },
-            spec,
-        }))
-    }
-}
-
-/// One admitted pod exec channel factory: the host-admitted remote
-/// harness of a workload session. The composed remote spec (verifier entry,
-/// staged policy carriage, declared launcher) and the digest-pinned image
-/// are the durable launch record's, carried as admission evidence.
-struct KubeExecHarness {
-    client: odin_kube::KubeClient,
-    run: odin_domain::RunId,
-    worker_id: WorkerId,
-    admission: RemoteHarnessAdmission,
-    spec: OmpProcessSpec,
-}
-
-#[async_trait::async_trait]
-impl RemoteHarnessFactory for KubeExecHarness {
-    async fn attach(
-        &self,
-        args: &[String],
-        env: &[(String, String)],
-    ) -> Result<RemoteHarnessChannel, RemoteAttachError> {
-        // Env carriage is argv-only through the image's own /bin/env
-        // (coreutils; build-validated in-image by the image contract):
-        // ["/bin/env", "--", K=V..., <composed remote spec argv>...].
-        // Plain argv, no shell, no interpolation, no stdin protocol; only
-        // the caller-composed capability-identity pairs ride here, exactly
-        // as composed — never wholesale host env, never secrets or paths.
-        // The composed spec argv itself starts at the in-image verifier
-        // entrypoint and carries the declared launcher verbatim after `--`.
-        let mut arguments: Vec<String> = Vec::with_capacity(env.len() + args.len() + 2);
-        if !env.is_empty() {
-            if env.len() > WORKLOAD_ENV_MAX_PAIRS {
-                return Err(bad_env(format!(
-                    "env carries {} pairs, over the {} pair bound",
-                    env.len(),
-                    WORKLOAD_ENV_MAX_PAIRS
-                )));
-            }
-            arguments.push("--".into());
-            for (key, value) in env {
-                validate_env_pair(key, value)?;
-                arguments.push(format!("{key}={value}"));
-            }
-        }
-        // The composed spec's executable is the in-image verifier entry —
-        // the first real argv element of the exec, exactly as the remote
-        // API composes it: [/bin/env, --, K=V..., <verifier>, "workload-exec", ...].
-        arguments.push(self.spec.executable.to_string_lossy().into_owned());
-        arguments.extend(args.iter().cloned());
-        let spec = WorkloadLauncherSpec {
-            launcher_path: WORKLOAD_ENV_EXECUTABLE.to_owned(),
-            arguments,
-        };
-        let attached = exec_fixed(
-            &self.client,
-            &self.run,
-            odin_kube::exec::JobExecTarget::Worker,
-            &spec,
-        )
-        .await
-        .map_err(|error| RemoteAttachError {
-            detail: error.to_string(),
-        })?;
-        let stream = decompose(attached).map_err(|error| RemoteAttachError {
-            detail: error.to_string(),
-        })?;
-        Ok(map_channel(stream))
-    }
-
-    fn job_worker_id(&self) -> &WorkerId {
-        &self.worker_id
-    }
-
-    fn stop_action(&self) -> JobStopAction {
-        JobStopAction::Delete
-    }
-
-    fn admission(&self) -> &RemoteHarnessAdmission {
-        &self.admission
-    }
-
-    fn process_spec(&self) -> OmpProcessSpec {
-        self.spec.clone()
-    }
-}
-
-/// The admitted carrier composition of one workload run: the launch
-/// record's own verified bindings paired with the exact staged read-only
-/// paths the reconciler recorded for them, plus the unique per-run agent
-/// dir under the declared state mount. Every member is journaled-with-
-/// the-launch or admission-resolved state; nothing is inferred from the
-/// environment, argv shapes, or path conventions.
-struct AdmittedCarrierComposition<'a> {
-    extension: &'a JobExtensionLaunch,
-    models: &'a JobModelsConfigLaunch,
-    staged_policy_path: &'a str,
-    staged_models_path: &'a str,
-    agent_dir: &'a str,
-}
-
-/// Composes the remote carrier's process spec. The in-image verifier entry —
-/// the image identity's own `odind`, whose `workload-exec` mode re-proves
-/// the staged policy bytes and the pinned extension bytes with the existing
-/// `ExtensionPolicyV1` verifier pair — carries the declared launcher
-/// verbatim after `--` and execs it only on success. The policy binding
-/// travels as explicit typed arguments; the extension path is exactly the
-/// image identity's declared in-image value, never a host path and never a
-/// store path.
-fn compose_remote_spec(
-    composition: &AdmittedCarrierComposition<'_>,
-    plan: &odin_kube::workload::WorkloadPodPlan,
-    omp_revision: &str,
-) -> Result<OmpProcessSpec, String> {
-    let extension = composition.extension;
-    let models = composition.models;
-    let staged_policy_path = composition.staged_policy_path;
-    let staged_models_path = composition.staged_models_path;
-    let agent_dir = composition.agent_dir;
-    let state_mount = plan.state_mount.as_str();
-    let verifier = extension.verifier.as_str();
-    let launcher = plan
-        .agent
-        .as_ref()
-        .ok_or_else(|| format!("workload {} runs no agent harness to attach", plan.profile))?
-        .launcher
-        .as_str();
-    if !odin_registry::schema::valid_pod_path(verifier) {
-        return Err(format!(
-            "the in-image verifier path {verifier:?} is invalid"
-        ));
-    }
-    if !odin_registry::schema::valid_pod_path(launcher) {
-        return Err(format!(
-            "the declared launcher path {launcher:?} is invalid"
-        ));
-    }
-    if !odin_registry::schema::valid_pod_path(staged_policy_path) {
-        return Err(format!(
-            "the staged policy path {staged_policy_path:?} is invalid"
-        ));
-    }
-    if !odin_registry::schema::valid_pod_path(staged_models_path) {
-        return Err(format!(
-            "the staged models path {staged_models_path:?} is invalid"
-        ));
-    }
-    if !odin_registry::schema::valid_pod_path(agent_dir) {
-        return Err(format!("the agent dir {agent_dir:?} is invalid"));
-    }
-    odin_domain::extension_policy::validate_digest(&extension.policy_digest)
-        .map_err(|error| format!("the launch policy digest is malformed: {error}"))?;
-    odin_domain::extension_policy::validate_digest(&models.config_digest)
-        .map_err(|error| format!("the models config digest is malformed: {error}"))?;
-    let mut explicit_args = vec![
-        "workload-exec".to_owned(),
-        "--extension-policy".to_owned(),
-        staged_policy_path.to_owned(),
-        "--extension-policy-digest".to_owned(),
-        extension.policy_digest.clone(),
-        "--models-config".to_owned(),
-        staged_models_path.to_owned(),
-        "--models-config-digest".to_owned(),
-        models.config_digest.clone(),
-        "--agent-dir".to_owned(),
-        agent_dir.to_owned(),
-        "--state-mount".to_owned(),
-        state_mount.to_owned(),
-        "--credential-env".to_owned(),
-        models.credential_env.clone(),
-        "--working-dir".to_owned(),
-        state_mount.to_owned(),
-        "--trusted-extension".to_owned(),
-        extension.trusted_extension.clone(),
-        "--".to_owned(),
-        launcher.to_owned(),
-    ];
-    // Share tool-exposure flags with local launches: read only, never `--no-tools`.
-    explicit_args.extend(odin_omp::process::governed_harness_args(
-        std::path::Path::new(&extension.trusted_extension),
-    ));
-    let explicit_env = vec![
-        (
-            EXTENSION_POLICY_PATH_ENV.to_owned(),
-            staged_policy_path.to_owned(),
-        ),
-        (
-            EXTENSION_POLICY_DIGEST_ENV.to_owned(),
-            extension.policy_digest.clone(),
-        ),
-        ("PI_CODING_AGENT_DIR".to_owned(), agent_dir.to_owned()),
-    ];
-    Ok(OmpProcessSpec {
-        executable: PathBuf::from(verifier),
-        cwd: PathBuf::from(state_mount),
-        explicit_args,
-        explicit_env,
-        expected_source_revision: omp_revision.to_owned(),
-        startup_timeout: StdDuration::from_secs(120),
-        drain_timeout: StdDuration::from_secs(10),
-        kill_timeout: StdDuration::from_secs(5),
-    })
-}
-
-/// Maps the kube exec stream halves into the transport-agnostic remote
-/// harness channel the process boundary consumes: every carrier outcome is
-/// mapped onto the typed [`RemoteExit`] — `None` (clean channel close) is
-/// clean, `Some(reason)` (Failure status, missing verdict, or canceled
-/// wait) is unclean with the exact reason.
-fn map_channel(stream: WorkloadExecStream) -> RemoteHarnessChannel {
-    RemoteHarnessChannel {
-        stdin: Box::new(ExecStdin {
-            writer: Some(stream.stdin),
-        }),
-        stdout: Box::new(stream.stdout),
-        stderr: stream.stderr,
-        exit: Box::pin(async move {
-            match stream.exit.await {
-                Some(reason) => RemoteExit {
-                    status: None,
-                    clean: false,
-                    failure: Some(reason),
-                },
-                None => RemoteExit {
-                    status: None,
-                    clean: true,
-                    failure: None,
-                },
-            }
-        }),
-    }
-}
-
-/// The exec stdin half: ordered framed writes while the carrier is
-/// attached, graceful stdin EOF on shutdown.
-struct ExecStdin {
-    writer: Option<Box<dyn tokio::io::AsyncWrite + Unpin + Send>>,
-}
-
-#[async_trait::async_trait]
-impl HarnessStdin for ExecStdin {
-    async fn write_all(&mut self, bytes: Vec<u8>) -> std::io::Result<()> {
-        match self.writer.as_mut() {
-            Some(writer) => tokio::io::AsyncWriteExt::write_all(writer, &bytes).await,
-            None => Err(std::io::Error::other(
-                "the exec stdin half is already closed",
-            )),
-        }
-    }
-
-    fn shutdown(mut self: Box<Self>) -> std::io::Result<()> {
-        // Graceful: close stdin EOF. The carrier drains, exits, and the
-        // owned exit waiter resolves from the real carrier status.
-        self.writer = None;
-        Ok(())
-    }
-}
+#[path = "kube_carrier.rs"]
+mod carrier;
+pub(crate) use carrier::KubeWorkloadCarrier;

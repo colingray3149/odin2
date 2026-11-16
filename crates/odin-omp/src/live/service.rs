@@ -43,6 +43,12 @@ pub struct OmpLiveService {
     links: std::sync::Mutex<Option<crate::host_tools::delegation::DelegationLinkLedger>>,
 }
 
+/// A digest of the daemon-side state a heartbeat watches (workload states,
+/// open incidents); equal digests mean nothing moved.
+pub trait HeartbeatWatched: Send + Sync {
+    fn digest(&self, seat: &odin_domain::SeatId) -> String;
+}
+
 /// Gathers the seat's task notes, project memory, and repository state,
 /// retires the session, and opens the successor. `owner_text` is the exact
 /// opener text a new-information replacement must carry into the successor
@@ -244,11 +250,13 @@ impl OmpLiveService {
                 LiveSessionState::Idle | LiveSessionState::Starting => LiveCommandBody::Prompt {
                     message: message.clone(),
                     owner_text: None,
+                    wake: false,
                 },
                 LiveSessionState::Running | LiveSessionState::RequiresAction => {
                     LiveCommandBody::FollowUp {
                         message: message.clone(),
                         owner_text: None,
+                        wake: false,
                     }
                 }
                 _ => return Ok(false),
@@ -670,7 +678,7 @@ impl OmpLivePlane for OmpLiveService {
 }
 
 /// How a declared watcher event names the sessions it concerns.
-/// `Project` is a repository identity (`repo_watch`). `Session` is the
+/// `Project` is a repository identity (`repo_watch`) or a reported project event. `Session` is the
 /// delegated child, stalled worker, or launching session the event is
 /// about; its parent is preferred when that parent is live on the seat.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -680,13 +688,16 @@ pub enum WakeRoute {
 }
 
 impl WakeRoute {
-    /// `push:<project>:...` names that project. A child, stall, or workload
+    /// `push:<project>:...` and `project_event:<project>:...` name that project. A child, stall, or workload
     /// id that embeds a live-session uuid names that session, whether the
     /// producer separated it with colons (`resumed:{uuid}:...`) or hyphens
     /// (`child-{uuid}-{key}`, `stalled-{uuid}`). Anything else is unrouted
     /// and wakes every applicable session of the seat.
     pub fn from_event_id(id: &str) -> Option<Self> {
-        if let Some(rest) = id.strip_prefix("push:") {
+        if let Some(rest) = id
+            .strip_prefix("push:")
+            .or_else(|| id.strip_prefix("project_event:"))
+        {
             let project = rest
                 .split(':')
                 .next()
@@ -746,7 +757,9 @@ fn wake_command_id(
 /// that parent is one of this seat's live sessions; otherwise it keeps the
 /// named session's own project. No route, or a route whose identity is not
 /// among the tracked sessions, keeps every live session of the seat so the
-/// event is not dropped.
+/// event is not dropped. An event about one of the seat's own sessions wakes
+/// none of them: a session is never told about itself, and a seat does not
+/// supervise its own sessions as delegated children.
 fn wake_targets(
     summaries: &[LiveSessionSummary],
     projects: &std::collections::BTreeMap<LiveSessionId, ProjectId>,
@@ -754,6 +767,14 @@ fn wake_targets(
     route: Option<&WakeRoute>,
     parent: Option<&LiveSessionId>,
 ) -> Vec<LiveSessionSummary> {
+    if let Some(WakeRoute::Session(session)) = route {
+        if summaries
+            .iter()
+            .any(|summary| summary.session_id == *session && summary.seat_id == *seat)
+        {
+            return Vec::new();
+        }
+    }
     let live: Vec<LiveSessionSummary> = summaries
         .iter()
         .filter(|summary| summary.seat_id == *seat && wake_accepts(summary.state))
@@ -1094,6 +1115,19 @@ mod tests {
             vec![1, 3],
             "a failed parent is not a wake target"
         );
+        for own in [&summaries[0], &summaries[1]] {
+            assert!(
+                wake_targets(
+                    &summaries,
+                    &projects,
+                    &seat,
+                    Some(&WakeRoute::Session(own.session_id)),
+                    Some(&summaries[2].session_id),
+                )
+                .is_empty(),
+                "a report about the seat's own session wakes none of its sessions"
+            );
+        }
         assert_eq!(
             WakeRoute::from_event_id("push:alpha:main:abc"),
             Some(WakeRoute::Project(ProjectId::new("alpha").unwrap()))

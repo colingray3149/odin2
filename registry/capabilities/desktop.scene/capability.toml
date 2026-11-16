@@ -5,7 +5,7 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Used on the desktop only when the owner asks."
+description = "Runs several desktop, device and headless steps as one ordered scene (gaming setup, say), when the owner asks."
 handler = { id = "desktop_scene" }
 input_schema = "schemas/capability/desktop.scene.input.json"
 output_schema = "schemas/capability/desktop.act.output.json"

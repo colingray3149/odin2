@@ -388,7 +388,7 @@ fn ssh_arguments(executable: &str, host: &str, remote: String) -> Vec<String> {
 const STDERR_TAIL: usize = 300;
 
 /// Drain stderr completely. Keep only the last `limit` bytes.
-pub(super) fn read_stderr_tail(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, String> {
+fn read_stderr_tail(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, String> {
     let mut kept = Vec::new();
     let mut chunk = [0u8; 8192];
     loop {

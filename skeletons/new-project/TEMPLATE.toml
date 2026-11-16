@@ -8,7 +8,5 @@ source_root = "__source_root__"
 default_seat = "__default_seat__"
 # Atlas corpus: an atlas.* source the seats' brain_scope declares.
 memory_namespaces = ["atlas.__memory_namespace__"]
-# Retention/privacy class: standard, private, or large-scientific.
-artifact_policy = "__artifact_policy__"
 # Optional account-kind to signed-in account-name table.
 accounts = "__accounts__"

@@ -248,10 +248,12 @@ fn coordinator_prompt(
         Steer { message } | Prompt { message, .. } => Ok(Prompt {
             message: message.clone(),
             owner_text: Some(text.to_owned()),
+            wake: false,
         }),
         FollowUp { message, .. } => Ok(FollowUp {
             message: message.clone(),
             owner_text: Some(text.to_owned()),
+            wake: false,
         }),
         _ => Err("a coordinator update is a steer or a prompt".to_owned()),
     }
@@ -427,6 +429,7 @@ impl odin_omp::host_tools::delegation::ChildSessionControl for SupervisorChildCo
             odin_domain::huginn::LiveCommandBody::Prompt {
                 message,
                 owner_text: None,
+                wake: false,
             },
         )
     }
@@ -915,6 +918,7 @@ impl odin_omp::host_tools::delegation::ChildSessionControl for SupervisorChildCo
                 after = event.sequence;
                 if let odin_domain::huginn::LiveEventBody::Error(error) = event.body {
                     failure = Some(SessionFailure {
+                        event: after.get(),
                         code: error.code,
                         message: error
                             .message

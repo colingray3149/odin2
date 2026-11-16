@@ -52,6 +52,18 @@ pub const TASK_NOTES_CHECKSUM: &str =
 pub const TASK_OUTCOMES_SCHEMA: &str = include_str!("../../../schemas/0024_task_outcomes.sql");
 pub const TASK_OUTCOMES_CHECKSUM: &str =
     "66a7ecdf98fd124981ef43b16dd6a5db87641c43e2b6ba6020ca6666362d55a9";
+pub const DROP_BUDGET_RESERVATIONS_SCHEMA: &str =
+    include_str!("../../../schemas/0025_drop_budget_reservations.sql");
+pub const DROP_BUDGET_RESERVATIONS_CHECKSUM: &str =
+    "48c49712f2a21f2c0f161c1ae35a4d316dda2a911b93858d359b96c0758c3735";
+pub const OPERATION_FENCES_SCHEMA: &str =
+    include_str!("../../../schemas/0026_operation_fences.sql");
+pub const OPERATION_FENCES_CHECKSUM: &str =
+    "71917cb526a6fe58517bb5c05cc38ca82611a78d738136a3ccd927cbd2007d7d";
+pub const RECOVERY_RECEIPTS_SCHEMA: &str =
+    include_str!("../../../schemas/0027_recovery_receipts.sql");
+pub const RECOVERY_RECEIPTS_CHECKSUM: &str =
+    "dd1c23e5706d7198b1aba3ec70da5bf54d903510abd0beac8581533a105291e9";
 
 #[derive(Clone, Copy, Debug)]
 pub struct Migration<'a> {
@@ -137,7 +149,7 @@ impl OwnedMigration {
     }
 }
 
-pub const BUILTIN_MIGRATIONS: [Migration<'static>; 24] = [
+pub const BUILTIN_MIGRATIONS: [Migration<'static>; 27] = [
     Migration::register(
         1,
         "schemas/0001_control_plane.sql",
@@ -272,11 +284,29 @@ pub const BUILTIN_MIGRATIONS: [Migration<'static>; 24] = [
         TASK_OUTCOMES_CHECKSUM,
         TASK_OUTCOMES_SCHEMA,
     ),
+    Migration::register(
+        25,
+        "schemas/0025_drop_budget_reservations.sql",
+        DROP_BUDGET_RESERVATIONS_CHECKSUM,
+        DROP_BUDGET_RESERVATIONS_SCHEMA,
+    ),
+    Migration::register(
+        26,
+        "schemas/0026_operation_fences.sql",
+        OPERATION_FENCES_CHECKSUM,
+        OPERATION_FENCES_SCHEMA,
+    ),
+    Migration::register(
+        27,
+        "schemas/0027_recovery_receipts.sql",
+        RECOVERY_RECEIPTS_CHECKSUM,
+        RECOVERY_RECEIPTS_SCHEMA,
+    ),
 ];
 
 /// The schema version every builtin migration reaches. Snapshot extensions
 /// register above it; reopening above the supported version fails closed.
-pub const LATEST_SCHEMA_VERSION: i64 = 24;
+pub const LATEST_SCHEMA_VERSION: i64 = 27;
 
 pub fn migrate(connection: &mut Connection) -> LedgerResult<()> {
     migrate_with(connection, &[])

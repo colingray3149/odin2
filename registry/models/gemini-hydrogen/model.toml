@@ -1,0 +1,19 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "Gemini 4 Hydrogen on the paid Google AI Studio key."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/gemini-hydrogen"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "google/gemini-4-hydrogen"
+# frontier, everyday or fast-cheap.
+tier = "frontier"
+# Position in the class try order.
+order = 4
+# Account pin holding this card's credentials.
+account = "google-ai-studio"
+# One line naming when this card is the right pick.
+strengths = "Google's Gemini 4 Hydrogen, billed per token on AI Studio ($1.50/M in, $7.50/M out); the owner's trial as Sinmara."
+seats = true
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"

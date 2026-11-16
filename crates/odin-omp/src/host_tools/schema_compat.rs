@@ -237,7 +237,7 @@ fn applicable_schemas<'a>(
     }
 }
 
-/// Remove optional nulls while retaining values required by the active schema.
+/// Remove optional named nulls while retaining required values and semantic map entries.
 pub fn drop_null_optionals(schema: &Value, arguments: Value) -> Value {
     drop_null_optionals_from(&[schema], arguments)
 }
@@ -254,6 +254,10 @@ fn drop_null_optionals_from(schemas: &[&Value], arguments: Value) -> Value {
                     .into_iter()
                     .filter(|(name, value)| {
                         !value.is_null()
+                            // Map entries are data, not optional named arguments.
+                            || !applicable.iter().any(|schema| {
+                                schema.get("properties").and_then(|p| p.get(name)).is_some()
+                            })
                             || applicable.iter().any(|schema| {
                                 required_names(schema).any(|required| required == name.as_str())
                             })
@@ -266,6 +270,7 @@ fn drop_null_optionals_from(schemas: &[&Value], arguments: Value) -> Value {
                                     schema
                                         .get("properties")
                                         .and_then(|properties| properties.get(&name))
+                                        .or_else(|| schema.get("additionalProperties"))
                                 })
                                 .collect();
                             drop_null_optionals_from(&nested, value)
@@ -312,11 +317,51 @@ mod tests {
         .expect("the declared edit schema parses")
     }
 
-    fn forget_schema() -> Value {
-        serde_json::from_str(include_str!(
-            "../../../../schemas/capability/memory.forget.input.json"
+    #[test]
+    fn registry_expected_absence_survives_argument_normalization() {
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../../../schemas/capability/registry.edit.grant.input.json"
         ))
-        .expect("the declared forget schema parses")
+        .unwrap();
+        let sent = json!({
+            "kind": "seat", "id": "scribe", "reason": "read access",
+            "add": {"read_project_scope": ["demo"]},
+            "expected": {"read_project_scope": null}, "approvalId": null
+        });
+        let normalized = drop_null_optionals(&schema, sent);
+        assert_eq!(normalized["expected"], json!({"read_project_scope": null}));
+        assert!(normalized.get("approvalId").is_none());
+        assert!(valid(&schema, &normalized));
+    }
+
+    /// Optional fields under a `oneOf`: either a phrase alone, or an exact
+    /// commit, page and label together (the shape of the retired
+    /// `memory.forget` input).
+    fn forget_schema() -> Value {
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "contains": {"type": "string", "minLength": 6, "maxLength": 500},
+                "commit": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
+                "page": {"type": "string", "minLength": 1},
+                "label": {"type": "string", "minLength": 6, "maxLength": 500}
+            },
+            "oneOf": [
+                {
+                    "required": ["contains"],
+                    "not": {"anyOf": [
+                        {"required": ["commit"]},
+                        {"required": ["page"]},
+                        {"required": ["label"]}
+                    ]}
+                },
+                {
+                    "required": ["commit", "page", "label"],
+                    "not": {"required": ["contains"]}
+                }
+            ]
+        })
     }
 
     #[test]

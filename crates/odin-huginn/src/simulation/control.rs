@@ -83,6 +83,16 @@ impl SimulationControl {
         &mut self.board
     }
 
+    pub fn renders(&self) -> &SimulationRenderBoard {
+        &self.renders
+    }
+
+    /// The render board and the mission board's artifact store together (a frame is stored,
+    /// then its render recorded).
+    pub fn renders_mut(&mut self) -> (&mut SimulationRenderBoard, &mut SimulationBoard) {
+        (&mut self.renders, &mut self.board)
+    }
+
     /// Returns (creating if absent) the durable telemetry ring for one run.
     pub fn telemetry_ring_mut(
         &mut self,

@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+toolset = "status"
+op = "lease_create"
+description = "Create a compute lease after owner approval of the exact provider, offer, duration, estimated USD and cap, or render its request without purchasing it."
+handler = { id = "compute_lease_create" }
+input_schema = "schemas/capability/compute.lease.create.input.json"
+output_schema = "schemas/capability/compute.lease.create.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator", "operator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+preview = "card"
+approval_card = { title = "Approve compute lease on {/provider}", fields = ["/provider", "/offer", "/project", "/lane", "/hours", "/estimated_usd", "/approved_cap_usd", "/dry_run"] }
+evidence_extractor = { id = "odin_hermes_compute_lease_create_evidence" }
+tests = ["odin-registry schema::rental_approvals::tests::lease_intent_and_reservation_are_atomic_and_replayable"]

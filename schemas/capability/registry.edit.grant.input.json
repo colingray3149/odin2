@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/registry.edit.grant.input.json",
+  "title": "registry.edit.grant input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "enum": [
+        "workload",
+        "seat",
+        "lane",
+        "project",
+        "node",
+        "context-profile"
+      ],
+      "description": "The kind of the existing declaration to change."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Its id, e.g. kubert-odin or scribe."
+    },
+    "operation": {
+      "enum": ["create", "delete"],
+      "description": "Owner-approved seat lifecycle operation. Omit for an in-place edit."
+    },
+    "declaration": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768,
+      "description": "Exact complete seat.toml to create or delete. Deletion is refused if the existing file differs."
+    },
+    "set": {
+      "type": "object",
+      "maxProperties": 16,
+      "description": "Keys to set, dotted for a table: {\"limits.pods\": 8} or {\"resources.memory\": \"3Gi\"}.",
+      "propertyNames": {
+        "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+){0,3}$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "maxLength": 512
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "add": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": {
+        "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+){0,3}$"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 32,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "description": "Items to add to a list: {\"read_project_scope\": [\"example-project\"]}."
+    },
+    "remove": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": {
+        "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+){0,3}$"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 32,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "description": "Items to remove from a list."
+    },
+    "unset": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+){0,3}$"
+      },
+      "description": "Keys to remove entirely, dotted for a table; expected must contain each current value."
+    },
+    "expected": {
+      "type": "object",
+      "maxProperties": 48,
+      "propertyNames": {
+        "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+){0,3}$"
+      },
+      "description": "Current value of each changed key, as read from the declaration; use null if absent. The edit is refused if any value changes before publication."
+    },
+    "personal": {
+      "type": "boolean",
+      "description": "Mark added lines as personal for the owner's life, accounts or private projects."
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "description": "Why, in a few words; it goes in the commit."
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "kind",
+    "id",
+    "reason"
+  ],
+  "anyOf": [
+    { "required": ["expected", "set"] },
+    { "required": ["expected", "add"] },
+    { "required": ["expected", "remove"] },
+    { "required": ["expected", "unset"] },
+    { "required": ["operation", "declaration"], "properties": { "kind": { "const": "seat" } } }
+  ]
+}

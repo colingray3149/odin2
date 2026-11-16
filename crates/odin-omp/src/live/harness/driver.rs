@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use odin_domain::huginn::{LiveError, SessionManifest};
-use odin_registry::{EnvironmentTransport, HarnessProtocol};
+use odin_registry::EnvironmentTransport;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, Command};
@@ -15,7 +15,7 @@ use tokio::sync::{broadcast, oneshot, watch};
 use tokio::time::Instant;
 
 use super::decode::{agent_end, prompt_result, Decoded, OutputDecoder};
-use super::{acp, retire, HarnessRoute, HarnessWorkspace, TurnState};
+use super::{retire, HarnessRoute, HarnessWorkspace, TurnState};
 use crate::bridge::ObservedFrame;
 
 /// How a turn's teardown runs: the unit manager's stop argv (the unit is
@@ -91,17 +91,8 @@ pub(super) struct TurnDriver {
     pub(super) teardown: Teardown,
     pub(super) turn_id: String,
     pub(super) unit: Option<String>,
-    /// The turn's prompt when the harness speaks ACP.
-    pub(super) acp: Option<AcpPrompt>,
     /// The turn's prompt when the agent reads it from stdin.
     pub(super) stdin_prompt: Option<String>,
-}
-
-pub(super) struct AcpPrompt {
-    pub(super) prompt: String,
-    pub(super) agent_session: Option<String>,
-    /// The session's kernel MCP bridge, offered in `session/new`.
-    pub(super) mcp_servers: Vec<Value>,
 }
 
 /// Writes and closes stdin, reporting failure so a missing prompt is visible.
@@ -163,10 +154,7 @@ impl TurnDriver {
                 None
             }
         };
-        let (outcome, mut stopped) = match self.acp.take() {
-            Some(acp) => self.converse_acp(&mut child, acp, &mut stop).await,
-            None => self.decode_lines(&mut child, &mut stop).await,
-        };
+        let (outcome, mut stopped) = self.decode_lines(&mut child, &mut stop).await;
         // One absolute deadline for the agent's exit and its stderr's end: a
         // natural end gets the reap budget, a stop its own budget from when
         // it is seen, its manager's stop included.
@@ -224,10 +212,7 @@ impl TurnDriver {
                 );
             }
         }
-        // An ACP turn's verdict is its prompt answer; the agent exits on
-        // stdin closing, however it chooses to.
-        let exit_ok = self.route.harness.protocol == HarnessProtocol::Acp
-            || matches!(&reaped, Some(Ok(status)) if status.success());
+        let exit_ok = matches!(&reaped, Some(Ok(status)) if status.success());
         if let Some(session) = &outcome.agent_session {
             if let Ok(mut state) = self.state.lock() {
                 state.agent_session = Some(session.clone());
@@ -436,35 +421,5 @@ impl TurnDriver {
             }
         }
         (decoder.finish(), stopped)
-    }
-
-    /// An ACP agent: one conversation over its stdio.
-    async fn converse_acp(
-        &self,
-        child: &mut Child,
-        acp: AcpPrompt,
-        stop: &mut StopSignal,
-    ) -> (Decoded, bool) {
-        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
-            return (
-                Decoded {
-                    failed: Some("the agent's stdio was not piped".to_owned()),
-                    ..Decoded::default()
-                },
-                false,
-            );
-        };
-        let session = self.manifest.session_id.to_string();
-        let turn = acp::AcpTurn {
-            session,
-            harness: &self.route.harness_id,
-            workspace: &self.workspace,
-            agent_session: acp.agent_session,
-            brief: self.route.harness.brief.as_deref(),
-            prompt: acp.prompt,
-            mcp_servers: acp.mcp_servers,
-        };
-        let emit = |frame: Value| self.emit(frame);
-        acp::converse(stdin, stdout, turn, stop, &emit).await
     }
 }

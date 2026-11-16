@@ -47,6 +47,8 @@ pub fn media_type_for_name(name: &str) -> Option<&'static str> {
         "txt" => Some("text/plain"),
         "md" => Some("text/markdown"),
         "json" => Some("application/json"),
+        // Line-delimited JSON: the OSINT tools retain their evidence in it.
+        "jsonl" | "ndjson" => Some("application/json"),
         "toml" => Some("application/toml"),
         "csv" => Some("text/csv"),
         "zip" => Some("application/zip"),

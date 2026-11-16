@@ -31,6 +31,8 @@ pub struct ParentBrokerServer {
     abandoned: AtomicBool,
     shutdown_failed: AtomicBool,
     shutdown_result: Mutex<Option<ShutdownReceiver>>,
+    #[cfg(test)]
+    pub(super) shutdown_observer: Option<std::sync::mpsc::Sender<Result<(), String>>>,
 }
 
 impl ParentBrokerServer {
@@ -77,6 +79,8 @@ impl ParentBrokerServer {
             shutdown_failed: AtomicBool::new(false),
             abandoned: AtomicBool::new(false),
             shutdown_result: Mutex::new(None),
+            #[cfg(test)]
+            shutdown_observer: None,
         })
     }
 
@@ -406,11 +410,17 @@ impl ParentBrokerServer {
             runtime_error: Arc::clone(&self.runtime_error),
             shutdown_complete: Arc::clone(&self.shutdown_complete),
         };
+        #[cfg(test)]
+        let observer = self.shutdown_observer.clone();
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .name("odin-broker-shutdown".to_owned())
             .spawn(move || {
                 let result = managed_shutdown(&state, deadline);
+                #[cfg(test)]
+                if let Some(observer) = observer {
+                    let _ = observer.send(result.as_ref().map(|_| ()).map_err(ToString::to_string));
+                }
                 let _ = sender.send(result);
             })
             .map_err(|error| ParentAuthorityError::Transport(error.to_string()))?;

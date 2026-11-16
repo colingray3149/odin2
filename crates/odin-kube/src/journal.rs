@@ -79,6 +79,15 @@ impl Journal {
             .map_err(storage)
     }
 
+    /// Whether an authority cancel was applied for `run`: the run was
+    /// withdrawn on purpose, not lost.
+    pub(crate) fn run_cancelled(&self, run: &RunId) -> Result<bool, KubeError> {
+        let ledger = self.ledger.lock().map_err(storage)?;
+        StoredJournal(ledger.connection())
+            .run_cancelled(&self.scope(), run)
+            .map_err(storage)
+    }
+
     fn scope(&self) -> Scope<'_> {
         Scope {
             cluster: &self.cluster,

@@ -31,6 +31,8 @@ pub(super) const ENV_PATH: &str = "/usr/bin/env";
 const SHELL_ARGV_MOUNT: &str = "/odin-shell.argv";
 /// OMP's agent directory under HOME, which holds the models file.
 const OMP_AGENT_DIR: &str = ".omp/agent";
+/// The directories a seat's `read` may open, colon-separated: the bubble's own seat mounts.
+pub const READ_ROOTS_ENV: &str = "ODIN_READ_ROOTS";
 /// The seat scratch directory under the launch directory, and its role name.
 const SCRATCH_DIR: &str = "scratch";
 
@@ -426,6 +428,7 @@ pub fn apply_seat_sandbox(
     capsule: &Path,
     host: &SeatSandboxHost,
     sphere: Option<&super::sphere::SphereProjection>,
+    read_roots: &[PathBuf],
 ) -> Result<(), String> {
     let home = process
         .explicit_env
@@ -439,8 +442,8 @@ pub fn apply_seat_sandbox(
     let (mut writable, mut readonly) = resolve_sandbox_paths(sandbox, capsule, &scratch)?;
     if let Some(sphere) = sphere {
         // The sphere is the filesystem. Seat roles would admit host paths
-        // the project did not declare. An unattached serial node is omitted
-        // from the bubble; the action that needs it fails at open.
+        // the project did not declare. A serial node is bound only for the
+        // selected `device.run` action, which fails when it is absent.
         std::fs::create_dir_all(&sphere.scratch).map_err(|error| {
             format!(
                 "create sphere scratch {}: {error}",
@@ -449,7 +452,19 @@ pub fn apply_seat_sandbox(
         })?;
         writable = vec![capsule.to_path_buf(), sphere.scratch.clone()];
         readonly = sphere.data_roots.clone();
+    } else {
+        // The seat's own file roots: a declared folder that is absent today is skipped, not fatal.
+        readonly.extend(read_roots.iter().filter(|root| root.is_dir()).cloned());
     }
+    // Everything the bubble mounts for the seat is what `read` may open (the extension checks).
+    let readable: Vec<&str> = writable
+        .iter()
+        .chain(readonly.iter())
+        .filter_map(|path| path.to_str())
+        .collect();
+    process
+        .explicit_env
+        .push((READ_ROOTS_ENV.to_owned(), readable.join(":")));
     for path in writable.iter().chain(readonly.iter()) {
         if !path.exists() {
             return Err(format!("sandbox mount {} does not exist", path.display()));
@@ -851,6 +866,9 @@ mod tests {
                 .any(|window| { window == ["--ro-bind", rendered.as_str(), rendered.as_str()] }),
             "sphere process dropped the resolved models file: {argv:?}"
         );
+        // OMP resolves provider apiKey commands through Bun.spawn with ignored
+        // stdin, which needs the process's private /dev to start the command.
+        assert!(argv.windows(2).any(|pair| pair == ["--dev", "/dev"]));
         assert!(!argv
             .iter()
             .any(|arg| arg == "/work/checkout" || arg == "/work/role"));
@@ -869,6 +887,10 @@ mod tests {
             &sphere,
         )
         .expect("sphere shell argv");
+        assert!(!shell_argv.windows(2).any(|pair| pair == ["--dev", "/dev"]));
+        assert!(!shell_argv
+            .windows(2)
+            .any(|pair| pair == ["--dev-bind", "/dev"]));
         assert!(
             !shell_argv.iter().any(|arg| {
                 arg == rendered.as_str() || arg == "/work/checkout" || arg == "/work/role"

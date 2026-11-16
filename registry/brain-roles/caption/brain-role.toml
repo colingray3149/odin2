@@ -1,0 +1,12 @@
+schema = "odin.registry.v1"
+kind = "brain-role"
+enabled = true
+description = "One short caption per photo, no identities; written to the photo library's description field. Run local-models load qwen3-vl-8b first."
+role = "caption"
+engine = "lane"
+lanes = ["local/qwen3-vl-8b", "luna"]
+[params]
+max_output = 1200
+effort = "low"
+temperature = 0
+max_parallel = 1

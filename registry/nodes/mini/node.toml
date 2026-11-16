@@ -7,8 +7,29 @@ role = "control"
 capabilities = ["operator", "control", "inference", "embed", "scrape", "simulation", "k3s-server", "desktop"]
 allow_workloads = true
 authoritative_state = true
+external_drain_timeout_seconds = 600
+offload_empty_poll_seconds = 60
+# Simulation board observation cadence, in seconds.
+simulation_pump_seconds = 10
+# Open Missions view polling cadence, in seconds.
+missions_view_seconds = 5
+image_prune_min_age_seconds = 604800
+image_prune_max_bytes = 107374182400
+image_prune_cadence_seconds = 86400
+image_prune_cri_timeout_seconds = 120
+# Maximum side of rasterized SVG mission previews, in pixels.
+missions_preview_max_side = 2048
+root_plan_wake_seconds = 5
+# Host folders workload [[data]] mounts may read (dotfiles odin.node.dataRoots creates them).
+data_roots = ["/srv/project/stage", "/srv/project/data"]
 
 # The node-local gateway the pods placed on this node reach: host authority
 # is the declared reachable (tailnet) address of this node, the port is the
 # declared node-facing LiteLLM service port, and the path is the API base.
 gateway_endpoint = "http://100.64.0.11:14000/v1"
+
+[workload_watch]
+tick_seconds = 15
+crash_loop_restarts = 3
+report_window_seconds = 900
+max_output_bytes = 1048576

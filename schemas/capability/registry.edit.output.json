@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/registry.edit.output.json",
+  "title": "registry.edit output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "diff": {
+      "type": "string"
+    },
+    "publishedRevision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "commit": {
+      "type": "string"
+    },
+    "takesEffect": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "id",
+    "path",
+    "diff",
+    "publishedRevision",
+    "commit",
+    "takesEffect"
+  ]
+}

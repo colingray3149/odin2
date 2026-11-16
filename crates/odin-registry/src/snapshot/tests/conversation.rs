@@ -26,8 +26,7 @@ fn conversation_fixture_worktree() -> (TestDirectory, PathBuf) {
          description = \"conversation fixture project\"\n\
          source_root = \"\"\n\
          default_seat = \"herald\"\n\
-         memory_namespaces = []\n\
-         artifact_policy = \"standard\"\n";
+         memory_namespaces = []\n";
     fs::create_dir_all(worktree.join("registry/projects/letter")).unwrap();
     fs::write(
         worktree.join("registry/projects/letter/project.toml"),
@@ -42,9 +41,7 @@ fn conversation_fixture_worktree() -> (TestDirectory, PathBuf) {
              enabled = true\n\
              description = \"conversation fixture lane\"\n\
              project = \"letter\"\n\
-             family = \"transfer\"\n\
              default_seat = \"herald\"\n\
-             queue = \"interactive\"\n\
              requires_independent_review = false\n\
              direction = \"{direction}\"\n\
              payload_kind = \"{payload}\"\n"

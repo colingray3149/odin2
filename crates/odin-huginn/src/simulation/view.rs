@@ -88,6 +88,29 @@ impl SimulationBoard {
         self.missions.values()
     }
 
+    pub fn checkpoints_of<'a>(
+        &'a self,
+        run_id: &'a RunId,
+    ) -> impl Iterator<Item = &'a SimulationCheckpointView> + 'a {
+        self.checkpoints
+            .values()
+            .filter(move |checkpoint| &checkpoint.run_id == run_id)
+    }
+
+    /// Drops a mission and its checkpoints from the board; returns what was removed.
+    pub fn remove_mission(
+        &mut self,
+        run_id: &RunId,
+    ) -> Option<(SimulationMissionView, Vec<SimulationCheckpointView>)> {
+        let mission = self.missions.remove(run_id)?;
+        let checkpoints = self
+            .checkpoints
+            .extract_if(.., |_, checkpoint| &checkpoint.run_id == run_id)
+            .map(|(_, checkpoint)| checkpoint)
+            .collect();
+        Some((mission, checkpoints))
+    }
+
     fn bump(mission: &mut SimulationMissionView, at: OffsetDateTime) -> Result<(u64, u64)> {
         let from = mission.revision;
         let to = from + 1;

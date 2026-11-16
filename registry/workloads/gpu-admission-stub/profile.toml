@@ -1,0 +1,43 @@
+schema = "odin.registry.v1"
+kind = "workload"
+enabled = true
+description = "Finite GPU placement and VRAM admission check; not a training workload."
+seats_offered = ["kubert"]
+harness = "script"
+gpu_count = 1
+placement = ["cuda"]
+stop_grace_seconds = 20
+
+[script]
+command = ["/bin/sh", "-c", "echo gpu-admission-stub"]
+
+[gpu]
+vram_gib = 5
+
+[resources]
+cpu = 1
+memory = "512Mi"
+
+[lifetime]
+deadline_seconds = 300
+
+[image]
+reference = "platform"
+
+[seat]
+seat = "kubert"
+project = "odin"
+
+[network]
+allow_hosts = []
+
+[state]
+path = "/state"
+storage = "64Mi"
+
+[export]
+pod_path = "/export"
+host_folder = "/srv/odin/export"
+
+[brief]
+text = "Finite stub for checking CUDA placement and VRAM admission."

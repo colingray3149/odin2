@@ -56,6 +56,65 @@ fn with_approval(arguments: &Value) -> Value {
 }
 
 #[test]
+fn registry_edit_schemas_accept_numeric_values_once() {
+    for file in ["registry.edit.input.json", "registry.edit.grant.input.json"] {
+        let schema = canonical(file);
+        for value in [json!(8), json!(2.5), json!([8, 2.5])] {
+            let arguments = json!({
+                "kind": "lane", "id": "kubert-odin", "reason": "adjust limit",
+                "set": {"limits.pods": value}, "expected": {"limits.pods": 4}
+            });
+            let arguments = if file == "registry.edit.input.json" {
+                let mut open = arguments;
+                open.as_object_mut().unwrap().remove("expected");
+                open
+            } else {
+                arguments
+            };
+            odin_kernel::validate_input_arguments(&schema, &arguments)
+                .unwrap_or_else(|error| panic!("{file} must accept numeric edit: {error}"));
+        }
+    }
+}
+
+#[test]
+fn registry_edit_schemas_validate_unset_keys() {
+    for file in ["registry.edit.input.json", "registry.edit.grant.input.json"] {
+        let schema = canonical(file);
+        let mut arguments = json!({
+            "kind": "lane", "id": "kubert-odin", "reason": "remove limit",
+            "unset": ["limits.pods", "rollover"],
+        });
+        if file == "registry.edit.grant.input.json" {
+            arguments["expected"] = json!({"limits.pods": 4, "rollover": true});
+        }
+        odin_kernel::validate_input_arguments(&schema, &arguments)
+            .unwrap_or_else(|error| panic!("{file} must accept unset: {error}"));
+
+        for invalid in [
+            json!([""]),
+            json!(["limits..pods"]),
+            json!(["a.b.c.d.e"]),
+            json!(["limits.pods", "limits.pods"]),
+            json!([42]),
+            json!("limits.pods"),
+            json!((0..17).map(|n| format!("key{n}")).collect::<Vec<_>>()),
+        ] {
+            let mut malformed = arguments.clone();
+            malformed["unset"] = invalid;
+            assert!(
+                odin_kernel::validate_input_arguments(&schema, &malformed).is_err(),
+                "{file} accepted malformed unset: {malformed}"
+            );
+        }
+        if file == "registry.edit.grant.input.json" {
+            arguments.as_object_mut().unwrap().remove("expected");
+            assert!(odin_kernel::validate_input_arguments(&schema, &arguments).is_err());
+        }
+    }
+}
+
+#[test]
 fn the_grant_surface_admits_fills_and_removals_and_refuses_malformed_shapes() {
     let dir = tempfile::tempdir().unwrap();
     let runtime = HermesRuntime::open(

@@ -23,6 +23,9 @@ pub struct WorkloadProfileToml {
     pub kind: RegistryKind,
     pub enabled: bool,
     pub description: String,
+    /// Require an approved campaignId when admitting runs of this profile.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub require_campaign_approval: bool,
     /// Seats allowed to launch this profile under its own execution binding.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub seats_offered: std::collections::BTreeSet<SeatId>,
@@ -51,9 +54,39 @@ pub struct WorkloadProfileToml {
     pub lifetime: Option<WorkloadLifetimeToml>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub gpu_count: u32,
+    /// GPU memory facts; requires `gpu_count`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<WorkloadGpuToml>,
     /// The worker container's CPU and memory reservation; absent keeps the platform defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<WorkloadResourcesToml>,
+    /// Seconds a stopping pod has after SIGTERM (pause, cancel, deadline, drain); absent keeps 30.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_grace_seconds: Option<u32>,
+    /// Read-only host directories, each under a data root its node card declares.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data: Vec<WorkloadDataToml>,
+    /// Maximum campaign stage tar size in bytes; absent uses the daemon default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage_max_bytes: Option<std::num::NonZeroU64>,
+    /// Maximum staged run.yaml size in bytes; absent uses the daemon default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage_run_max_bytes: Option<std::num::NonZeroU64>,
+    /// What a run does when its node yields to its owner; absent means `rehome`.
+    #[serde(default, skip_serializing_if = "OnYield::is_rehome")]
+    pub on_yield: OnYield,
+    /// A mutable control document the pod reads at `/var/run/odin/control/control.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<WorkloadControlToml>,
+    /// Run limits a launch may override, each only at or under its declared value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<WorkloadLimitsToml>,
+    /// Run on a declared compute target over ssh or Slurm instead of as a Job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offload: Option<WorkloadOffloadToml>,
+    /// Node taints this profile tolerates; only `external` exists. Empty keeps it on fleet nodes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tolerate: Vec<String>,
     /// Require these odin.capability node labels; empty permits any node.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub placement: Vec<String>,
@@ -74,6 +107,28 @@ pub struct WorkloadProfileToml {
     /// Defaults to Chromium, headed only when the display streams.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_engine: Option<BrowserEngine>,
+}
+
+/// The compute targets an offload run may go to, tried in order.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkloadOffloadToml {
+    pub targets: Vec<String>,
+    /// The run stages restricted data: only targets declaring `restricted_data = true` take it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restricted_data: bool,
+}
+
+/// GPU memory a run needs, in whole GiB.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkloadGpuToml {
+    /// Place only on nodes whose declared card has at least this much memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_vram_gib: Option<u32>,
+    /// Memory the run will hold; on a desktop node the launch waits until that much is free.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vram_gib: Option<u32>,
 }
 
 /// The deliverable a run of this profile owes beside its markdown answer.
@@ -111,6 +166,50 @@ impl BrowserEngine {
 pub struct WorkloadSimulationToml {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub renderers: Vec<odin_domain::huginn::RendererId>,
+    /// In-image argv an on-request render runs as `<argv> <renderer> <params-json>`; it prints
+    /// the `ODIN-RENDER` line of the frame it wrote.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub render_command: Vec<String>,
+    /// The largest frame odind reads back (default 4 MiB, at most 8 MiB).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_frame_bytes: Option<u64>,
+    /// Telemetry keys the view draws; the plot is never rendered in the pod.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plot: Vec<String>,
+    /// Frames kept per renderer (default 8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_frames: Option<u32>,
+    /// A running mission with no status line for this long is stale (default 900).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_seconds: Option<u32>,
+    /// How long an on-request render may run in the pod (default 120).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_timeout_seconds: Option<u32>,
+    /// How long a finished mission whose Job is gone stays on the board (default 24).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retire_after_hours: Option<u32>,
+}
+
+/// The most a profile may declare for one frame (a frame must still fit a Discord send).
+pub const MAX_FRAME_BYTES: u64 = 8 << 20;
+
+/// Every key's fallback when the profile leaves it out.
+impl WorkloadSimulationToml {
+    pub fn max_frame_bytes(&self) -> u64 {
+        self.max_frame_bytes.unwrap_or(4 << 20)
+    }
+    pub fn keep_frames(&self) -> usize {
+        self.keep_frames.map_or(8, |kept| kept as usize)
+    }
+    pub fn stale_seconds(&self) -> u32 {
+        self.stale_seconds.unwrap_or(900)
+    }
+    pub fn render_timeout_seconds(&self) -> u32 {
+        self.render_timeout_seconds.unwrap_or(120)
+    }
+    pub fn retire_after_hours(&self) -> u32 {
+        self.retire_after_hours.unwrap_or(24)
+    }
 }
 
 /// Pods cannot receive launch, delegation, or creation capabilities.
@@ -200,6 +299,60 @@ impl WorkloadProfileToml {
         })
     }
 
+    /// The run limits one launch admits: each override must be at least its
+    /// minimum and at or under the declared value. An override the profile
+    /// does not declare is refused, since a launch cannot invent a limit.
+    pub fn resolve_limits(
+        &self,
+        requested: &odin_domain::huginn::WorkloadLimits,
+    ) -> Result<odin_domain::huginn::WorkloadLimits, String> {
+        let declared = self.limits.as_ref();
+        Ok(odin_domain::huginn::WorkloadLimits {
+            deadline_seconds: launch_limit(
+                "deadlineSeconds",
+                requested.deadline_seconds,
+                self.deadline_seconds(),
+                MIN_WORKLOAD_DEADLINE_SECONDS,
+            )?,
+            output_reserve_tokens: launch_limit(
+                "outputReserveTokens",
+                requested.output_reserve_tokens,
+                declared.and_then(|limits| limits.output_reserve_tokens),
+                1,
+            )?,
+            checkpoint_percent: launch_limit(
+                "checkpointPercent",
+                requested.checkpoint_percent,
+                declared.and_then(|limits| limits.checkpoint_percent),
+                *CHECKPOINT_PERCENT_RANGE.start(),
+            )?,
+            max_rollovers: launch_limit(
+                "maxRollovers",
+                requested.max_rollovers,
+                declared.and_then(|limits| limits.max_rollovers),
+                0,
+            )?,
+            tool_result_bytes: launch_limit(
+                "toolResultBytes",
+                requested.tool_result_bytes,
+                declared.and_then(|limits| limits.tool_result_bytes),
+                1,
+            )?,
+        })
+    }
+
+    pub fn tolerates_external(&self) -> bool {
+        self.tolerate
+            .iter()
+            .any(|taint| taint == super::node::EXTERNAL_TOLERATION)
+    }
+
+    /// The smallest card the profile fits: its declared minimum, or its need when larger.
+    pub fn min_vram_gib(&self) -> Option<u32> {
+        let gpu = self.gpu.as_ref()?;
+        gpu.min_vram_gib.max(gpu.vram_gib)
+    }
+
     pub fn placement_labels(&self) -> std::collections::BTreeMap<String, String> {
         self.placement
             .iter()
@@ -211,6 +364,39 @@ impl WorkloadProfileToml {
             })
             .collect()
     }
+}
+
+/// One launch override: absent keeps the declared value, present must be
+/// within `minimum..=declared`.
+fn launch_limit<T>(
+    field: &str,
+    requested: Option<T>,
+    declared: Option<T>,
+    minimum: T,
+) -> Result<Option<T>, String>
+where
+    T: Copy + Ord + std::fmt::Display,
+{
+    let Some(value) = requested else {
+        return Ok(declared);
+    };
+    let Some(ceiling) = declared else {
+        return Err(format!(
+            "limits.{field} is not declared on this workload profile; a launch cannot invent a limit"
+        ));
+    };
+    if value > ceiling {
+        return Err(format!(
+            "limits.{field} {value} is above the profile's declared value {ceiling}; \
+             a launch may only lower it"
+        ));
+    }
+    if value < minimum {
+        return Err(format!(
+            "limits.{field} {value} is below its minimum {minimum}"
+        ));
+    }
+    Ok(Some(value))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -251,6 +437,9 @@ impl WorkloadMode {
 #[serde(deny_unknown_fields)]
 pub struct WorkloadMonitoringToml {
     pub cadence_seconds: std::num::NonZeroU32,
+    /// Log lines read per check for ODIN-STATUS; absent reads the platform default (200).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_tail_lines: Option<std::num::NonZeroU32>,
     /// Independent daemon-owned review session; cadence is shared with counter monitoring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewer: Option<WorkloadReviewerToml>,
@@ -263,6 +452,9 @@ pub struct WorkloadMonitoringToml {
     /// running pod's session may journal no event before it is resumed once, then restarted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stall_seconds: Option<std::num::NonZeroU32>,
+    /// Heartbeat telemetry freshness threshold as a multiple of stall_seconds; absent defaults to 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_stale_multiplier: Option<std::num::NonZeroU32>,
     /// Supported rungs: restart_worker via the seat, then terminal escalate to the owner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery: Option<super::provider::RecoveryPolicyToml>,
@@ -363,6 +555,29 @@ pub struct WorkloadDisplayToml {
     pub stream: bool,
 }
 
+/// Declared run limits. Every field is optional; a launch may lower each one
+/// but never raise it past the declared value.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkloadLimitsToml {
+    /// Output tokens the context guard keeps free for the model's answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_reserve_tokens: Option<u32>,
+    /// Percent of the context window at which the run checkpoints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_percent: Option<u8>,
+    /// Context rollovers the run may take before it stops.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_rollovers: Option<u8>,
+    /// Largest tool result, in bytes, the run keeps inline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_result_bytes: Option<u32>,
+}
+
+/// Checkpoint percent and rollover bounds, shared by validation and launch resolution.
+pub const CHECKPOINT_PERCENT_RANGE: std::ops::RangeInclusive<u8> = 1..=99;
+pub const MAX_ROLLOVERS_LIMIT: u8 = 16;
+
 /// Declared worker reservation: whole CPUs and a binary-suffixed memory quantity.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -370,13 +585,111 @@ pub struct WorkloadResourcesToml {
     pub cpu: u32,
     /// Memory quantity such as `4Gi`, parsed by the storage quantity grammar.
     pub memory: String,
+    /// Memory-backed `/dev/shm` size, counted inside `memory`, not added to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shm: Option<String>,
 }
 
 impl WorkloadResourcesToml {
     pub fn memory_bytes(&self) -> Result<u64, String> {
         storage_quantity_bytes(&self.memory)
     }
+
+    pub fn shm_bytes(&self) -> Result<Option<u64>, String> {
+        self.shm.as_deref().map(storage_quantity_bytes).transpose()
+    }
 }
+
+/// A node yielding to its owner (gaming) pauses, moves or keeps each pod on it.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OnYield {
+    /// Suspend in place with the declared stop grace; resumes when the mode ends.
+    Pause,
+    /// Move, with its state, to another node its placement fits; else pause.
+    #[default]
+    Rehome,
+    /// Keep running: the node is cordoned for new pods only.
+    Stay,
+}
+
+impl OnYield {
+    pub fn is_rehome(&self) -> bool {
+        *self == Self::Rehome
+    }
+}
+
+/// Steering a running pod: `kube.workload.steer` writes documents this schema admits.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkloadControlToml {
+    /// Largest steer document, in bytes of its JSON.
+    pub max_bytes: u32,
+    /// JSON Schema (as a TOML table) every steer document must satisfy.
+    pub schema: serde_json::Value,
+}
+
+/// Kubernetes refuses a ConfigMap past 1 MiB.
+pub const CONTROL_MAP_LIMIT_BYTES: u32 = 1 << 20;
+
+impl WorkloadControlToml {
+    /// Refuses a schema that does not compile.
+    pub fn validator(&self) -> Result<jsonschema::Validator, String> {
+        jsonschema::validator_for(&self.schema)
+            .map_err(|error| format!("control.schema is not a JSON Schema: {error}"))
+    }
+
+    /// Whether `document` may be written to the run's control map.
+    pub fn admit(&self, document: &serde_json::Value) -> Result<(), String> {
+        let bytes = serde_json::to_vec(document)
+            .map_err(|error| error.to_string())?
+            .len();
+        if bytes > self.max_bytes as usize {
+            return Err(format!(
+                "the steer document is {bytes} bytes, over the profile's control.max_bytes {}",
+                self.max_bytes
+            ));
+        }
+        let validator = self.validator()?;
+        let errors: Vec<String> = validator
+            .iter_errors(document)
+            .take(4)
+            .map(|error| format!("{} at {}", error, error.instance_path))
+            .collect();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "the steer document fails the profile's control schema: {}",
+                errors.join("; ")
+            ))
+        }
+    }
+}
+
+/// One read-only node-local directory mounted into the worker.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkloadDataToml {
+    pub name: String,
+    pub host_path: String,
+    pub pod_path: String,
+}
+
+/// Host trees a data mount may never expose.
+pub const FORBIDDEN_DATA_HOST_ROOTS: [&str; 9] = [
+    "/nix",
+    "/run",
+    "/proc",
+    "/sys",
+    "/etc",
+    "/home",
+    "/var/lib/rancher",
+    "/var/lib/kubelet",
+    "/srv/odin/export",
+];
+/// In-pod paths the platform owns: staging, checkpoint and control maps, and shared memory.
+pub const RESERVED_POD_PATHS: [&str; 2] = ["/var/run/odin", "/dev/shm"];
 
 /// Require explicit persistent storage and share its parser with workload planning.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -384,6 +697,9 @@ impl WorkloadResourcesToml {
 pub struct WorkloadStateToml {
     pub path: String,
     pub storage: String,
+    /// `false` keeps the state on its node: no rehome or checkpoint tars it. Absent carries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carry: Option<bool>,
 }
 
 /// Require nonzero integer storage with a binary SI suffix to avoid ambiguous byte quantities.
@@ -454,6 +770,10 @@ pub struct WorkloadMemoryToml {
 #[serde(deny_unknown_fields)]
 pub struct WorkloadLifetimeToml {
     pub deadline_seconds: u32,
+    /// How long a finished run's Job and state claim stay (what continueFrom can pick up);
+    /// absent keeps the platform default of one day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_finished_seconds: Option<std::num::NonZeroU32>,
 }
 
 /// Match workload launch limits; working sessions may last up to one day.

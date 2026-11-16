@@ -67,7 +67,7 @@ pub(super) fn transport_sidecar(image: &str, argv: &[String]) -> Container {
                 ..Default::default()
             },
         ]),
-        resources: Some(bounded_resources(WORKER_RESERVATION)),
+        resources: Some(bounded_resources(TRANSPORT_RESERVATION)),
         security_context: Some(transport_security()),
         startup_probe: Some(k8s_openapi::api::core::v1::Probe {
             exec: Some(k8s_openapi::api::core::v1::ExecAction {

@@ -1,7 +1,7 @@
 //! The monitoring kernel: every running Odin workload is watched under its
 //! container profile's declared `[monitoring]` cadence and `watchdogs`
 //! alerts. A pod reports counters on stdout as `ODIN-STATUS {"likes": 3}`
-//! lines; code reads the newest one each cadence, evaluates every declared
+//! lines; code reads every one printed since its last read each cadence, evaluates every declared
 //! condition using consecutive-hit and cooldown settings, and applies the
 //! declared action — notify the launching seat, or cancel the workload and
 //! then tell it. Healthy workloads cost no model call.
@@ -18,7 +18,7 @@ use odin_domain::huginn::{
 };
 use odin_domain::{Digest, NodeId};
 use odin_kube::job::{JobAction, JOB_LABEL_CONTAINER_IDENTITY};
-use odin_kube::telemetry::{latest_report, numeric_counters, STATUS_TAIL_LINES};
+use odin_kube::telemetry::{latest_report, numeric_counters, reports_since, STATUS_TAIL_LINES};
 use odin_registry::schema::{
     AlertCondition, ContainerAlertActionToml, ContainerAlertToml, ContainerMonitoringToml,
     ContainerToml, ContainerWatchdogToml, WorkloadMonitoringToml,
@@ -37,6 +37,8 @@ pub(super) struct MonitorProfile {
     pub(super) cadence: StdDuration,
     pub(super) alerts: Vec<(ContainerAlertToml, AlertCondition)>,
     /// Declared anti-stuck recovery.
+    /// Log lines read per check.
+    pub(super) tail_lines: i64,
     pub(super) stall: Option<StallPolicy>,
     /// How long a running pod's session may journal nothing before it is resumed, then restarted.
     pub(super) silence: Option<StdDuration>,
@@ -44,9 +46,9 @@ pub(super) struct MonitorProfile {
 
 /// A pod's declared progress counter, stall window and recovery ladder.
 pub(super) struct StallPolicy {
-    counter: String,
-    window: StdDuration,
-    policy: odin_kernel::recovery::RecoveryPolicy,
+    pub(super) counter: String,
+    pub(super) window: StdDuration,
+    pub(super) policy: odin_kernel::recovery::RecoveryPolicy,
 }
 
 impl MonitorProfile {
@@ -92,6 +94,9 @@ impl MonitorProfile {
         };
         (!alerts.is_empty() || stall.is_some() || silence.is_some()).then(|| Self {
             cadence: StdDuration::from_secs(u64::from(monitoring.cadence_seconds.get())),
+            tail_lines: monitoring
+                .status_tail_lines
+                .map_or(STATUS_TAIL_LINES, |lines| i64::from(lines.get())),
             alerts,
             stall,
             silence,
@@ -114,6 +119,7 @@ impl MonitorProfile {
             .collect();
         (!alerts.is_empty()).then(|| Self {
             cadence: StdDuration::from_secs(u64::from(policy.cadence_seconds.get())),
+            tail_lines: STATUS_TAIL_LINES,
             alerts,
             stall: None,
             silence: None,
@@ -158,6 +164,26 @@ impl AlertTracker {
                     }
                 }
                 _ => *hits = 0,
+            }
+        }
+        fired
+    }
+
+    /// Records each sample read since the last tick, oldest first, so a spike between
+    /// cadences counts; an alert fires at most once per tick, with its firing value.
+    pub(super) fn observe_all<'a>(
+        &mut self,
+        workload: &str,
+        profile: &'a MonitorProfile,
+        samples: &[BTreeMap<String, f64>],
+        now: Instant,
+    ) -> Vec<(&'a ContainerAlertToml, f64)> {
+        let mut fired: Vec<(&'a ContainerAlertToml, f64)> = Vec::new();
+        for counters in samples {
+            for (alert, value) in self.observe(workload, profile, counters, now) {
+                if !fired.iter().any(|(seen, _)| seen.id == alert.id) {
+                    fired.push((alert, value));
+                }
             }
         }
         fired
@@ -263,6 +289,8 @@ pub(super) fn arm_workload_monitor(
         let mut tracker = AlertTracker::default();
         let mut incidents = OpenIncidents::default();
         let mut last_read: HashMap<String, Instant> = HashMap::new();
+        // The newest report each pod has been evaluated through, by Job uid.
+        let mut read_through: HashMap<String, OffsetDateTime> = HashMap::new();
         let book_path = state_root.join("workload-recovery.json");
         let mut book = super::workload_recovery::StallBook::load(&book_path);
         let ledger = state_root.join("ledger.sqlite3");
@@ -279,19 +307,25 @@ pub(super) fn arm_workload_monitor(
                     continue;
                 }
             };
-            let jobs = match client
-                .jobs()
-                .list(&ListParams::default().labels(JOB_LABEL_CONTAINER_IDENTITY))
-                .await
-            {
-                Ok(jobs) => jobs,
-                Err(error) => {
-                    tracing::warn!("workload monitor tick skipped reason=job list failed: {error}");
-                    continue;
-                }
+            // The job watch's cache, or one list while that watch is down.
+            let jobs = match cell.job_cache().labelled(JOB_LABEL_CONTAINER_IDENTITY) {
+                Some(jobs) => jobs,
+                None => match client
+                    .jobs()
+                    .list(&ListParams::default().labels(JOB_LABEL_CONTAINER_IDENTITY))
+                    .await
+                {
+                    Ok(jobs) => jobs.items,
+                    Err(error) => {
+                        tracing::warn!(
+                            "workload monitor tick skipped reason=job list failed: {error}"
+                        );
+                        continue;
+                    }
+                },
             };
             let mut live = BTreeSet::new();
-            for job in &jobs.items {
+            for job in &jobs {
                 let Ok(observed) =
                     odin_kube::status::observe_job(&cell.kube_config().cluster, job, 0)
                 else {
@@ -326,6 +360,7 @@ pub(super) fn arm_workload_monitor(
                             control: &control,
                             observed: &observed,
                             bound,
+                            owner: &owner,
                         },
                         resumed.entry(uid.clone()).or_default(),
                     )
@@ -339,9 +374,12 @@ pub(super) fn arm_workload_monitor(
                     continue;
                 }
                 last_read.insert(uid.clone(), now);
-                let Some(report) = read_status(&client, &name).await else {
+                let after = read_through.get(&uid).copied();
+                let Some(report) = read_status(&client, &name, after, profile.tail_lines).await
+                else {
                     continue;
                 };
+                read_through.insert(uid.clone(), report.at);
                 // The newest report is the Job's status in the read model.
                 let mut published = observed.clone();
                 published.workload.node_id = report.node;
@@ -391,11 +429,19 @@ pub(super) fn arm_workload_monitor(
                     })
                     .await;
                 }
-                for (alert, value) in tracker.observe(&uid, profile, &counters, now) {
+                let samples: Vec<_> = report.fresh.iter().map(numeric_counters).collect();
+                for (alert, value) in tracker.observe_all(&uid, profile, &samples, now) {
+                    let mut steered = false;
                     let outcome = match alert.action {
                         ContainerAlertActionToml::Notify => String::new(),
                         ContainerAlertActionToml::Stop => {
                             stop_workload(&control, &observed.projection, &uid, &alert.id).await
+                        }
+                        ContainerAlertActionToml::Steer => {
+                            let (applied, outcome) =
+                                steer_workload(&control, &observed.projection, &uid, alert).await;
+                            steered = applied;
+                            outcome
                         }
                     };
                     // A breached watchdog is an incident: Huginn, the owner's
@@ -445,7 +491,9 @@ pub(super) fn arm_workload_monitor(
                                 None
                             }
                         };
-                    if receipt.as_ref().is_some_and(|receipt| receipt.coalesced) {
+                    // A steer that landed corrects the run with no model woken; the incident
+                    // records it. Only a failed steer goes to the launching seat.
+                    if steered || receipt.as_ref().is_some_and(|receipt| receipt.coalesced) {
                         // Already open and already told: the seat and the
                         // routines heard it the first time.
                         continue;
@@ -460,6 +508,7 @@ pub(super) fn arm_workload_monitor(
                              declared capabilities, and report the outcome plainly.",
                             alert.id, alert.severity, alert.condition
                         ),
+                        lane: Some(observed.projection.labels.lane_id.clone()),
                     };
                     if let Err(error) = route_finding(&owner, &runtime, finding).await {
                         tracing::error!("monitoring finding not delivered: {error}");
@@ -501,6 +550,7 @@ pub(super) fn arm_workload_monitor(
             }
             tracker.retain(&live);
             last_read.retain(|uid, _| live.contains(uid));
+            read_through.retain(|uid, _| live.contains(uid));
             resumed.retain(|uid, _| live.contains(uid));
         }
     });
@@ -508,7 +558,7 @@ pub(super) fn arm_workload_monitor(
 
 /// One read of a pod's progress counter through its durable ladder; the
 /// step when this read is a new stall, with the value it is stuck at.
-fn observe_stall(
+pub(super) fn observe_stall(
     book: &mut super::workload_recovery::StallBook,
     book_path: &std::path::Path,
     stall: &StallPolicy,
@@ -592,6 +642,7 @@ async fn act_on_stall(action: StallAction<'_>) {
                      expectedResourceVersion {}). Do only that, then report what happened.",
                     projection.identity.resource_version.as_str()
                 ),
+                lane: Some(projection.labels.lane_id.clone()),
             };
             if let Err(error) = route_finding(owner, runtime, finding).await {
                 tracing::error!("pod recovery step not delivered: {error}");
@@ -628,6 +679,46 @@ async fn act_on_stall(action: StallAction<'_>) {
     let desk = Arc::clone(desk);
     if let Err(error) = tokio::task::spawn_blocking(move || desk.raise(raised)).await {
         tracing::error!("pod stall incident not raised: {error}");
+    }
+}
+
+/// Writes the watchdog's patch as the pod's next control document. The tracker's cooldown
+/// already bounds this to once per cooldown; the operation id makes a re-read idempotent.
+async fn steer_workload(
+    control: &odin_huginn::kube::KubeControl,
+    projection: &odin_domain::huginn::KubeJobProjection,
+    uid: &str,
+    alert: &ContainerAlertToml,
+) -> (bool, String) {
+    let run = &projection.labels.run_id;
+    let Some(patch) = &alert.patch else {
+        return (false, " It declares no patch to steer with.".to_owned());
+    };
+    let reconciler = control.reconciler();
+    let current = match odin_kube::control::read_control(reconciler.client(), run).await {
+        Ok(Some(current)) => current,
+        Ok(None) => return (false, " The pod has no control map to steer.".to_owned()),
+        Err(error) => return (false, format!(" Reading its control failed: {error}.")),
+    };
+    let operation = format!("watchdog:{uid}:{}:{}", alert.id, current.seq + 1);
+    match reconciler
+        .steer_control(
+            run,
+            current.seq,
+            patch.0.clone(),
+            &operation,
+            &format!("watchdog:{}", alert.id),
+        )
+        .await
+    {
+        Ok(applied) => (
+            true,
+            format!(
+                " Odin steered it: control seq {} = {}.",
+                applied.seq, patch.0
+            ),
+        ),
+        Err(error) => (false, format!(" Steering it failed: {error}.")),
     }
 }
 
@@ -688,6 +779,7 @@ struct Silent<'a> {
     control: &'a odin_huginn::kube::KubeControl,
     observed: &'a odin_kube::job::JobObservation,
     bound: StdDuration,
+    owner: &'a Arc<odin_omp::host_tools::delegation::GovernedTaskOwner>,
 }
 
 /// What a pod's silence calls for.
@@ -699,7 +791,7 @@ enum Quiet {
 }
 
 /// The first time a session is silent for `bound` it is resumed; once resumed, the next time it
-/// is restarted. `resumed` is whether it has been.
+/// is stopped. `resumed` is whether it has been.
 fn quiet_step(resumed: bool, silent: StdDuration, bound: StdDuration) -> Quiet {
     match (silent >= bound, resumed) {
         (false, _) => Quiet::Wait,
@@ -709,7 +801,7 @@ fn quiet_step(resumed: bool, silent: StdDuration, bound: StdDuration) -> Quiet {
 }
 
 /// Applies the step a silence calls for. A resume that fails is tried again the next tick; the
-/// restart's note to the launching job is written once the restart went through.
+/// stop's note to the launching job is written once the stop went through.
 async fn quiet_pod(
     silent: StdDuration,
     bound: StdDuration,
@@ -729,17 +821,18 @@ async fn quiet_pod(
             Ok(()) => {
                 note(format!(
                     "its session journaled nothing for {minutes} minutes after it was resumed \
-                     once, so it was restarted."
+                     once, so it was stopped; its saved evidence stays, and it can be launched \
+                     again to carry on."
                 ))
                 .await
             }
-            Err(error) => tracing::error!("pod silent for {minutes} min, not restarted: {error}"),
+            Err(error) => tracing::error!("pod silent for {minutes} min, not stopped: {error}"),
         },
     }
 }
 
 /// A running pod whose session journals nothing for its profile's stall bound is resumed once,
-/// then restarted through the kube restart path, and the job that launched it gets one note.
+/// then stopped through the kube cancel path, and the job that launched it gets one note.
 async fn watch_silence(watch: Silent<'_>, resumed: &mut bool) {
     let Some(omp) = odin_omp::live::service::OmpLiveService::installed() else {
         return;
@@ -769,6 +862,7 @@ async fn watch_silence(watch: Silent<'_>, resumed: &mut bool) {
     let acting = Acting {
         omp: &omp,
         runtime: watch.runtime,
+        owner: watch.owner,
         ledger: watch.ledger,
         seat: seat_id.as_str(),
         job,
@@ -790,17 +884,28 @@ async fn watch_silence(watch: Silent<'_>, resumed: &mut bool) {
             );
             tell_worker(&omp, worker, &format!("pod-silent-resume:{uid}"), &text).await
         },
+        // A restarted agent pod comes back without its agent (the session is attached once, at
+        // launch), so a pod still silent after its resume is stopped: its evidence stays, its
+        // report settles from what it saved, and its launcher can launch it again.
         async || {
-            let seed = format!("monitor:{uid}:silent:restart");
+            let seed = format!("monitor:{uid}:silent:stop");
             operate_workload(
                 watch.control,
                 &observed.projection,
                 &seed,
-                KubeOperationKind::Restart,
+                KubeOperationKind::Cancel,
             )
             .await
         },
-        async |text| note(&acting, format!("Pod {job}: {text}")).await,
+        async |text| {
+            note(
+                &acting,
+                run,
+                &format!("{uid}:silent"),
+                format!("Pod {job}: {text}"),
+            )
+            .await
+        },
     )
     .await;
 }
@@ -869,18 +974,25 @@ fn open_tools<'a>(bodies: impl IntoIterator<Item = &'a LiveEventBody>) -> bool {
     !open.is_empty()
 }
 
-/// A running pod's newest status report, the node it is bound to, and its name.
+/// A running pod's newest status report and reports printed since the last read
+/// (oldest first), together with the node it is bound to and its name.
 struct PodReport {
     pod: String,
     node: Option<NodeId>,
     at: OffsetDateTime,
     object: Map<String, Value>,
+    fresh: Vec<Map<String, Value>>,
 }
 
-/// One Job's running pod and its newest status report, from a bounded
-/// timestamped log tail through the kube API — node-agnostic, nothing read off
-/// a host path.
-async fn read_status(client: &odin_kube::KubeClient, job: &str) -> Option<PodReport> {
+/// One Job's running pod and its status reports since `after`, from a timestamped
+/// kube log. The initial read is bounded; later reads cover the elapsed interval.
+/// Nothing is read off a host path.
+async fn read_status(
+    client: &odin_kube::KubeClient,
+    job: &str,
+    after: Option<OffsetDateTime>,
+    tail_lines: i64,
+) -> Option<PodReport> {
     let pods = client
         .pods()
         .list(&ListParams::default().labels(&format!("job-name={job}")))
@@ -902,7 +1014,10 @@ async fn read_status(client: &odin_kube::KubeClient, job: &str) -> Option<PodRep
         .logs(
             &name,
             &LogParams {
-                tail_lines: Some(STATUS_TAIL_LINES),
+                tail_lines: after.is_none().then_some(tail_lines),
+                // Round up and include a second of overlap; reports_since removes duplicates.
+                since_seconds: after
+                    .map(|at| (OffsetDateTime::now_utc() - at).whole_seconds().max(0) + 2),
                 timestamps: true,
                 ..LogParams::default()
             },
@@ -912,12 +1027,35 @@ async fn read_status(client: &odin_kube::KubeClient, job: &str) -> Option<PodRep
             tracing::error!("workload-monitor status-unread job={job} reason=pod log: {error}")
         })
         .ok()?;
-    let (at, object) = latest_report(&log)?;
+    let (at, object) = match latest_report(&log) {
+        Some(report) => report,
+        None if after.is_some() => {
+            let tail = client
+                .pods()
+                .logs(
+                    &name,
+                    &LogParams {
+                        tail_lines: Some(tail_lines),
+                        timestamps: true,
+                        ..LogParams::default()
+                    },
+                )
+                .await
+                .ok()?;
+            latest_report(&tail)?
+        }
+        None => return None,
+    };
+    let fresh = reports_since(&log, after)
+        .into_iter()
+        .map(|(_, object)| object)
+        .collect();
     Some(PodReport {
         pod: name,
         node,
         at,
         object,
+        fresh,
     })
 }
 
@@ -959,6 +1097,7 @@ fn stall_signature(label: &str, counter: &str) -> String {
 mod tests {
     use super::*;
     use std::num::{NonZeroU16, NonZeroU32};
+    use time::format_description::well_known::Rfc3339;
 
     fn profile(condition: &str, hits: u16, cooldown_seconds: u32) -> MonitorProfile {
         let alert = ContainerAlertToml {
@@ -969,9 +1108,11 @@ mod tests {
             severity: odin_registry::schema::ContainerAlertSeverityToml::Warning,
             slice: odin_domain::SliceId::new("kubert-ops").unwrap(),
             action: ContainerAlertActionToml::Notify,
+            patch: None,
         };
         MonitorProfile {
             cadence: StdDuration::from_secs(NonZeroU32::new(30).unwrap().get().into()),
+            tail_lines: STATUS_TAIL_LINES,
             alerts: vec![(alert, AlertCondition::parse(condition).unwrap())],
             stall: None,
             silence: None,
@@ -1050,6 +1191,93 @@ mod tests {
         assert_eq!(tracker.observe("job", &profile, &high, later).len(), 1);
     }
 
+    #[test]
+    fn unchanged_status_does_not_count_as_another_hit() {
+        let log = "2026-11-14T10:00:00Z ODIN-STATUS {\"courant_max\": 2.0}\n";
+        let read = OffsetDateTime::parse("2026-11-14T10:00:00Z", &Rfc3339).unwrap();
+        let mut tracker = AlertTracker::default();
+        let profile = profile("courant_max > 1.0", 2, 0);
+        let initial: Vec<_> = reports_since(log, None)
+            .iter()
+            .map(|(_, object)| numeric_counters(object))
+            .collect();
+        assert!(tracker
+            .observe_all("job", &profile, &initial, Instant::now())
+            .is_empty());
+        let fresh: Vec<_> = reports_since(log, Some(read))
+            .iter()
+            .map(|(_, object)| numeric_counters(object))
+            .collect();
+        assert!(fresh.is_empty());
+        assert!(tracker
+            .observe_all("job", &profile, &fresh, Instant::now())
+            .is_empty());
+        assert_eq!(
+            tracker
+                .observe_all("job", &profile, &initial, Instant::now())
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_spike_between_cadences_fires() {
+        let log = "2026-11-14T10:00:00Z ODIN-STATUS {\"courant_max\": 0.4}\n\
+                   2026-11-14T10:00:10Z ODIN-STATUS {\"courant_max\": 1.7}\n\
+                   2026-11-14T10:00:20Z ODIN-STATUS {\"courant_max\": 0.5}\n";
+        let read = OffsetDateTime::parse("2026-11-14T10:00:00Z", &Rfc3339).unwrap();
+        let samples: Vec<_> = reports_since(log, Some(read))
+            .iter()
+            .map(|(_, object)| numeric_counters(object))
+            .collect();
+        assert_eq!(samples.len(), 2, "only the reports after the last read");
+        let profile = profile("courant_max > 1.0", 1, 0);
+        let mut tracker = AlertTracker::default();
+        let newest = samples.last().unwrap();
+        assert!(
+            tracker
+                .observe("job", &profile, newest, Instant::now())
+                .is_empty(),
+            "the newest sample alone misses the spike"
+        );
+        let fired = tracker.observe_all("job", &profile, &samples, Instant::now());
+        assert_eq!(fired.len(), 1, "fires once per tick");
+        assert_eq!(fired[0].1, 1.7);
+    }
+
+    #[test]
+    fn a_steer_watchdog_applies_its_patch_once_per_cooldown() {
+        let mut profile = profile("courant_max > 1.0", 1, 600);
+        profile.alerts[0].0.action = ContainerAlertActionToml::Steer;
+        profile.alerts[0].0.patch = Some(odin_registry::schema::SteerPatch(
+            serde_json::json!({"set": {"maxCo": 0.5}}),
+        ));
+        let mut tracker = AlertTracker::default();
+        let hot = vec![BTreeMap::from([("courant_max".to_owned(), 1.4)])];
+        let start = Instant::now();
+        let fired = tracker.observe_all("job", &profile, &hot, start);
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].0.action, ContainerAlertActionToml::Steer);
+        assert!(
+            fired[0].0.patch.is_some(),
+            "the steer carries its declared patch"
+        );
+        for later in [60, 300, 599] {
+            assert!(
+                tracker
+                    .observe_all("job", &profile, &hot, start + StdDuration::from_secs(later))
+                    .is_empty(),
+                "no second steer inside the cooldown"
+            );
+        }
+        assert_eq!(
+            tracker
+                .observe_all("job", &profile, &hot, start + StdDuration::from_secs(601))
+                .len(),
+            1
+        );
+    }
+
     /// One tick of a pod silent for `seconds`, and what was done about it.
     async fn tick(seconds: u64, resumed: &mut bool, restart_refused: bool) -> Vec<String> {
         let done = std::sync::Mutex::new(Vec::new());
@@ -1075,7 +1303,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_silent_pod_is_resumed_once_then_restarted_and_the_launching_job_is_told_once() {
+    async fn a_silent_pod_is_resumed_once_then_stopped_and_the_launching_job_is_told_once() {
         let mut resumed = false;
         assert!(
             tick(299, &mut resumed, false).await.is_empty(),

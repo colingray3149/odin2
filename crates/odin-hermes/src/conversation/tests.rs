@@ -1107,7 +1107,6 @@ impl ConversationPlane for FakePlane {
 struct FakeEgress {
     sends: Mutex<Vec<String>>,
     fail: AtomicBool,
-    reviews: Mutex<Vec<crate::runtime::review::Exchange>>,
     /// Every turn the conversation opened, as the owner's desktop heard it.
     opened: Mutex<Vec<(Provenance, String)>>,
     delivery_failure: Mutex<Option<(usize, crate::discord::DiscordSendError)>>,
@@ -1128,7 +1127,6 @@ impl FakeEgress {
         Self {
             sends: Mutex::new(Vec::new()),
             fail: AtomicBool::new(false),
-            reviews: Mutex::new(Vec::new()),
             opened: Mutex::new(Vec::new()),
             delivery_failure: Mutex::new(None),
             statuses: Mutex::new(Vec::new()),
@@ -1296,10 +1294,6 @@ impl ConversationEgress for FakeEgress {
     fn turn_opened(&self, provenance: Provenance, ask: &str) {
         self.opened.lock().push((provenance, ask.to_owned()));
     }
-
-    fn turn_answered(&self, exchange: crate::runtime::review::Exchange) {
-        self.reviews.lock().push(exchange);
-    }
 }
 
 struct FakeAuthority {
@@ -1365,6 +1359,8 @@ struct FakeApprovals {
     /// One status read pauses after observing the row, while its caller
     /// still owns the conversation lock. Two rendezvous release it.
     status_barrier: Mutex<Option<Arc<tokio::sync::Barrier>>>,
+    /// The held calls the host ran once their approval said yes.
+    ran: Mutex<Vec<String>>,
 }
 
 impl FakeApprovals {
@@ -1377,6 +1373,7 @@ impl FakeApprovals {
             expired: Mutex::new(Vec::new()),
             status_unavailable: AtomicBool::new(false),
             status_barrier: Mutex::new(None),
+            ran: Mutex::new(Vec::new()),
         }
     }
 
@@ -1459,6 +1456,11 @@ impl KernelApprovals for FakeApprovals {
             .lock()
             .push((predecessor.to_string(), successor.to_string()));
         Ok(0)
+    }
+
+    async fn run_approved(&self, approval_id: &ApprovalId) -> Result<String, String> {
+        self.ran.lock().push(approval_id.to_string());
+        Ok("sent".to_owned())
     }
 
     async fn approval_status(
@@ -1912,23 +1914,6 @@ async fn an_unprompted_wake_never_folds_into_a_running_turn() {
     assert_eq!(sends[1], edited(1, "The GPU test passed."));
     assert_eq!(sends.len(), 3, "{sends:?}");
     assert_eq!(sends[2], "A plain answer.");
-}
-
-#[tokio::test(start_paused = true)]
-async fn an_answered_owner_turn_is_reviewed_and_a_wake_is_not() {
-    use crate::runtime::ApprovedIntentRoute as _;
-    let (_dir, plane, egress, _approvals, root) = harness().await;
-    root.initialize().await.expect("initialize");
-    *plane.answer.lock() = "Noted: black coffee.".to_owned();
-    root.execute(intent("owner")).await.expect("settled");
-    let mut wake = intent("wake");
-    wake.unprompted = true;
-    root.execute(wake).await.expect("settled");
-    let reviews = egress.reviews.lock().clone();
-    assert_eq!(reviews.len(), 1, "{reviews:?}");
-    assert_eq!(reviews[0].trigger, "turn");
-    assert_eq!(reviews[0].answered, "Noted: black coffee.");
-    assert_eq!(reviews[0].asked, intent("owner").content);
 }
 
 #[test]

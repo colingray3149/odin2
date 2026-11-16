@@ -1,0 +1,12 @@
+schema = "odin.registry.v1"
+kind = "brain-role"
+enabled = true
+description = "After a session, patch the project's pages on a model family different from the worker's (the consolidator skips lanes of the worker's family)."
+role = "consolidate"
+engine = "lane"
+lanes = ["terra", "zai-glm"]
+[params]
+max_output = 8000
+effort = "medium"
+temperature = 0
+max_parallel = 1

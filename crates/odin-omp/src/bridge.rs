@@ -58,8 +58,8 @@ use crate::process::{
 use crate::frames::{DecodedRpcFrame, RpcFrameError};
 use crate::host_tools::delegation::{ChildStopCoordinator, ChildStopRecord};
 use crate::host_tools::operations::{
-    context_policy_digest, session_capsule_id, with_ignored, HostToolOperationError,
-    HostToolOperations, SessionOperationBinding, SessionOperationContext,
+    context_policy_digest, session_capsule_id, HostToolOperationError, HostToolOperations,
+    SessionOperationBinding,
 };
 use crate::host_tools::RpcHostToolDefinition;
 use crate::uri::{ExecutionBinding, ScopedUriRouter, UriBody, UriContext, UriError, UriResult};
@@ -96,6 +96,7 @@ pub use self::contracts::{
 pub use self::lifecycle::LEASE_OBJECT_KIND;
 pub use self::observations::{classify_frame, FrameClass, ObservedFrame, TypedFrameFailure};
 pub use self::shared::{FreshBound, FreshBoundFut};
+pub(crate) use self::side_channel::uri_result_value;
 pub use self::side_channel::{
     DISPATCH_PERMITS, SIDE_CHANNEL_ACTIVE_BYTE_BUDGET, SIDE_CHANNEL_HISTORY_CAP,
 };

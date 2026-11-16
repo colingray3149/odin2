@@ -1,0 +1,16 @@
+schema = "odin.registry.v1"
+kind = "compute-target"
+enabled = true
+description = "Local SSH target for the finite offload round-trip check on mini."
+executor = "ssh"
+ssh_host = "mini"
+known_host = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID/JkwporAlk1EaXNTXwzRMsYerLoxPw9HkPy5ZF6gey"
+remote_root = "/tmp/odin-offload-stub"
+runtime = "host"
+max_concurrent = 1
+poll_seconds = 10
+stop_grace_seconds = 20
+command_timeout_seconds = 120
+copy_timeout_seconds = 1200
+log_tail_lines = 400
+allowed_projects = ["odin"]

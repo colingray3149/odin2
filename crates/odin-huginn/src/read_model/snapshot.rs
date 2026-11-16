@@ -125,6 +125,8 @@ struct State {
     objects: BTreeMap<ObjectRef, IndexedObject>,
     deltas: VecDeque<RecordedDelta>,
     revision: Revision,
+    /// The model revision of each kind's newest change.
+    kind_revisions: BTreeMap<ObjectKind, Revision>,
     /// Names this model in its page cursors. Revisions restart at zero
     /// with every model, so a cursor must also say which model issued it.
     incarnation: String,
@@ -194,6 +196,7 @@ impl MaterializedReadModel {
                 objects: BTreeMap::new(),
                 deltas: VecDeque::new(),
                 revision: Revision::new(0),
+                kind_revisions: BTreeMap::new(),
                 incarnation: uuid::Uuid::new_v4().simple().to_string(),
                 head_events,
                 generated_at,
@@ -260,6 +263,18 @@ impl MaterializedReadModel {
             generated_at: state.generated_at,
             objects,
         })
+    }
+
+    /// The model revision of the newest change to an object of `kinds`
+    /// (zero before any): while it holds still, [`Self::capture_kinds`]
+    /// of the same kinds returns the same objects.
+    pub fn kinds_revision(&self, kinds: &[ObjectKind]) -> Result<Revision, ReadModelError> {
+        let state = self.inner.read()?;
+        Ok(kinds
+            .iter()
+            .filter_map(|kind| state.kind_revisions.get(kind).copied())
+            .max()
+            .unwrap_or(Revision::new(0)))
     }
 
     /// Subscribes to head-revision movements. The receiver observes the
@@ -991,6 +1006,7 @@ fn record_delta(
         .checked_next()
         .ok_or(ReadModelError::RevisionOverflow)?;
     state.revision = revision;
+    state.kind_revisions.insert(delta.object.kind, revision);
     state.deltas.push_back(RecordedDelta {
         revision,
         delta,

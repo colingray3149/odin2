@@ -170,11 +170,11 @@ fn with_harness(harness: &str) -> RegistryObject {
 #[test]
 fn a_harness_without_pod_is_refused() {
     let messages = relation_messages(&[
-        with_harness("codex"),
+        with_harness("fixture-agent"),
         bound_seat(),
         project_object(true),
         provider_object(true),
-        pod_harness("codex", false),
+        pod_harness("fixture-agent", false),
     ]);
     assert!(
         messages
@@ -230,4 +230,95 @@ fn offered_launch_seats_must_exist_and_be_enabled() {
             "the caller may create; only the pod's bound seat is restricted: {messages:?}"
         );
     }
+}
+
+fn data_node(roots: &[&str]) -> RegistryObject {
+    let mut node: crate::schema::NodeToml = toml::from_str(
+        r#"
+schema = "odin.registry.v1"
+kind = "node"
+enabled = true
+description = "fixture node"
+host = "pc"
+role = "worker"
+capabilities = ["cfd"]
+allow_workloads = true
+authoritative_state = false
+gateway_endpoint = "http://100.64.0.2:14000/v1"
+"#,
+    )
+    .expect("parse node fixture");
+    node.data_roots = roots.iter().map(|root| (*root).to_owned()).collect();
+    RegistryObject {
+        id: "pc".to_owned(),
+        relative_config: std::path::PathBuf::from("registry/nodes/pc/node.toml"),
+        config: ObjectConfig::Node(Box::new(node)),
+    }
+}
+
+#[test]
+fn data_host_path_must_sit_under_a_declared_node_root() {
+    let mut profile = workload_object("fixture", "fixture", "fixture", "fixture.gateway", true);
+    if let ObjectConfig::Workload(workload) = &mut profile.config {
+        workload.data = vec![crate::schema::WorkloadDataToml {
+            name: "stage".to_owned(),
+            host_path: "/srv/example/stage".to_owned(),
+            pod_path: "/stage".to_owned(),
+        }];
+    }
+    let unplaceable = |roots: &[&str]| {
+        relation_messages(&[
+            profile.clone(),
+            bound_seat(),
+            project_object(true),
+            provider_object(true),
+            data_node(roots),
+        ])
+        .iter()
+        .any(|message| message.contains("workload-data-unplaceable"))
+    };
+    assert!(unplaceable(&[]));
+    assert!(unplaceable(&["/srv/other"]));
+    assert!(!unplaceable(&["/srv/example"]));
+}
+
+#[test]
+fn project_agents_name_existing_lanes() {
+    let messages = |agents: &str| {
+        let mut project = project_object(true);
+        if let ObjectConfig::Project(value) = &mut project.config {
+            value.agents = toml::from_str(agents).expect("agents fixture");
+        }
+        let objects = [
+            project,
+            seat_object_named("fixture", "", false),
+            model_card("fixture.gateway", true),
+            model_card("fixture.off", false),
+        ];
+        let odin_root = tempfile::tempdir().expect("fixture odin root");
+        std::fs::create_dir(odin_root.path().join("schemas")).expect("fixture schema root");
+        validate(&objects, &RelationContext::new(odin_root.path()))
+            .into_iter()
+            .filter(|finding| finding.path.ends_with("project.toml"))
+            .map(|finding| finding.message)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        messages(r#"judge = "fixture.gateway""#),
+        Vec::<String>::new()
+    );
+    let missing = messages(r#"judge = "nowhere""#);
+    assert!(
+        missing
+            .iter()
+            .any(|message| message.contains("agents.judge")),
+        "{missing:?}"
+    );
+    let disabled = messages(r#"curator = "fixture.off""#);
+    assert!(
+        disabled
+            .iter()
+            .any(|message| message.contains("agents.curator")),
+        "{disabled:?}"
+    );
 }

@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use odin_domain::huginn::{
-    EventSeq, HistoryQuery, LiveCommand, LiveError, LiveEventBody, LiveLaunchOption, LiveSessionId,
-    LiveSessionState, LiveSessionSummary, ModelName, OpenSessionRequest, ProviderName,
-    SessionManifest, SessionOpened, SessionStateChanged, TerminalSeq, WorkloadSessionBinding,
+    CommandOutcome, EventSeq, HistoryQuery, LiveCommand, LiveCommandBody, LiveError, LiveEventBody,
+    LiveLaunchOption, LiveSessionId, LiveSessionState, LiveSessionSummary, ModelName,
+    OpenSessionRequest, ProviderName, SessionManifest, SessionOpened, SessionStateChanged,
+    TerminalSeq, WorkloadSessionBinding,
 };
 use odin_domain::{EventId, NodeId, SeatId, SliceId};
 use time::OffsetDateTime;
@@ -92,6 +93,9 @@ impl LiveSupervisor {
             fresh_handoff: std::sync::Mutex::new(None),
             delegation_links: std::sync::Mutex::new(None),
             heartbeat_intervals: std::sync::Mutex::new(std::collections::HashMap::new()),
+            heartbeat_changed_only: std::sync::Mutex::new(std::collections::HashSet::new()),
+            heartbeat_digests: std::sync::Mutex::new(std::collections::HashMap::new()),
+            heartbeat_watched: std::sync::Mutex::new(None),
             self_weak: weak.clone(),
         })
     }
@@ -505,6 +509,7 @@ impl LiveSupervisor {
                 body: odin_domain::huginn::LiveCommandBody::Prompt {
                     message,
                     owner_text: None,
+                    wake: false,
                 },
             };
             let _ = actor.command(command).await?;
@@ -1351,6 +1356,8 @@ pub(super) async fn restore_summary(
     let mut failed_at = None;
     let mut terminal_head = TerminalSeq::new(0);
     let mut pending = 0u16;
+    let mut provider = session.manifest.provider.clone();
+    let mut model = session.manifest.model.clone();
     let mut first = true;
     while cursor < session.head {
         let page = ledger
@@ -1388,6 +1395,27 @@ pub(super) async fn restore_summary(
                 }
                 LiveEventBody::TerminalSnapshot(reference) => terminal_head = reference.sequence,
                 LiveEventBody::TerminalDelta(reference) => terminal_head = reference.sequence,
+                LiveEventBody::ModelReclaimed(reclaimed) => {
+                    provider = reclaimed.provider.clone();
+                    model = reclaimed.model.clone();
+                }
+                LiveEventBody::ControlCompleted(CommandOutcome::Applied { command_id }) => {
+                    if let Some(entry) =
+                        ledger.command_by_id(command_id).await.map_err(live_error)?
+                    {
+                        if entry.command.session_id == session.manifest.session_id {
+                            if let LiveCommandBody::SetModel {
+                                provider: selected_provider,
+                                model: selected_model,
+                                ..
+                            } = entry.command.body
+                            {
+                                provider = selected_provider;
+                                model = selected_model;
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -1397,8 +1425,8 @@ pub(super) async fn restore_summary(
         session_id: session.manifest.session_id,
         epoch: session.epoch,
         seat_id: session.manifest.seat_id.clone(),
-        provider: session.manifest.provider.clone(),
-        model: session.manifest.model.clone(),
+        provider,
+        model,
         title: session.manifest.title.clone(),
         state,
         started_at,

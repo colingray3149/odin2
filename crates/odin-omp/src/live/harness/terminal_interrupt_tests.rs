@@ -114,6 +114,7 @@ fn prompt() -> LiveCommandBody {
         )])
         .unwrap(),
         owner_text: None,
+        wake: false,
     }
 }
 

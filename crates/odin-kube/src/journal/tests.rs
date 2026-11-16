@@ -122,12 +122,18 @@ fn launch(run: &str, image: &str) -> JobLaunch {
         args: vec!["echo journal-launch-law".to_owned()],
         node_selector: BTreeMap::new(),
         initial_target_node: None,
+        admitted_node: None,
+        campaign_reservation: None,
         gpu_count: 0,
+        gpu_min_vram_gib: None,
+        gpu_vram_gib: None,
+        tolerate: Default::default(),
         deadline_seconds: None,
         service: false,
         workload: None,
         extension: None,
         models_config: None,
+        continue_from: None,
         operation_id: OperationId::new("op-journal-launch").expect("valid operation id"),
         idempotency_digest: Digest::hash(b"journal-launch-attempt"),
     }
@@ -236,15 +242,106 @@ fn admitted_launch_registration_is_durable_and_conflict_immutable() {
 }
 
 fn recovery_action(run: &str, operation: &str, version: &str, seed: &str) -> JobAction {
+    action_of(run, operation, version, seed, KubeOperationKind::Restart)
+}
+
+fn action_of(
+    run: &str,
+    operation: &str,
+    version: &str,
+    seed: &str,
+    kind: KubeOperationKind,
+) -> JobAction {
     JobAction {
         run_id: RunId::new(run).expect("valid run id"),
-        kind: KubeOperationKind::Restart,
+        kind,
         expected_resource_version: KubeResourceVersion::new(version)
             .expect("valid resource version"),
         operation_id: OperationId::new(operation).expect("valid operation id"),
         idempotency_digest: Digest::hash(seed.as_bytes()),
         target_node: None,
     }
+}
+
+/// Settles an admitted operation through the ledger's own settlement write,
+/// the way an applied outcome lands in production, without rebuilding a full
+/// observation here.
+fn settle_applied(journal: &Journal, operation: &str) {
+    let mut ledger = journal.ledger.lock().expect("operation ledger lock");
+    ledger
+        .with_tx(|tx| {
+            StoredJournal(tx).finish(
+                operation,
+                &Settlement {
+                    state: "applied",
+                    result: Some("{}"),
+                    failure_kind: None,
+                    failure_reason: None,
+                },
+                "2026-11-06T10:00:00.000Z",
+            )
+        })
+        .expect("applied settlement writes");
+}
+
+/// A run the authority cancelled was withdrawn, not lost: only an applied
+/// cancel for that run, in this journal's scope, says so.
+#[test]
+fn run_cancelled_reads_only_applied_cancels_for_the_run() {
+    let (journal, _directory) = journal();
+    let run = RunId::new("run-journal-cancelled").expect("valid run id");
+    let cancel = action_of(
+        run.as_str(),
+        "op-cancel-applied",
+        "8192",
+        "cancel-applied-seed",
+        KubeOperationKind::Cancel,
+    );
+    admit_action(&journal, &cancel);
+    assert!(
+        !journal
+            .run_cancelled(&run)
+            .expect("a still-pending cancel does not count"),
+        "the Job may still exist while the cancel is pending"
+    );
+
+    settle_applied(&journal, "op-cancel-applied");
+    assert!(journal
+        .run_cancelled(&run)
+        .expect("an applied cancel counts"));
+
+    let other = RunId::new("run-journal-other").expect("valid run id");
+    assert!(
+        !journal.run_cancelled(&other).expect("another run reads"),
+        "cancels stay scoped to their run"
+    );
+
+    let created = action_of(
+        "run-journal-created",
+        "op-create-applied",
+        "8192",
+        "create-applied-seed",
+        KubeOperationKind::Create,
+    );
+    admit_action(&journal, &created);
+    settle_applied(&journal, "op-create-applied");
+    let created_run = RunId::new("run-journal-created").expect("valid run id");
+    assert!(
+        !journal
+            .run_cancelled(&created_run)
+            .expect("an applied create reads"),
+        "an applied create is not a cancellation"
+    );
+
+    let foreign = Journal::new(
+        Arc::clone(&journal.ledger),
+        "other-cluster".to_owned(),
+        "other-namespace".to_owned(),
+    );
+    assert!(
+        !foreign.run_cancelled(&run).expect("a foreign scope reads"),
+        "a cancel in another cluster or namespace does not travel"
+    );
 }
 
 fn admit_action(journal: &Journal, action: &JobAction) -> Started {

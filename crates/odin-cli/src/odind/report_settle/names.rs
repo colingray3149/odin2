@@ -8,8 +8,38 @@ pub(super) fn delivered_name(path: &str, stem: &str) -> String {
     match path {
         PDF_NAME => format!("{stem}.pdf"),
         COMPANION => format!("{stem}.md"),
-        _ => file_name(path).to_owned(),
+        _ => recon_name(path).unwrap_or_else(|| file_name(path).to_owned()),
     }
+}
+
+/// A recon run's file keeps the step it came from, so a folder of them reads
+/// `recon-002-osint.tool-out.csv` rather than a run of `stdout-5.txt`.
+fn recon_name(path: &str) -> Option<String> {
+    let mut parts = path.trim_start_matches("./").split('/');
+    if parts.next() != Some("recon") {
+        return None;
+    }
+    parts.next()?;
+    let rest: Vec<&str> = parts.filter(|part| *part != "steps").collect();
+    if rest.is_empty() {
+        return None;
+    }
+    let name = format!("recon-{}", rest.join("-"));
+    // Downloads takes names up to 200 bytes; the end carries the extension.
+    Some(match name.char_indices().nth(180) {
+        Some(_) => {
+            let tail: String = name
+                .chars()
+                .rev()
+                .take(60)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            format!("{}-{tail}", name.chars().take(119).collect::<String>())
+        }
+        None => name,
+    })
 }
 
 pub(super) fn copy_name(path: &str, stem: &str, used: &mut BTreeSet<String>) -> String {

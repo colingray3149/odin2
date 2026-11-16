@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "knowledge"
+expose = "on_demand"
+op = "new"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Creates a page from its template. Kinds: person (with email when known), org, project, course, topic, event, doc."
+handler = { id = "knowledge_new" }
+input_schema = "schemas/capability/knowledge.new.input.json"
+output_schema = "schemas/capability/knowledge.new.output.json"
+effect_class = "R2"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_knowledge_new_evidence" }
+tests = [
+  "odin-hermes runtime::knowledge::tests::each_declared_knowledge_tool_forwards_its_arguments_and_the_seat",
+]

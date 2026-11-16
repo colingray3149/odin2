@@ -5,10 +5,12 @@ use std::io::{ErrorKind, Read, Write};
 use std::ops::Range;
 use std::os::fd::AsFd;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use rustix::event::{poll, PollFd, PollFlags, Timespec};
 use rustix::fs::{fcntl_getfl, fcntl_setfl, OFlags};
+use rustix::process::{kill_process, Pid, Signal};
 use serde_json::{json, Value};
 
 mod http_read;
@@ -32,17 +34,28 @@ pub const NOTE_BYTES: usize = 1024;
 /// The most of a tool's own error text a failure carries as its cause.
 const CAUSE_BYTES: usize = 400;
 
+/// Fallback when a backend's argv declares no `--call-bound`: page navigation
+/// and a separate PDF fetch need longer than a status probe.
+pub const DEFAULT_CALL_BOUND: Duration = Duration::from_secs(35);
+/// Sanity range only: a synchronous call longer than this belongs in the backend's own async job.
+const MAX_CALL_BOUND_SECONDS: u64 = 300;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BridgeConfig {
     pub adapter: String,
     pub kind_prefix: String,
     pub read_only: Vec<String>,
+    pub r1: Vec<String>,
     pub sequences: Vec<Sequence>,
     pub expose: Vec<String>,
     pub load_check: Option<String>,
     pub window: Option<String>,
     pub pdf_text: Option<String>,
     pub article_text: Option<String>,
+    /// The page fetch with a browser's network fingerprint, tried after the plain reader.
+    pub fingerprint_fetch: Option<String>,
+    /// How long one operation call may take, its MCP session included.
+    pub call_bound: Duration,
     /// BLAKE3 pin (64 hex) of the served tools' names, descriptions and input schemas; empty only while printing it.
     pub surface: String,
     pub server: Vec<String>,
@@ -124,11 +137,24 @@ impl BridgeError {
     }
 }
 
+fn parse_call_bound(value: &str) -> Result<Duration, BridgeError> {
+    match value.parse::<u64>() {
+        Ok(seconds @ 1..=MAX_CALL_BOUND_SECONDS) => Ok(Duration::from_secs(seconds)),
+        Ok(0) => Err(BridgeError::Argv("--call-bound 0 leaves no time for a call".into())),
+        Ok(seconds) => Err(BridgeError::Argv(format!(
+            "--call-bound {seconds} is over {MAX_CALL_BOUND_SECONDS} seconds; longer work belongs in an async job"
+        ))),
+        Err(_) => Err(BridgeError::Argv(format!(
+            "--call-bound {value:?} is not a whole number of seconds"
+        ))),
+    }
+}
+
 impl BridgeConfig {
-    /// `--adapter <id> --kind-prefix <prefix> [--read-only <tool>]...
+    /// `--adapter <id> --kind-prefix <prefix> [--read-only <tool>]... [--r1 <tool>]...
     /// [--sequence <name>=<tool>,...]... [--expose <tool>]... [--load-check <tool>]
     /// [--window <field>] [--pdf-text <executable>] [--article-text <executable>]
-    /// --surface <64 hex> -- <server argv>`.
+    /// [--fingerprint-fetch <executable>] [--call-bound <seconds>] --surface <64 hex> -- <server argv>`.
     pub fn parse(arguments: &[String]) -> Result<Self, BridgeError> {
         let config = Self::parse_unpinned(arguments)?;
         if config.surface.is_empty() {
@@ -151,8 +177,10 @@ impl BridgeConfig {
             return Err(BridgeError::Argv("empty MCP server argv".into()));
         }
         let (mut adapter, mut kind_prefix, mut read_only) = (None, None, Vec::new());
+        let mut r1 = Vec::new();
         let (mut sequences, mut expose, mut load_check) = (Vec::new(), Vec::new(), None);
         let (mut window, mut pdf_text, mut article_text) = (None, None, None);
+        let (mut fingerprint_fetch, mut call_bound) = (None, DEFAULT_CALL_BOUND);
         let mut surface = None;
         let mut flags = own.iter();
         while let Some(flag) = flags.next() {
@@ -164,12 +192,15 @@ impl BridgeConfig {
                 "--adapter" => adapter = Some(value),
                 "--kind-prefix" => kind_prefix = Some(value),
                 "--read-only" => read_only.push(value),
+                "--r1" => r1.push(value),
                 "--sequence" => sequences.push(Sequence::parse(&value)?),
                 "--expose" => expose.push(value),
                 "--load-check" => load_check = Some(value),
                 "--window" => window = Some(value),
                 "--pdf-text" => pdf_text = Some(value),
                 "--article-text" => article_text = Some(value),
+                "--fingerprint-fetch" => fingerprint_fetch = Some(value),
+                "--call-bound" => call_bound = parse_call_bound(&value)?,
                 "--surface" => surface = Some(value),
                 other => return Err(BridgeError::Argv(format!("unknown flag {other}"))),
             }
@@ -188,6 +219,14 @@ impl BridgeConfig {
                 "kind prefix {kind_prefix:?} must be one lowercase operation-kind segment"
             )));
         }
+        if r1
+            .iter()
+            .any(|tool| !kind_segment(tool) || read_only.contains(tool))
+        {
+            return Err(BridgeError::Argv(
+                "--r1 requires a valid tool name not declared --read-only".into(),
+            ));
+        }
         let surface = surface.unwrap_or_default();
         if !surface.is_empty()
             && (surface.len() != 64
@@ -203,12 +242,15 @@ impl BridgeConfig {
             adapter: adapter.ok_or_else(|| BridgeError::Argv("--adapter is required".into()))?,
             kind_prefix,
             read_only,
+            r1,
             sequences,
             expose,
             load_check,
             window,
             pdf_text,
             article_text,
+            fingerprint_fetch,
+            call_bound,
             surface,
             server: server.to_vec(),
         })
@@ -252,6 +294,9 @@ impl BridgeConfig {
             "read_only": self.read_only,
             "server": self.server,
         });
+        if !self.r1.is_empty() {
+            wire["r1"] = json!(self.r1);
+        }
         if self.serves_only_declared() {
             let sequences: Vec<String> = self
                 .sequences
@@ -266,6 +311,7 @@ impl BridgeConfig {
             ("window", &self.window),
             ("pdf_text", &self.pdf_text),
             ("article_text", &self.article_text),
+            ("fingerprint_fetch", &self.fingerprint_fetch),
         ] {
             if let Some(value) = value {
                 wire[field] = json!(value);
@@ -341,7 +387,14 @@ impl BridgeConfig {
                 skipped += 1;
                 continue;
             };
-            operations.push(operation(&kind, self.read_only(tool)));
+            let read_only = self.read_only(tool);
+            let r1 = self.r1.iter().any(|declared| declared == name);
+            if r1 && read_only {
+                return Err(BridgeError::Protocol(format!(
+                    "tool {name} is declared R1 but marked read-only"
+                )));
+            }
+            operations.push(operation(&kind, read_only, r1));
         }
         if skipped > 0 {
             note(&format!(
@@ -365,6 +418,7 @@ impl BridgeConfig {
             operations.push(operation(
                 &format!("{}.{}", self.kind_prefix, sequence.name),
                 read_only,
+                false,
             ));
         }
         if operations.is_empty() {
@@ -388,6 +442,7 @@ impl BridgeConfig {
             window: self.window.as_deref(),
             pdf_text: self.pdf_text.as_deref(),
             article_text: self.article_text.as_deref(),
+            fingerprint_fetch: self.fingerprint_fetch.as_deref(),
         }
     }
 
@@ -400,12 +455,12 @@ impl BridgeConfig {
     }
 }
 
-fn operation(kind: &str, read_only: bool) -> Value {
+fn operation(kind: &str, read_only: bool, r1: bool) -> Value {
     json!({
         "kind": kind,
         "input_schema": format!("schemas/capability/{kind}.input.json"),
         "output_schema": format!("schemas/capability/{kind}.output.json"),
-        "effect_class": if read_only { "R0" } else { "R3" },
+        "effect_class": if read_only { "R0" } else if r1 { "R1" } else { "R3" },
         "idempotency": if read_only { "pure" } else { "required" },
         "evidence": [{
             "kind": odin_adapter_core::ADAPTER_RECEIPT_EVIDENCE_KIND,
@@ -448,6 +503,7 @@ pub struct Rules<'a> {
     pub window: Option<&'a str>,
     pub pdf_text: Option<&'a str>,
     pub article_text: Option<&'a str>,
+    pub fingerprint_fetch: Option<&'a str>,
 }
 
 // A cancellable reader prevents inherited stderr pipes from extending the session.
@@ -603,9 +659,31 @@ fn redact_bytes(bytes: &mut [u8], secret: &[u8]) {
     }
 }
 
+/// Stops a session's server from another thread. The session clears it before reaping the
+/// server, so a late stop never reaches a reused pid.
+#[derive(Clone)]
+pub(crate) struct Stopper(Arc<Mutex<Option<Pid>>>);
+
+impl Stopper {
+    pub(crate) fn stop(&self) {
+        if let Some(pid) = *self.server() {
+            let _ = kill_process(pid, Signal::KILL);
+        }
+    }
+
+    fn clear(&self) {
+        self.server().take();
+    }
+
+    fn server(&self) -> MutexGuard<'_, Option<Pid>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// Reuse unread bytes and compact only when reading again to avoid copying every parsed line.
 pub struct McpSession {
     child: Child,
+    stopper: Stopper,
     stdin: ChildStdin,
     stdout: ChildStdout,
     stderr: StderrTail,
@@ -656,8 +734,10 @@ impl McpSession {
         };
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
+        let stopper = Stopper(Arc::new(Mutex::new(Some(Pid::from_child(&child)))));
         let mut session = Self {
             child,
+            stopper,
             stdin,
             stdout,
             stderr,
@@ -697,6 +777,7 @@ impl McpSession {
     // A failed pipe cannot be reused, and its process may have final diagnostics.
     fn fail(&mut self, error: BridgeError) -> BridgeError {
         self.failed = true;
+        self.stopper.clear();
         let _ = self.child.kill();
         let _ = self.child.wait();
         let note = self.stderr.finish();
@@ -980,7 +1061,8 @@ pub fn bounded(text: &str, bytes: usize) -> &str {
 
 impl McpSession {
     /// `surface` re-checks the listing a sequence takes before its first step. A single tool
-    /// call uses the listing `operate` already checked and does not list again.
+    /// call uses the listing `operate` already checked and does not list again. A page read
+    /// races the plain reader against the browser: the first good page wins.
     pub fn call_plan(
         &mut self,
         plan: &[String],
@@ -1000,11 +1082,49 @@ impl McpSession {
         if let Some(config) = surface {
             config.check_surface(&listed)?;
         }
+        let url = input.get("url").and_then(Value::as_str);
+        let mut plain = rules.load_check.zip(url).map(|(_, url)| {
+            http_read::PlainRead::start(
+                url,
+                self.deadline,
+                rules.article_text,
+                rules
+                    .window
+                    .and_then(|field| read::first_window(input, field)),
+                self.stopper.clone(),
+            )
+        });
+        match self.browse(&listed, plan, input, rules, &mut plain) {
+            Ok(read) => Ok(read),
+            // A browser the plain reader stopped ends here too, as a failed exchange.
+            Err(error) => match plain.and_then(|plain| plain.winner(self.deadline)) {
+                Some(page) => served(
+                    rules,
+                    input,
+                    &read::with_alternate_note(page).text,
+                    true,
+                    false,
+                    json!({ "content": [] }),
+                ),
+                None => Err(error),
+            },
+        }
+    }
+
+    /// The sequence's steps through the browser; a stopped page falls back to `plain`'s page.
+    fn browse(
+        &mut self,
+        listed: &[Value],
+        plan: &[String],
+        input: &Value,
+        rules: Rules<'_>,
+        plain: &mut Option<http_read::PlainRead>,
+    ) -> Result<Value, BridgeError> {
         let mut last = json!({ "content": [] });
         let mut document = None;
         let mut stopped: Option<read::StoppedRead> = None;
         for (index, step) in plan.iter().enumerate() {
-            let outcome = self.tool_call(&listed, step, input, rules, index + 1 == plan.len())?;
+            let outcome = self.tool_call(listed, step, input, rules, index + 1 == plan.len())?;
             last = match (index, rules.load_check) {
                 (0, Some(check)) => {
                     let navigated = outcome.map_err(|error| match error {
@@ -1012,7 +1132,7 @@ impl McpSession {
                         BridgeError::Refused(said) => BridgeError::PageLoad(said).refused(),
                         other => other,
                     })?;
-                    let log = self.tool_call(&listed, check, input, rules, false)??;
+                    let log = self.tool_call(listed, check, input, rules, false)??;
                     // The body is not read yet, so a 200 challenge is caught
                     // again after the read tool returns its text.
                     match read::document_verdict(&text_of(&log), "") {
@@ -1041,7 +1161,7 @@ impl McpSession {
             }
         }
         if let Some(stop) = stopped {
-            return self.fallback_read(&listed, plan, input, rules, stop);
+            return self.fallback_read(listed, plan, input, rules, stop, plain.take());
         }
         let converter = rules
             .pdf_text
@@ -1068,7 +1188,7 @@ impl McpSession {
         )
     }
 
-    /// Retry with the independent public-only HTTP reader while this MCP
+    /// Take the independent public-only HTTP reader's page while this MCP
     /// session stays open, then navigate Obscura to Wayback in the same session.
     fn fallback_read(
         &mut self,
@@ -1077,6 +1197,7 @@ impl McpSession {
         input: &Value,
         rules: Rules<'_>,
         stop: read::StoppedRead,
+        plain: Option<http_read::PlainRead>,
     ) -> Result<Value, BridgeError> {
         let original = input
             .get("url")
@@ -1092,19 +1213,37 @@ impl McpSession {
         let read = read::public_fallback(
             &original,
             &stop,
-            || http_read::read(&original, deadline, rules.article_text),
+            || {
+                plain.and_then(|plain| plain.page(deadline)).or_else(|| {
+                    rules.fingerprint_fetch.and_then(|fetch| {
+                        http_read::fingerprinted(fetch, &original, deadline, rules.article_text)
+                    })
+                })
+            },
             |archive_url| {
                 let mut archived = input.clone();
                 archived["url"] = json!(archive_url);
                 self.engine_read(listed, engine, read_with, check, &archived, rules)
             },
         )?;
+        // A fallback that fetched a PDF holds its raw bytes: the declared converter reads its text.
+        let (note, body) = read.text.split_once("\n\n").unwrap_or(("", &read.text));
+        let converter = rules
+            .pdf_text
+            .filter(|_| body.trim_start().starts_with("%PDF-"));
+        let text = match converter {
+            Some(converter) => format!(
+                "{note}\n\n{}",
+                read::pdf_text(converter, &read.url, self.deadline)?
+            ),
+            None => read.text.clone(),
+        };
         served(
             rules,
             input,
-            &read.text,
+            &text,
             true,
-            false,
+            converter.is_some(),
             json!({ "content": [] }),
         )
     }
@@ -1144,8 +1283,8 @@ impl McpSession {
         }
     }
 
-    /// One listed tool, with only the fields that tool declares. A page read
-    /// asks for the whole page so the window is applied here, not upstream.
+    /// One listed tool, with only the fields that tool declares. A page read asks
+    /// for the text through the caller's window; the window is cut here, not upstream.
     fn tool_call(
         &mut self,
         listed: &[Value],
@@ -1159,7 +1298,7 @@ impl McpSession {
             .find(|tool| tool.get("name").and_then(Value::as_str) == Some(step));
         let mut arguments = step_arguments(input, tool);
         if let Some(field) = rules.window.filter(|_| page) {
-            arguments[field] = json!(read::PAGE_CHARS);
+            arguments[field] = json!(read::asked_chars(input, field));
         }
         let result = self.request("tools/call", json!({"name": step, "arguments": arguments}))?;
         Ok(call_result(result))
@@ -1195,6 +1334,7 @@ pub(crate) fn text_of(result: &Value) -> String {
 /// The worker stops descendants; this session stops only the server it spawned.
 impl Drop for McpSession {
     fn drop(&mut self) {
+        self.stopper.clear();
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = self.stderr.finish();

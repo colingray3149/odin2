@@ -930,12 +930,18 @@ fn texts(value: &Value) -> String {
 /// Link the existing between-turn control journal to the call it governed. The gateway's
 /// served_model remains independent: a selected lane is never reported as an observed model.
 fn journaled_class_route(events: &[crate::live::LiveEvent], at: OffsetDateTime) -> Option<&Value> {
-    events.iter().rev().find_map(|event| {
-        (event.occurred_at <= at
-            && event.body.get("kind").and_then(Value::as_str) == Some("modelRouted"))
-        .then(|| event.body.get("payload"))
-        .flatten()
-    })
+    events
+        .iter()
+        .rev()
+        .filter(|event| event.occurred_at <= at)
+        .find(|event| {
+            matches!(
+                event.body.get("kind").and_then(Value::as_str),
+                Some("modelRouted" | "modelReclaimed")
+            )
+        })
+        .filter(|event| event.body.get("kind").and_then(Value::as_str) == Some("modelRouted"))
+        .and_then(|event| event.body.get("payload"))
 }
 
 fn frame_error_kind(frame: &Value) -> Option<String> {
@@ -1332,6 +1338,57 @@ mod tests {
                 blob_refs: json!([]),
             })
             .unwrap();
+    }
+
+    #[test]
+    fn exported_class_route_stops_at_reclaim_until_a_new_route() {
+        let mut ledger = Ledger::open_in_memory().unwrap();
+        session(&mut ledger);
+        let base = OffsetDateTime::UNIX_EPOCH;
+        for (id, second, body) in [
+            (
+                "route-before",
+                1,
+                json!({"kind": "modelRouted", "payload": {"model": "old"}}),
+            ),
+            (
+                "reclaim",
+                3,
+                json!({"kind": "modelReclaimed", "payload": {"model": "lead"}}),
+            ),
+            (
+                "route-after",
+                5,
+                json!({"kind": "modelRouted", "payload": {"model": "new"}}),
+            ),
+        ] {
+            ledger
+                .append_live_event_after_blobs(&NewLiveEvent {
+                    event_id: EventId::new(id).unwrap(),
+                    session_id: SessionId::new("session:trace").unwrap(),
+                    expected_epoch: 1,
+                    occurred_at: base + time::Duration::seconds(second),
+                    body,
+                    blob_refs: json!([]),
+                })
+                .unwrap();
+        }
+        for (id, second) in [("before", 2), ("reclaimed", 4), ("after", 6)] {
+            insert_call(
+                &mut ledger,
+                id,
+                id,
+                base + time::Duration::seconds(second),
+                id,
+                json!({}),
+            );
+        }
+        let rows = ledger.export_traces("seat:trace", base).unwrap();
+        let route =
+            |id: &str| &rows.iter().find(|row| row["entry_id"] == id).unwrap()["class_route"];
+        assert_eq!(route("before"), &json!({"model": "old"}));
+        assert!(route("reclaimed").is_null());
+        assert_eq!(route("after"), &json!({"model": "new"}));
     }
 
     #[test]

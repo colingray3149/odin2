@@ -1,7 +1,7 @@
 schema = "odin.registry.v1"
 kind = "model"
 enabled = true
-description = "Gemini Flash on the Google AI Studio free key."
+description = "Gemini Flash on the Google AI Studio key (paid since 2026-11-12: billed per token)."
 # The card id; everything else names the bare lane (this folder).
 id = "gateway/gemini-free"
 # Upstream provider/model exactly as AVAILABLE lists it.
@@ -13,4 +13,6 @@ order = 8
 # Account pin holding this card's credentials.
 account = "google-ai-studio"
 # One line naming when this card is the right pick.
-strengths = "Gemini Flash on AI Studio's free tier; the alias tracks the current Flash."
+strengths = "Gemini Flash on AI Studio, billed per token; the alias tracks the current Flash."
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"

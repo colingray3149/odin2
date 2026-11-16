@@ -4,5 +4,6 @@ enabled = true
 description = "Change Odin itself: registry, seats, projects, pods, models, deploys, merges."
 examples = [
   'odin {op: author, skeleton, id, values}',
+  'odin {op: edit, kind: "lane", id: "kubert-odin", set: {"limits.pods": 8}, reason}',
   'odin {op: deploy, project, commit}',
 ]

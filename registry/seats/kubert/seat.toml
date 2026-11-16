@@ -4,6 +4,9 @@ enabled = true
 description = "Operator of the cluster: containers, pod placement, workload control and recovery."
 categories = ["operator"]
 tool_refs = [
+  "simulation.read",
+  "simulation.frame",
+  "toolset:plan",
   "docs.render",
   "docs.preview",
   "docs.ocr",
@@ -12,20 +15,29 @@ tool_refs = [
   "kube.snapshot.read",
   "kube.health.read",
   "kube.workload.create",
+  "kube.workload.create_many",
   "kube.workload.pause",
   "kube.workload.resume",
   "kube.workload.restart",
   "kube.workload.cancel",
   "kube.workload.summarize",
+  "kube.workload.steer",
+  "kube.workload.queue",
+  "kube.workload.queue_drop",
+  "compute.lease.create",
+  "compute.lease.destroy",
+  "compute.lease.list",
+  "compute.lease.enroll",
   "seat.ask.sinmara",
-  "memory.remember",
-  "brain.search",
-  "brain.read",
+  "knowledge.search",
+  "knowledge.read",
+  "knowledge.add",
+  "knowledge.status",
   "registry.read",
   "incident.raise",
   "artifact.write",
   "artifact.read",
-  "memory.forget",
+  "artifact.analyze",
   "browser.observe",
   "browser.interact",
   "web.search",
@@ -38,9 +50,13 @@ project_scope = [
   "odin",
 ]
 # Launch choices seat.model.set may pick (provider/model); the first is the default.
-models = ["gateway/go-deepseek-flash", "gateway/glm-flash", "gateway/kubert-mini", "gateway/astra", "gateway/zai-glm", "gateway/kimi-k31", "gateway/terra"]
-brain_scope = ["memory.owner", "ops.history", "memory.kubert", "memory.project.odin"]
-profile_namespace = "memory.owner"
+models = ["gateway/go-deepseek-flash", "gateway/glm-flash", "gateway/kubert-mini", "gateway/astra", "gateway/zai-glm", "gateway/kimi-k31", "gateway/terra", "gateway/sol"]
+brain_scope = [
+  "memory.owner",
+  "ops.history",
+  "memory.kubert",
+  "memory.project.odin",
+]
 
 guidance = """
 You are Kubert, the operator of the owner's compute: the cluster, its nodes and the pods Odin runs on it. Calm and exact; you answer whoever asked in a few plain lines — what you did, what you saw, what is left.
@@ -49,9 +65,11 @@ How you think through a job: look before you act. Read the cluster snapshot, its
 
 Your fixed toolsets take op plus the fields named for that operation. Rare operations take args; op help with operation returns the exact member schema as a result. MCP tools and skills are native capabilities behind these same operations.
 
-Your tools: cluster reads (snapshot, health, pod summaries); workload control (launch a published profile, pause, resume, restart or move, cancel); the brain, the registry and your memory for context; artifacts to hand results on; web search and reading, a pod's browser and public-source harvesting for the research pods you run; incidents for what the owner should hear about.
+Your tools: cluster reads (snapshot, health, pod summaries); workload control (launch a published profile, pause, resume, restart or move, cancel); the knowledge tools (search and read; add for project notes), the registry and your own page (read brain/agents/kubert.md once at the start of a session: standing prompts and lessons; record a lesson or decision with knowledge.add as=note about your project) for context; artifacts to hand results on; web search and reading, a pod's browser and public-source harvesting for the research pods you run; incidents for what the owner should hear about.
 
 When you run inside a pod, its declared workload brief is your job for the whole session, and its inputs, browser and reachable sites come with it.
+
+A campaign project's lane can own its workloads: then your open session on that lane takes every finding of the project's pods first, whoever launched them. Read each wake with the cluster health and pod summaries, act within the campaign, report science questions to the project's science seat and the owner's decisions to Sinmara. Alone you launch an approved campaign's cases within its cases and core-hours, pause and resume, yield pc while it games, re-place after node loss, and restart a stalled pod once; template, mesh or solver changes, re-planning and training launches are the science seat's; more budget or cases, a new campaign, rented compute, deleting or touching restricted data and pc while it games are the owner's. Raise an incident (warning) for three runs in a row ending in the same failure, a pod evicted or OOM-killed, or an export or data filesystem under 15% free; raise it critical, and pause the rest of the batch, for more than 20% of a batch diverging, a node lost with running pods for 30 minutes, a filesystem under 5% free, finished runs not collected for 48 hours, or a checksum mismatch.
 
 The harness: Odin runs every call under your grants and the pod's sandbox. When an action needs the owner's yes, Odin asks him as you call it. An agent pod's final answer reaches the owner's conversation when it finishes."""
 
@@ -60,6 +78,9 @@ The harness: Odin runs every call under your grants and the pod's sandbox. When 
 max_parallel_runs = 6
 # Six pod reviewers plus five interactive/operator sessions.
 max_sessions = 11
+# Per-call batch size and artifact inputs per launch; changes apply to new admissions.
+max_batch_launches = 256
+max_batch_inputs = 16
 
 [live]
 max_sessions = 11
@@ -67,6 +88,8 @@ file_ingress_lane = "sinmara.file.in"
 file_egress_lane = "sinmara.file.out"
 render_ingress_lane = "sinmara.render.in"
 render_egress_lane = "sinmara.render.out"
+watches = [
+]
 
 [live.rollover]
 # Durable bounded turn-boundary rollover: measured provider watermark
@@ -75,9 +98,37 @@ render_egress_lane = "sinmara.render.out"
 threshold_tokens = 180_000
 max_brief_bytes = 8_000
 history_tail_events = 128
+# Hourly backstop for campaign lanes, skipped while nothing Kubert watches has moved.
+heartbeat_minutes = 60
+heartbeat_when = "changed"
+
+[live.loom]
+# Kubert's own sessions run on Odin's lean harness; pod reviews stay on OMP
+# with [live.rollover] above. Every value here is editable without a rebuild.
+turn_budget_tokens = 32_000
+compact_at_tokens = 24_000
+compact_to_tokens = 16_000
+summary_max_bytes = 6_144
+summary_model = "gateway/luna"
+digest_bytes = 2_048
+inline_result_bytes = 16_384
+side_turns = false
+inline_tool_calls = 8
+max_tool_calls_per_turn = 32
+loop_repeat_limit = 4
+cache_hit_floor_percent = 50
+cache_floor_window_hours = 24
+connect_timeout_seconds = 10
+stream_idle_seconds = 300
+max_queued_turns = 32
 
 [knowledge]
-atlas_sources = ["memory.owner", "ops.history", "memory.kubert", "memory.project.odin"]
+atlas_sources = [
+  "memory.owner",
+  "ops.history",
+  "memory.kubert",
+  "memory.project.odin",
+]
 required_tags = []
 denied_tags = []
 top_k = 16
@@ -85,11 +136,12 @@ top_k = 16
 [context]
 max_bundle_tokens = 24_576
 profile = "medium"
-review_lane = "glm-flash"
 consult = { lane = "astra", effort = "high" }
 
 [tools]
 deny = ["Bash"]
+# Called rarely: listed inside one `more` tool, each op with its required fields.
+deferred = ["data", "docs", "media", "osint"]
 
 [tools.redirects]
 max_http_hops = 2

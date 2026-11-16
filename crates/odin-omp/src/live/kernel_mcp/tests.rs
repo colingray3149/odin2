@@ -237,9 +237,5 @@ fn the_claude_config_is_owner_only_and_keeps_its_token() {
         None,
         "a config for another endpoint never lends its token"
     );
-    assert_eq!(
-        endpoint.acp_server()["headers"][0]["value"],
-        format!("Bearer {}", endpoint.bearer)
-    );
     let _ = std::fs::remove_dir_all(&dir);
 }

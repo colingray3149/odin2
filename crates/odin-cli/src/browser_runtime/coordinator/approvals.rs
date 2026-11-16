@@ -352,8 +352,10 @@ impl BrowserCommandCoordinator {
             .approval(&command.approval_id)
             .map_err(|error| live::HuginnProtocolError::unavailable("approvalProjection", error))?
             .is_some_and(|approval| {
-                self.owner_preview
-                    .contains(approval.scope.capability_id.as_str())
+                approval.scope.capability_id.as_str() == "plan.root-consent"
+                    || self
+                        .owner_preview
+                        .contains(approval.scope.capability_id.as_str())
             });
         if command.decision == live::ApprovalDecision::Approve
             && self

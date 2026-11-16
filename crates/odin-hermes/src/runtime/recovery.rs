@@ -430,9 +430,13 @@ impl HermesRuntime {
 
     /// Rebuilds the reconcile queues from the durable rows: the intent row
     /// is the enqueue, so entries lost with the in-memory stashes are
-    /// re-derived here, deduped against whatever is still queued.
+    /// re-derived here, deduped against whatever is still queued. Only
+    /// unsettled intent rows are read; a settled one has nothing to recover.
     fn recover_intent_rows(&self, ingress: &Arc<DiscordIngress>) -> Result<(), HermesRuntimeError> {
-        let rows = self.store.tasks().map_err(HermesRuntimeError::from)?;
+        let rows = self
+            .store
+            .unsettled_tasks(crate::ingress::INTENT_COMMAND_PREFIX)
+            .map_err(HermesRuntimeError::from)?;
         let queued = |id: &str| -> bool {
             self.admitted
                 .lock()
@@ -453,13 +457,6 @@ impl HermesRuntime {
                     .unwrap_or(false)
         };
         for row in rows {
-            if !row
-                .id
-                .as_str()
-                .starts_with(crate::ingress::INTENT_COMMAND_PREFIX)
-            {
-                continue;
-            }
             if queued(row.id.as_str()) {
                 continue;
             }

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://odin.local/schemas/capability/kube.workload.create.input.json",
   "title": "kube.workload.create input",
-  "description": "Names exactly one admitted published profile of the container or workload namespace. The model never supplies an image, command, args, node selector, worker identity, namespace, run id, operation id, or idempotency digest; the trusted runtime resolves every execution field from the shared pinned snapshot with typed reference authority — unknown and disabled profiles refuse before any effect. approvalId is a model-supplied selector naming the exact approval on the phase-two dispatch — never itself authority: the kernel consumes that exact approval server-side.",
+  "description": "Names exactly one admitted published profile of the container or workload namespace. The model never supplies an image, command, args, node selector, worker identity, namespace, run id, operation id, or idempotency digest; the trusted runtime resolves every execution field from the shared pinned snapshot with typed reference authority \u2014 unknown and disabled profiles refuse before any effect.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -32,16 +32,67 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 80,
-      "description": "Company this report is filed under, as one directory segment. The authority copies the PDF, Markdown and evidence to laptop-downloads/business/<company> and Drive Agentic Business/Profiles/<company>. A research launch names the company here; the folder is not parsed from the prompt."
+      "description": "The company or person the report is about, as one folder name (e.g. Acme or zilanxiong). Every report about the same subject goes into that subject's folder: laptop-downloads/business/<subject> and Drive Agentic Business/Profiles/<subject>."
     },
     "inputs": {
       "type": "array",
-      "maxItems": 16,
       "items": {
         "type": "string",
         "pattern": "^blake3:[0-9a-f]{64}$"
       },
-      "description": "Artifacts the pod receives read-only, in order: a script pod as /var/run/odin/staging/input-0, input-1, …; an agent pod from input-2 on (its brief names each path). Each must be shared with the launching seat or project."
+      "description": "Artifacts the pod receives read-only, in order: a script pod as /var/run/odin/staging/input-0, input-1, \u2026; an agent pod from input-2 on (its brief names each path). Each must be shared with the launching seat or project."
+    },
+    "limits": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "deadlineSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 86400,
+          "description": "Lower this run's wall-clock lifetime in seconds; it cannot exceed the profile's declared lifetime."
+        },
+        "outputReserveTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Lower the output tokens the context guard keeps free; it cannot exceed the profile's declared reserve."
+        },
+        "checkpointPercent": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 99,
+          "description": "Lower the context percent at which the run checkpoints; it cannot exceed the profile's declared percent."
+        },
+        "maxRollovers": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "description": "Lower the context rollovers the run may take; it cannot exceed the profile's declared count."
+        },
+        "toolResultBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Lower the largest tool result kept inline, in bytes; it cannot exceed the profile's declared bound."
+        }
+      },
+      "description": "Per-run overrides of the profile's declared [limits] and lifetime. Each field may only lower its declared value; a field the profile does not declare is refused. Omitted: the profile's own values."
+    },
+    "continueFrom": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "A finished run (Complete or Failed, not running or paused) of the same profile launched by the same seat, lane and project. This run takes over its state volume and starts on the node that holds it, so a job longer than one lifetime continues from where the last one stopped. Refused when that run is unknown, still live, another profile's, or its state is gone."
+    },
+    "seeds": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "description": "What the run is about: usernames, emails, phones, domains, URLs, names or image URLs. The harness runs recon on each as soon as the pod is up (every granted tool that takes it, chained on what each finds) and hands the pod the findings."
     }
   },
   "required": [

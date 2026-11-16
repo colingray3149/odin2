@@ -6,14 +6,7 @@
   "additionalProperties": false,
   "properties": {
     "device": { "type": "string", "minLength": 1, "description": "Desktop friendly name, or all for every declared desktop. Omitted uses the declared conversation desktop." },
-    "steps": {
-      "type": "array", "minItems": 1, "maxItems": 1,
-      "items": {
-        "type": "object", "additionalProperties": false,
-        "properties": { "do": { "const": "display" }, "on": { "type": "boolean" } },
-        "required": ["do", "on"]
-      }
-    }
+    "on": { "type": "boolean", "description": "Monitors on (true) or off (false)." }
   },
-  "required": ["steps"]
+  "required": ["on"]
 }

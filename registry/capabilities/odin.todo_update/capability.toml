@@ -1,4 +1,6 @@
 schema = "odin.registry.v1"
+toolset = "plan"
+op = "todo"
 kind = "capability"
 enabled = true
 implementation = "builtin"

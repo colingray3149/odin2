@@ -15,22 +15,33 @@ use odin_types::OperationId;
 use serde_json::Value;
 use time::OffsetDateTime;
 
+use super::launch_queue::QueuedLaunch;
 use super::{WorkloadLaunchInputs, WorkloadLaunchPort, WorkloadResolve, WorkloadSessionOpenError};
 
 use super::admission::{
-    agent_pod_launch_admissible, arguments_error, checked_deadline, create_deadline,
-    create_replay_or_fresh, decode_arguments, kube_failure, mutation_deadline, pod_launch_scope,
-    pod_run_generation, protocol_failure, replay_or_fresh, require_kube_launch_scope,
-    require_kube_seat_scope, require_sphere_profile, require_workload_scope,
-    resolve_create_attempt, validate_run_label, NoInput, OptionalRunInput, PodRunUse, ProfileInput,
+    admitted_limits, agent_pod_launch_admissible, arguments_error, checked_deadline,
+    create_deadline, create_replay_or_fresh, decode_arguments, kube_failure, mutation_deadline,
+    pod_launch_scope, pod_run_generation, protocol_failure, replay_or_fresh,
+    require_kube_launch_scope, require_kube_seat_scope, require_no_campaign_policy,
+    require_sphere_profile, require_workload_scope, resolve_create_attempt, validate_run_label,
+    NoInput, OptionalRunInput, PodRunUse, ProfileInput,
 };
 use super::evidence::{
-    health_unavailable, mutation_settlement, serialize_output, serialize_value,
-    snapshot_unavailable, summarize_row, summarize_unavailable, HealthOutput, MutationOutput,
-    MutationStatus, ReadStatus, SnapshotOutput, SummarizeOutput, AGENT_POD_REPORT,
+    health_unavailable, mutation_settlement, offload_summarize_row, serialize_output,
+    serialize_value, snapshot_unavailable, summarize_row, summarize_unavailable, HealthOutput,
+    MutationOutput, MutationStatus, ReadStatus, SnapshotOutput, SummarizeOutput, AGENT_POD_REPORT,
 };
 use super::launch::{container_identity, mutation_operation, profile_launch, LaunchRequest};
 use super::KubeCommandCoordinator;
+
+#[path = "pod_logs.rs"]
+mod pod_logs;
+use pod_logs::{pod_log, pod_status};
+
+#[path = "execution_offload.rs"]
+mod execution_offload;
+#[path = "execution_workload.rs"]
+mod execution_workload;
 
 /// The extra actuation window a rehome that carries node-bound state may
 /// take: two helper pods (each bounded to start in 120 s) and the copy.
@@ -63,13 +74,65 @@ fn bind_vpn_transport(
             .resolver
             .as_ref()
             .map(|path| path.display().to_string()),
+        forwarded: binding.forwarded,
     }))
 }
+pub(super) fn batch_run_scope(
+    tool: &'static str,
+    caller: &odin_domain::Scope,
+    operation: &OperationId,
+) -> Result<odin_domain::Scope, HostToolError> {
+    let mut scope = caller.clone();
+    let parent = scope.run.as_ref().ok_or(HostToolError::Scope {
+        tool,
+        reason: "workload creation addresses the invocation's bound run",
+    })?;
+    let digest = blake3::hash(operation.as_str().as_bytes())
+        .to_hex()
+        .to_string();
+    let run = format!("{parent}:pod:batch:{digest}");
+    scope.run = Some(
+        RunId::new(&run)
+            .or_else(|_| RunId::new(format!("{parent}:pod:batch:{}", &digest[..16])))
+            .map_err(|error| arguments_error(tool, format!("cannot derive batch run: {error}")))?,
+    );
+    Ok(scope)
+}
+
+#[cfg(test)]
+mod batch_run_tests {
+    use super::*;
+
+    #[test]
+    fn batch_items_have_distinct_replayable_runs() {
+        let caller = odin_domain::Scope {
+            run: Some(RunId::new("run:live:session").unwrap()),
+            ..Default::default()
+        };
+        let first = OperationId::new("item-1").unwrap();
+        let second = OperationId::new("item-2").unwrap();
+        let one = batch_run_scope("test", &caller, &first).unwrap();
+        assert_eq!(one, batch_run_scope("test", &caller, &first).unwrap());
+        assert_ne!(
+            one.run,
+            batch_run_scope("test", &caller, &second).unwrap().run
+        );
+        assert!(one
+            .run
+            .unwrap()
+            .as_str()
+            .starts_with("run:live:session:pod:"));
+    }
+}
+
 struct ScriptCreate<'a> {
+    held: &'a QueuedLaunch,
     inputs: &'a crate::kube_runtime::ScriptLaunchInputs,
+    campaign_reservation: Option<&'a odin_ledger::campaign::Reservation>,
     artifacts: &'a [String],
     prompt: Option<&'a str>,
     label: Option<String>,
+    continue_from: Option<RunId>,
     caller_scope: &'a odin_domain::Scope,
     target_node: Option<&'a str>,
     tool: &'static str,
@@ -79,12 +142,14 @@ struct ScriptCreate<'a> {
 }
 
 struct WorkloadCreate<'a> {
+    held: &'a QueuedLaunch,
     port: Arc<dyn WorkloadLaunchPort>,
     inputs: Box<WorkloadLaunchInputs>,
     artifacts: &'a [String],
     prompt: Option<&'a str>,
     label: Option<String>,
     company: Option<String>,
+    continue_from: Option<RunId>,
     caller_scope: &'a odin_domain::Scope,
     target_node: Option<&'a str>,
     tool: &'static str,
@@ -103,20 +168,91 @@ impl KubeCommandCoordinator {
         operation_id: OperationId,
         invocation: HostInvocation,
     ) -> Result<Value, HostToolError> {
+        let held = QueuedLaunch::new(&operation_id, timeout_seconds, &invocation);
+        self.create_held(tool, timeout_seconds, operation_id, invocation, held)
+            .await
+    }
+
+    pub(super) async fn create_held(
+        &self,
+        tool: &'static str,
+        timeout_seconds: u32,
+        operation_id: OperationId,
+        invocation: HostInvocation,
+        held: QueuedLaunch,
+    ) -> Result<Value, HostToolError> {
         let HostInvocation { scope, arguments } = invocation;
         let seat = require_kube_seat_scope(tool, &scope)?;
         let input: ProfileInput = decode_arguments(tool, arguments)?;
+        let campaign_reservation =
+            if held.campaign.is_some() || held.campaign_stage_sha256.is_some() {
+                let campaign = held
+                    .campaign
+                    .as_deref()
+                    .ok_or_else(|| arguments_error(tool, "campaign reservation is missing"))?;
+                let digest = held
+                    .campaign_stage_sha256
+                    .as_deref()
+                    .ok_or_else(|| arguments_error(tool, "campaign stage pin is missing"))?;
+                if digest.len() != 64
+                    || !digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                {
+                    return Err(arguments_error(tool, "invalid campaign stage pin"));
+                }
+                let queue = self
+                    .launch_queue()
+                    .ok_or_else(|| HostToolError::Unavailable {
+                        tool,
+                        reason: "campaign launch queue is not configured".to_owned(),
+                    })?;
+                let root = queue
+                    .campaign_state_dir()
+                    .map_err(|reason| HostToolError::Unavailable { tool, reason })?;
+                let (reserved_campaign, reservation, state) =
+                    odin_ledger::campaign::lookup(root, operation_id.as_str()).map_err(
+                        |error| HostToolError::Unavailable {
+                            tool,
+                            reason: format!("campaign reservation unavailable: {error}"),
+                        },
+                    )?;
+                if held.operation_id != operation_id.as_str()
+                    || reserved_campaign != campaign
+                    || state != "reserved"
+                    || reservation.node != input.target_node.as_deref().unwrap_or("")
+                    || reservation.stage_sha256 != digest
+                    || reservation.profile != input.profile
+                {
+                    return Err(arguments_error(
+                        tool,
+                        "campaign launch does not match its active reservation",
+                    ));
+                }
+                Some(reservation)
+            } else {
+                None
+            };
         validate_run_label(tool, input.label.as_deref())?;
+        let continue_from = input
+            .continue_from
+            .as_deref()
+            .map(RunId::new)
+            .transpose()
+            .map_err(|error| arguments_error(tool, format!("invalid continueFrom: {error}")))?;
         let caller_scope = scope;
         // Each distinct launch owns its own run under the session's run, so
         // one session can launch several pods, of one profile or many — and
         // a launch made again after its earlier run finished gets a fresh run.
-        let scope = self
-            .pod_create_scope(tool, &caller_scope, &input, &operation_id)
-            .await?;
+        let scope = if held.batch.is_some() {
+            batch_run_scope(tool, &caller_scope, &operation_id)?
+        } else {
+            self.pod_create_scope(tool, &caller_scope, &input, &operation_id)
+                .await?
+        };
         let (run_id, project_id, lane_id) = require_kube_launch_scope(tool, &scope)?;
         if let Some(cell) = self.runtime_cell.as_ref() {
-            require_sphere_profile(tool, cell.snapshot(), &project_id, &input.profile)?;
+            require_sphere_profile(tool, &cell.snapshot(), &project_id, &input.profile)?;
         }
         // A published workload-profile id resolves through the daemon's
         // workload launch port FIRST: profiles are registry data across two
@@ -129,7 +265,19 @@ impl KubeCommandCoordinator {
                 WorkloadResolve::Refused(reason) => {
                     return Err(arguments_error(tool, reason));
                 }
-                WorkloadResolve::Launch(inputs) => {
+                WorkloadResolve::Launch(mut inputs) => {
+                    if campaign_reservation.is_some() {
+                        return Err(arguments_error(
+                            tool,
+                            "campaign launches require a script workload",
+                        ));
+                    }
+                    require_no_campaign_policy(
+                        tool,
+                        inputs.profile.profile.require_campaign_approval,
+                    )?;
+                    inputs.limits = admitted_limits(tool, &inputs.profile, &input)?;
+                    inputs.seeds = input.seeds.clone();
                     self.require_create_target(
                         tool,
                         input.target_node.as_deref(),
@@ -141,12 +289,14 @@ impl KubeCommandCoordinator {
                     )?;
                     return self
                         .create_workload(WorkloadCreate {
+                            held: &held,
                             port,
                             inputs,
                             artifacts: &input.inputs,
                             prompt: input.prompt.as_deref(),
                             label: input.label.clone(),
                             company: input.company.clone(),
+                            continue_from,
                             caller_scope: &caller_scope,
                             target_node: input.target_node.as_deref(),
                             tool,
@@ -156,14 +306,51 @@ impl KubeCommandCoordinator {
                         })
                         .await;
                 }
-                WorkloadResolve::Script(inputs) => {
+                WorkloadResolve::Script(mut inputs) => {
+                    require_no_campaign_policy(
+                        tool,
+                        inputs.profile.profile.require_campaign_approval && held.campaign.is_none(),
+                    )?;
+                    super::launch::admit_script_limits(tool, &mut inputs, &input)?;
+                    if let Some(reservation) = &campaign_reservation {
+                        if inputs.profile.profile.offload.is_some() {
+                            return Err(arguments_error(
+                                tool,
+                                "campaign launches cannot use offload profiles",
+                            ));
+                        }
+                        let profile = &inputs.profile.profile;
+                        let cpu = profile
+                            .resources
+                            .as_ref()
+                            .map(|resources| resources.cpu)
+                            .filter(|cpu| *cpu > 0)
+                            .ok_or_else(|| {
+                                arguments_error(tool, "campaign profile requires a CPU reservation")
+                            })?;
+                        let deadline = profile
+                            .deadline_seconds()
+                            .filter(|deadline| *deadline > 0)
+                            .ok_or_else(|| {
+                                arguments_error(tool, "campaign profile requires a finite deadline")
+                            })?;
+                        if f64::from(cpu) * f64::from(deadline) / 3600.0 > reservation.core_hours {
+                            return Err(arguments_error(
+                                tool,
+                                "campaign workload exceeds its reserved core-hours",
+                            ));
+                        }
+                    }
                     self.require_create_target(tool, input.target_node.as_deref(), None)?;
                     return self
                         .create_script(ScriptCreate {
+                            held: &held,
                             inputs: &inputs,
+                            campaign_reservation: campaign_reservation.as_ref(),
                             artifacts: &input.inputs,
                             prompt: input.prompt.as_deref(),
                             label: input.label.clone(),
+                            continue_from,
                             caller_scope: &caller_scope,
                             target_node: input.target_node.as_deref(),
                             tool,
@@ -174,6 +361,21 @@ impl KubeCommandCoordinator {
                         .await;
                 }
             }
+        }
+        if campaign_reservation.is_some() {
+            return Err(arguments_error(
+                tool,
+                "campaign launches require a script workload",
+            ));
+        }
+        if continue_from.is_some() {
+            return Err(arguments_error(
+                tool,
+                format!(
+                    "{} declares no state: continueFrom applies to script and agent pods",
+                    input.profile
+                ),
+            ));
         }
         if !input.inputs.is_empty() || input.prompt.is_some() {
             return Err(arguments_error(
@@ -228,7 +430,7 @@ impl KubeCommandCoordinator {
                     .to_owned(),
             });
         };
-        let identity = container_identity(tool, container)?;
+        let identity = container_identity(tool, &container)?;
         let (control, bounds) = match self.resolve_control() {
             Ok(resolved) => resolved,
             Err(reason) => return Err(HostToolError::Unavailable { tool, reason }),
@@ -267,8 +469,15 @@ impl KubeCommandCoordinator {
             operation_id: operation_id.clone(),
             initial_target_node: input.target_node,
             label: input.label.clone(),
+            continue_from: None,
         };
-        let launch = profile_launch(request, container, identity)?;
+        let mut launch = profile_launch(request, &container, identity)?;
+        if let Some(queued) = self
+            .hold_when_full(tool, &control, &mut launch, &held, &run_id)
+            .await?
+        {
+            return Ok(queued);
+        }
         let deadline = checked_deadline(tool, create_deadline(bounds), timeout_seconds)?;
         let staged = control.create(launch, OffsetDateTime::now_utc());
         let observation = match tokio::time::timeout(deadline, staged).await {
@@ -364,10 +573,13 @@ impl KubeCommandCoordinator {
     /// settlement as every workload mutation; no session opens.
     async fn create_script(&self, create: ScriptCreate<'_>) -> Result<Value, HostToolError> {
         let ScriptCreate {
+            held,
             inputs,
+            campaign_reservation,
             artifacts,
             prompt,
             label,
+            continue_from,
             caller_scope,
             target_node,
             tool,
@@ -431,8 +643,9 @@ impl KubeCommandCoordinator {
             operation_id: operation_id.clone(),
             initial_target_node: target_node.map(str::to_owned),
             label,
+            continue_from,
         };
-        let launch = super::launch::script_profile_launch(
+        let mut launch = super::launch::script_profile_launch(
             request,
             inputs,
             staged_inputs,
@@ -442,6 +655,37 @@ impl KubeCommandCoordinator {
                 cell.kube_config(),
             )?,
         )?;
+        if let Some(reservation) = campaign_reservation {
+            let cpu = launch
+                .workload
+                .as_ref()
+                .and_then(|plan| plan.resources)
+                .map(|resources| resources.cpu)
+                .filter(|cpu| *cpu > 0)
+                .ok_or_else(|| {
+                    arguments_error(tool, "campaign launch requires a CPU reservation")
+                })?;
+            let seconds = launch
+                .deadline_seconds
+                .ok_or_else(|| arguments_error(tool, "campaign launch requires a deadline"))?;
+            let budget = u64::from(cpu)
+                .checked_mul(1000)
+                .and_then(|value| value.checked_mul(u64::from(seconds)))
+                .ok_or_else(|| arguments_error(tool, "campaign compute budget overflow"))?;
+            let expires_at_unix_seconds = OffsetDateTime::now_utc()
+                .unix_timestamp()
+                .checked_add(i64::from(seconds))
+                .ok_or_else(|| arguments_error(tool, "campaign deadline overflow"))?;
+            launch.campaign_reservation = Some(odin_kube::CampaignReservation {
+                approved_node: reservation.node.clone(),
+                core_millis_seconds: budget,
+                expires_at_unix_seconds,
+            });
+        }
+        if let Some(digest) = &held.campaign_stage_sha256 {
+            launch.args.push("--expected-stage-sha256".to_owned());
+            launch.args.push(digest.clone());
+        }
         tracing::info!(
             "script-pod create profile={} run={run_id} seat={seat} image={} gpus={} \
              placement={:?} service={}",
@@ -451,6 +695,17 @@ impl KubeCommandCoordinator {
             launch.node_selector,
             launch.service
         );
+        if inputs.profile.profile.offload.is_some() {
+            return self
+                .create_offload(tool, &control, &launch, inputs, held, &operation_id)
+                .await;
+        }
+        if let Some(queued) = self
+            .hold_when_full(tool, &control, &mut launch, held, &run_id)
+            .await?
+        {
+            return Ok(queued);
+        }
         let deadline = checked_deadline(tool, create_deadline(bounds), timeout_seconds)?;
         let staged = control.create(launch, OffsetDateTime::now_utc());
         let observation = match tokio::time::timeout(deadline, staged).await {
@@ -471,298 +726,6 @@ impl KubeCommandCoordinator {
             &observation,
         );
         serialize_output(tool, &settlement)
-    }
-
-    /// Creates the declared workload and opens its Huginn session, using the
-    /// permit's operation ID as the durable settlement key.
-    async fn create_workload(&self, create: WorkloadCreate<'_>) -> Result<Value, HostToolError> {
-        let WorkloadCreate {
-            port,
-            mut inputs,
-            artifacts,
-            prompt,
-            label,
-            company,
-            caller_scope,
-            target_node,
-            tool,
-            timeout_seconds,
-            operation_id,
-            scope,
-        } = create;
-        let company = match company.as_deref() {
-            Some(company) => Some(odin_kube::company_directory(company).map_err(|reason| {
-                arguments_error(
-                    tool,
-                    format!("company {company:?} is not a folder segment: {reason}"),
-                )
-            })?),
-            None => None,
-        };
-        use odin_kube::workload::WorkloadPodPlan;
-
-        require_workload_scope(tool, scope, &inputs.profile.profile, &inputs.lane)?;
-        let (run_id, _, _) = require_kube_launch_scope(tool, scope)?;
-        let seat = inputs.seat.clone();
-        let project_id = inputs.project.clone();
-        let lane_id = inputs.lane.clone();
-        let Some(cell) = self.runtime_cell.as_ref() else {
-            return Err(HostToolError::Unavailable {
-                tool,
-                reason: "the kube surface is not configured".to_owned(),
-            });
-        };
-        let Some(launch_binding) = cell.launch_binding() else {
-            return Err(HostToolError::Unavailable {
-                tool,
-                reason:
-                    "the daemon cannot resolve the published budget binding for workload labels"
-                        .to_owned(),
-            });
-        };
-        let (control, bounds) = match self.resolve_control() {
-            Ok(resolved) => resolved,
-            Err(reason) => return Err(HostToolError::Unavailable { tool, reason }),
-        };
-        if let Some(settled) =
-            create_replay_or_fresh(tool, &control, &run_id, &operation_id, target_node)?
-        {
-            return Ok(settled);
-        }
-        let profile = &inputs.profile.profile;
-        let agent = profile.agent().ok_or_else(|| {
-            arguments_error(
-                tool,
-                format!(
-                    "workload {} runs no agent harness; only an agent pod opens a session",
-                    inputs.profile.id
-                ),
-            )
-        })?;
-        // Reserve exactly the storage quantity validated at publication.
-        let state_storage = profile.state.storage.clone();
-        let ledger = cell.ledger();
-        // Each named artifact is proven in the ledger and staged after
-        // the launch's own policy and models inputs; the session binding
-        // records exactly where each lands so the brief can name it.
-        let declared_inputs = workload_input_artifacts(
-            tool,
-            &cell.artifact_store(),
-            &ledger,
-            artifacts,
-            prompt,
-            caller_scope,
-            &run_id,
-        )?;
-        inputs.staged_inputs = agent_input_bindings(&declared_inputs);
-        if !inputs.staged_inputs.is_empty() {
-            tracing::info!(
-                "agent-pod inputs profile={} run={run_id} staged={}",
-                inputs.profile.id,
-                inputs
-                    .staged_inputs
-                    .iter()
-                    .map(|input| format!("{}@{}", input.artifact_id, input.path))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
-        }
-
-        let attempt = resolve_create_attempt(
-            tool,
-            control
-                .reconciler()
-                .stored_launch(&run_id)
-                .map_err(|error| kube_failure(tool, error))?
-                .map(|stored| stored.labels.attempt_id),
-            scope.attempt.clone(),
-        )?;
-        // The extension binding composes from the pinned image identity
-        // BEFORE the launch exists: identity re-read and manifest-pin
-        // cross-check are typed refusals, the policy registers as
-        // content-addressed admission material, and the launch's staging
-        // projection carries the policy bytes into the read-only pod mount.
-        let material =
-            super::extension::compose_extension_launch(super::extension::ExtensionLaunchRequest {
-                tool,
-                store: &cell.artifact_store(),
-                ledger: &ledger,
-                identity_artifact: &cell.workload_identity().artifact,
-                config_revision: cell.config_revision(),
-                profile: &super::extension::ProfileBinding {
-                    image_reference: &profile.image.reference,
-                    launcher: &agent.runtime.launcher,
-                    supervisor: &agent.runtime.supervisor,
-                    browser: &agent.runtime.browser,
-                    playwright: &agent.runtime.playwright,
-                    xvfb: &agent.display.xvfb,
-                },
-                snapshot_revision: inputs.snapshot_revision,
-                run_id: &run_id,
-            })?;
-        let plan = WorkloadPodPlan {
-            resources: super::launch::profile_resources(tool, profile)?,
-            script_gateway: None,
-            profile: inputs.profile.id.clone(),
-            state_mount: profile.state.path.clone(),
-            export_mount: profile.export.pod_path.clone(),
-            export_host_folder: profile.export.host_folder.clone(),
-            state_storage,
-            state_storage_class: None,
-            allow_hosts: profile.network.allow_hosts.clone(),
-            network_open: profile.network.open,
-            transport: profile.network.transport,
-            vpn: bind_vpn_transport(tool, profile.network.transport, cell.kube_config())?,
-            report_pdf: profile.report_pdf(),
-            report_downloads_root: profile
-                .report
-                .as_ref()
-                .and_then(|report| report.downloads_root.clone()),
-            export_deliver_root: profile.export.deliver_root.clone(),
-            company,
-            agent: Some(odin_kube::workload::WorkloadAgentPlan {
-                launcher: agent.runtime.launcher.clone(),
-                // The ONE declared gateway target of the explicitly selected
-                // target node, resolved at admission from that node's declared
-                // gateway endpoint (a missing, invalid, or unreachable endpoint
-                // refused the launch already). The egress pin carries the
-                // endpoint's own effective TCP port — a declared nonstandard
-                // port is enforced as declared — while the model config carries
-                // the same endpoint's full URI as `baseUrl`.
-                gateway: odin_kube::workload::WorkloadGatewayTarget {
-                    host: inputs.gateway.host().to_owned(),
-                    port: inputs.gateway.port(),
-                },
-                browser: agent.runtime.browser.clone(),
-                supervisor: agent.runtime.supervisor.clone(),
-                playwright: agent.runtime.playwright.clone(),
-                display: odin_kube::workload::WorkloadDisplayPlan {
-                    xvfb: agent.display.xvfb.clone(),
-                    screen: agent.display.screen.clone(),
-                    stream: agent.display.stream,
-                },
-                // The resolved in-image node binding of the SAME parsed identity
-                // the extension composition just verified: complete at
-                // construction, never a placeholder filled in later.
-                browser_node: material.browser_node.clone(),
-                browser_engine: profile.browser_engine(),
-                home_dir: None,
-                credential: inputs.credential.clone(),
-            }),
-        };
-
-        // The per-session models document composes from the SAME declared
-        // node endpoint the egress pin came from: baseUrl is that endpoint
-        // URI verbatim, the apiKey is the SecretKeyRef env NAME (never
-        // bytes), and the only model entry is the admitted one. The document
-        // rides the staging projection beside the extension policy and is
-        // digest-re-proven in-pod before any copy.
-        let models_config = super::models_config::compose_models_config_launch(
-            tool,
-            self.models_path.as_deref(),
-            &cell.artifact_store(),
-            &ledger,
-            (inputs.provider.as_str(), inputs.model.as_str()),
-            &inputs.gateway,
-            &run_id,
-        )?;
-        let budget_lane = scope.lane.clone().filter(|lane| lane != &lane_id);
-        let request = LaunchRequest {
-            tool,
-            binding: &launch_binding,
-            run_id: run_id.clone(),
-            project_id,
-            lane_id,
-            budget_lane,
-            seat_id: seat,
-            attempt,
-            operation_id: operation_id.clone(),
-            initial_target_node: target_node.map(str::to_owned),
-            label,
-        };
-        let launch = super::launch::workload_profile_launch(super::launch::WorkloadLaunchParts {
-            request,
-            profile,
-            plan,
-            model: inputs.model.clone(),
-            extension: material.launch,
-            policy_input: material.staging_input,
-            models_input: models_config.staging_input,
-            declared_inputs,
-            credential: inputs.credential.clone(),
-        })?;
-        // ONE absolute end anchored once before the create phase: the same
-        // instant governs the create actuation, every readiness read, and
-        // the at-most-one attach. No budget is ever reset or recomputed,
-        // and at least one declared request window stays reserved for the
-        // attach itself.
-        let end = tokio::time::Instant::now()
-            + checked_deadline(tool, create_deadline(bounds), timeout_seconds)?;
-        let staged = control.create(launch, OffsetDateTime::now_utc());
-        let observation = match tokio::time::timeout_at(end, staged).await {
-            Ok(result) => result.map_err(|error| protocol_failure(tool, error))?,
-            Err(_elapsed) => {
-                return Err(HostToolError::Uncertain {
-                    tool,
-                    detail: "the workload create exceeded its declared actuation bound; the \
-                             settlement state is unproven"
-                        .to_owned(),
-                });
-            }
-        };
-        inputs.unresolved_hosts = observation.unresolved_hosts.clone();
-        let settlement = mutation_settlement(
-            MutationStatus::Accepted,
-            run_id.as_str(),
-            operation_id.as_str(),
-            &observation,
-        )
-        .with_report(AGENT_POD_REPORT);
-        // Job activity includes Pending pods, so wait for the carrier itself.
-        let reconciler = control.reconciler();
-        let readiness = || async {
-            let workload = reconciler
-                .observe_run(&run_id)
-                .await?
-                .map(|observed| observed.workload.state);
-            let pod = reconciler.workload_placement(&run_id).await?;
-            Ok(CarrierProbe { workload, pod })
-        };
-        settle_applied_create(
-            tool,
-            &settlement,
-            readiness,
-            || async {
-                let result = port
-                    .open_session(
-                        &inputs,
-                        caller_scope
-                            .run
-                            .as_ref()
-                            .expect("the launch requires a caller run"),
-                        &operation_id,
-                    )
-                    .await;
-                persist_refused_attach(result, || {
-                    reconciler.request_refused_release(operation_id.as_str(), &run_id)
-                })
-            },
-            |pod| {
-                let connected = time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000;
-                tracing::debug!(
-                    "pod phase run={run_id} pod={} node={} kind=agent {}",
-                    pod.pod,
-                    pod.node.as_deref().unwrap_or("-"),
-                    pod.timeline.fields(Some((
-                        "connected_ms",
-                        i64::try_from(connected).unwrap_or(i64::MAX)
-                    )))
-                );
-            },
-            end,
-            bounds.0,
-        )
-        .await
     }
 
     /// Passes the admitted opaque resource version unchanged to compare-and-swap.
@@ -795,6 +758,15 @@ impl KubeCommandCoordinator {
                 tool,
                 "checkpoint is taken of a paused pod; only pause takes it",
             ));
+        }
+        if let Some(run) = self
+            .offload
+            .as_ref()
+            .and_then(|offload| offload.run(&run_id))
+        {
+            return self
+                .mutate_offload(tool, verb, &run_id, &operation_id, run)
+                .await;
         }
         let (control, bounds) = match self.resolve_control() {
             Ok(resolved) => resolved,
@@ -893,6 +865,7 @@ impl KubeCommandCoordinator {
         let seat = require_kube_seat_scope(tool, &invocation.scope)?;
         let project = invocation.scope.project.clone();
         let input: OptionalRunInput = decode_arguments(tool, invocation.arguments)?;
+        let log_lines = input.checked_log_lines(tool)?;
         let control = match self.resolve_control() {
             Ok((control, _)) => control,
             Err(reason) => return Ok(summarize_unavailable(reason)),
@@ -904,10 +877,34 @@ impl KubeCommandCoordinator {
             let labels = &observation.projection.labels;
             overseer || labels.seat_id == seat || project.as_ref() == Some(&labels.project_id)
         };
+        // An offload run has no Job; the offload journal holds its row.
+        let offload_runs: Vec<crate::live::offload::OffloadRun> = self
+            .offload
+            .as_ref()
+            .map(|offload| offload.runs())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|run| {
+                overseer
+                    || run.seat_id.as_ref() == Some(&seat)
+                    || (project.is_some() && run.project_id == project)
+            })
+            .collect();
+        let listing = input.run_id.is_none();
         let observations = match input.run_id {
             Some(raw) => {
                 let run_id = RunId::new(raw)
                     .map_err(|error| arguments_error(tool, format!("invalid runId: {error}")))?;
+                if let Some(run) = offload_runs.iter().find(|run| run.run_id == run_id) {
+                    return serialize_output(
+                        tool,
+                        &SummarizeOutput {
+                            status: ReadStatus::Ok,
+                            runs: Some(vec![offload_summarize_row(run)]),
+                            reason: None,
+                        },
+                    );
+                }
                 match control.summarize(&run_id).await {
                     // An unknown run id is said so, with the way to the
                     // list: a bare empty list read as "the pod is gone".
@@ -971,6 +968,9 @@ impl KubeCommandCoordinator {
             {
                 row.status = pod_status(client, job).await;
             }
+            if let (Some(client), Some(lines)) = (&client, log_lines) {
+                row.log = Some(pod_log(client, job, lines).await);
+            }
             if row.node.is_none() {
                 row.node = match &nodes {
                     Some(Ok(nodes)) => nodes.get(job).map(ToString::to_string),
@@ -979,6 +979,9 @@ impl KubeCommandCoordinator {
                 };
             }
             runs.push(row);
+        }
+        if listing {
+            runs.extend(offload_runs.iter().map(offload_summarize_row));
         }
         runs.sort_by(|left, right| right.started_at.cmp(&left.started_at));
         serialize_output(
@@ -1022,17 +1025,41 @@ impl KubeCommandCoordinator {
                     &SnapshotOutput {
                         status: ReadStatus::Unavailable,
                         projection: None,
+                        lanes: None,
                         reason: Some(format!("{code}: {detail}")),
                     },
                 );
             }
             Err(error) => return Err(protocol_failure(tool, error)),
         };
+        let cell = self
+            .runtime_cell
+            .as_ref()
+            .expect("resolved control has a runtime cell");
+        let lanes = match cell.huginn_root() {
+            Some(root) => match super::budget_rows(
+                &cell.snapshot(),
+                root,
+                u64::try_from(OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000)
+                    .unwrap_or(0),
+            ) {
+                Ok(rows) => rows,
+                Err(reason) => {
+                    return Ok(snapshot_unavailable(format!("compute budget: {reason}")))
+                }
+            },
+            None => {
+                return Ok(snapshot_unavailable(
+                    "compute budget state root unavailable".to_owned(),
+                ))
+            }
+        };
         serialize_output(
             tool,
             &SnapshotOutput {
                 status: ReadStatus::Ok,
                 projection: Some(projection),
+                lanes: Some(lanes),
                 reason: None,
             },
         )
@@ -1184,37 +1211,6 @@ fn hard_refusal(error: &KubeError) -> bool {
     }
 }
 
-/// A running pod's status delta: its newest
-/// `ODIN-STATUS` against the one before, from a bounded timestamped log tail
-/// through the kube API. `None` when it reports no status or the read fails.
-async fn pod_status(client: &odin_kube::KubeClient, job: &str) -> Option<String> {
-    use kube::api::{ListParams, LogParams};
-    let pods = client
-        .pods()
-        .list(&ListParams::default().labels(&format!("job-name={job}")))
-        .await
-        .ok()?;
-    let pod = pods.items.iter().find(|pod| {
-        pod.status
-            .as_ref()
-            .and_then(|status| status.phase.as_deref())
-            == Some("Running")
-    })?;
-    let log = client
-        .pods()
-        .logs(
-            pod.metadata.name.as_deref()?,
-            &LogParams {
-                tail_lines: Some(odin_kube::telemetry::STATUS_TAIL_LINES),
-                timestamps: true,
-                ..LogParams::default()
-            },
-        )
-        .await
-        .ok()?;
-    odin_kube::telemetry::status_delta(&log, OffsetDateTime::now_utc())
-}
-
 fn persist_refused_attach(
     result: Result<(), WorkloadSessionOpenError>,
     persist: impl FnOnce() -> Result<(), KubeError>,
@@ -1342,6 +1338,41 @@ pub(super) fn resolve_input_artifacts(
     Ok(staged)
 }
 
+/// Validate explicit inputs without attaching them to a child run.
+pub(super) fn validate_input_artifacts(
+    tool: &'static str,
+    ledger: &Arc<Mutex<Ledger>>,
+    artifacts: &[String],
+    caller: &odin_domain::Scope,
+) -> Result<Vec<odin_domain::huginn::KubeContentIdentity>, HostToolError> {
+    let declared = resolve_input_artifacts(tool, ledger, artifacts)?;
+    let ledger = ledger
+        .lock()
+        .map_err(|error| arguments_error(tool, format!("the artifact ledger: {error}")))?;
+    for identity in &declared {
+        let references = ledger
+            .artifact_references(&identity.artifact_id)
+            .map_err(|error| arguments_error(tool, error.to_string()))?;
+        if !references.iter().any(|reference| {
+            let expected = match reference.object_kind.as_str() {
+                "run" => caller.run.as_ref().map(|id| id.as_str()),
+                "attempt" => caller.attempt.as_ref().map(|id| id.as_str()),
+                "seat" => caller.seat.as_ref().map(|id| id.as_str()),
+                "project" => caller.project.as_ref().map(|id| id.as_str()),
+                "lane" => caller.lane.as_ref().map(|id| id.as_str()),
+                _ => None,
+            };
+            expected == Some(reference.object_id.as_str())
+        }) {
+            return Err(HostToolError::Scope {
+                tool,
+                reason: "a workload input is not readable by the launching scope",
+            });
+        }
+    }
+    Ok(declared)
+}
+
 /// Prove the caller can read explicit inputs before sharing them with the child run.
 /// Prompt sugar uses the same run-scoped registration and staging transport.
 fn workload_input_artifacts(
@@ -1356,33 +1387,11 @@ fn workload_input_artifacts(
     if prompt.is_some_and(|text| text.trim().is_empty()) {
         return Err(arguments_error(tool, "prompt must not be empty"));
     }
-    let mut declared = resolve_input_artifacts(tool, ledger, artifacts)?;
+    let mut declared = validate_input_artifacts(tool, ledger, artifacts, caller)?;
     {
         let mut ledger = ledger
             .lock()
             .map_err(|error| arguments_error(tool, format!("the artifact ledger: {error}")))?;
-        for identity in &declared {
-            let references = ledger
-                .artifact_references(&identity.artifact_id)
-                .map_err(|error| arguments_error(tool, error.to_string()))?;
-            let authorized = references.iter().any(|reference| {
-                let expected = match reference.object_kind.as_str() {
-                    "run" => caller.run.as_ref().map(|id| id.as_str()),
-                    "attempt" => caller.attempt.as_ref().map(|id| id.as_str()),
-                    "seat" => caller.seat.as_ref().map(|id| id.as_str()),
-                    "project" => caller.project.as_ref().map(|id| id.as_str()),
-                    "lane" => caller.lane.as_ref().map(|id| id.as_str()),
-                    _ => None,
-                };
-                expected == Some(reference.object_id.as_str())
-            });
-            if !authorized {
-                return Err(HostToolError::Scope {
-                    tool,
-                    reason: "a workload input is not readable by the launching scope",
-                });
-            }
-        }
         for identity in &declared {
             let metadata = ledger
                 .artifact(&identity.artifact_id)
@@ -1428,10 +1437,13 @@ fn workload_input_artifacts(
 pub(super) const AGENT_POD_RESERVED_INPUTS: usize = 2;
 
 /// The exact read-only in-pod path of each declared agent-pod input, in
-/// staging order after the reserved launch material.
+/// staging order after the reserved launch material. The launch prompt, when
+/// present, is the last declared input (see `workload_input_artifacts`).
 pub(super) fn agent_input_bindings(
     declared: &[odin_domain::huginn::KubeContentIdentity],
+    prompt: bool,
 ) -> Vec<odin_domain::huginn::WorkloadInputBinding> {
+    let last = declared.len().saturating_sub(1);
     declared
         .iter()
         .enumerate()
@@ -1442,6 +1454,7 @@ pub(super) fn agent_input_bindings(
                 odin_kube::job::KUBE_STAGING_MOUNT_PATH,
                 index + AGENT_POD_RESERVED_INPUTS
             ),
+            prompt: prompt && index == last,
         })
         .collect()
 }

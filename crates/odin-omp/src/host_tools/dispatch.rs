@@ -24,16 +24,20 @@ use super::delegation;
 use super::executor;
 use super::kube;
 use super::lane_status::{LaneStatusEvidenceTool, LaneStatusTool};
+use super::plan_accept::PlanAcceptTool;
+use super::plan_get::PlanGetTool;
 use super::plan_set::PlanSetTool;
 use super::schema_compat;
 use super::todo_update::TodoUpdateTool;
 use super::{ConsumedHostCommand, HostInvocation, HostTool, HostToolError, RpcHostToolDefinition};
 
-/// The exact five model-visible tool names, in the registry's lexicographic order.
-pub(super) const MODEL_VISIBLE_TOOL_NAMES: [&str; 5] = [
+/// The exact seven model-visible tool names, in the registry's lexicographic order.
+pub(super) const MODEL_VISIBLE_TOOL_NAMES: [&str; 7] = [
     ApprovalRequestTool::NAME,
     AtlasQueryTool::NAME,
     LaneStatusTool::NAME,
+    PlanAcceptTool::NAME,
+    PlanGetTool::NAME,
     PlanSetTool::NAME,
     TodoUpdateTool::NAME,
 ];
@@ -105,6 +109,8 @@ impl HostToolRegistry {
             Arc::new(ApprovalRequestTool::new(Arc::clone(&ledger))) as Arc<dyn HostTool>,
             Arc::new(atlas_query) as Arc<dyn HostTool>,
             Arc::new(LaneStatusTool::new(Arc::clone(&ledger))) as Arc<dyn HostTool>,
+            Arc::new(PlanAcceptTool::new(Arc::clone(&ledger))) as Arc<dyn HostTool>,
+            Arc::new(PlanGetTool::new(Arc::clone(&ledger))) as Arc<dyn HostTool>,
             Arc::new(PlanSetTool::new(Arc::clone(&ledger))) as Arc<dyn HostTool>,
             Arc::new(TodoUpdateTool::new(Arc::clone(&ledger))) as Arc<dyn HostTool>,
         ] {
@@ -209,7 +215,11 @@ impl HostToolRegistry {
             let mut definition = inner.definition().clone();
             definition.name = Cow::Borrowed(binding.listed_name());
             definition.hidden = false;
-            if binding == kube::KubeCapabilityBinding::WorkloadCreate {
+            if matches!(
+                binding,
+                kube::KubeCapabilityBinding::WorkloadCreate
+                    | kube::KubeCapabilityBinding::WorkloadCreateMany
+            ) {
                 kube::annotate_launchable_profiles(
                     &mut definition,
                     &owner.launchable_profiles(None),

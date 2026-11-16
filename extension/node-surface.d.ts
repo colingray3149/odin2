@@ -68,6 +68,14 @@ interface Process {
 
 declare const process: Process;
 
+declare module "node:fs" {
+	export function realpathSync(path: string): string;
+	export function mkdtempSync(prefix: string): string;
+	export function mkdirSync(path: string): void;
+	export function writeFileSync(path: string, data: string): void;
+	export function symlinkSync(target: string, path: string): void;
+}
+
 declare module "node:crypto" {
 	export function createHash(algorithm: string): {
 		update(data: string | Buffer, encoding?: string): { digest(encoding?: string): string };

@@ -416,9 +416,7 @@ fn lane_text(id: &str, lane: &LaneToml) -> String {
         format!("description: {}", lane.description),
         format!("enabled: {}", lane.enabled),
         format!("project: {}", lane.project.as_str()),
-        format!("family: {}", lane.family),
         format!("default seat: {}", lane.default_seat.as_str()),
-        format!("queue: {}", lane.queue),
         format!(
             "independent review required: {}",
             lane.requires_independent_review
@@ -540,7 +538,6 @@ description = "Fixture project"
 source_root = ""
 default_seat = "architect"
 memory_namespaces = ["atlas.code"]
-artifact_policy = "standard"
 "#,
         )
     }
@@ -555,9 +552,7 @@ kind = "lane"
 enabled = true
 description = "Fixture lane"
 project = "odin"
-family = "transfer"
 default_seat = "architect"
-queue = "interactive"
 requires_independent_review = false
 direction = "ingress"
 payload_kind = "file"

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/intake.copy.input.json",
+  "title": "intake.copy input",
+  "description": "Copy one staged owner attachment, by intake id, into a writable declared root as the new file name. An existing file is refused.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "intake": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 26,
+      "pattern": "^[1-9][0-9]{0,19}/[1-9][0-9]{0,4}$"
+    },
+    "root": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 200 }
+  },
+  "required": ["intake", "root", "name"]
+}

@@ -22,6 +22,15 @@ pub const PARALLEL_RUN_LIMIT_KEY: &str = "limits.max_parallel_runs";
 
 /// Registry key named in every lane-pod refusal.
 pub const LANE_POD_LIMIT_KEY: &str = odin_registry::PODS_LIMIT_KEY;
+/// The marks of a seat parallel-run or lane pod cap refusal: a batch launch waits on them.
+const SEAT_CAP_REFUSAL: &str = "active workload run(s);";
+const LANE_POD_REFUSAL: &str = "pod budget refused:";
+
+/// Whether a refusal is a full seat or lane pod cap, which frees when a run ends.
+pub fn is_cap_refusal(error: &KubeError) -> bool {
+    matches!(error, KubeError::Rejected { reason }
+        if reason.contains(SEAT_CAP_REFUSAL) || reason.contains(LANE_POD_REFUSAL))
+}
 
 fn occupies_job(job: &Job) -> bool {
     !job.status.as_ref().is_some_and(|status| {
@@ -123,6 +132,17 @@ pub async fn admit_parallel_run(
     seat: &SeatId,
     exempt: Option<&RunId>,
 ) -> Result<(), KubeError> {
+    admit_parallel_run_with_extra(client, snapshot, seat, exempt, 0).await
+}
+
+/// Seat admission including live runs outside Kubernetes.
+pub async fn admit_parallel_run_with_extra(
+    client: &KubeClient,
+    snapshot: &odin_registry::Snapshot,
+    seat: &SeatId,
+    exempt: Option<&RunId>,
+    extra: usize,
+) -> Result<(), KubeError> {
     let Some(odin_registry::ObjectConfig::Seat(config)) = snapshot
         .object(odin_registry::RegistryKind::Seat, seat.as_str())
         .map(|object| &object.config)
@@ -148,10 +168,10 @@ pub async fn admit_parallel_run(
         "pod",
     )
     .await?;
-    let active = live_run_count(&jobs, &pods, exempt);
+    let active = live_run_count(&jobs, &pods, exempt).saturating_add(extra);
     if active >= usize::from(cap) {
         return Err(KubeError::rejected(format!(
-            "seat {seat} already has {active} active workload run(s); {PARALLEL_RUN_LIMIT_KEY} is {cap}"
+            "seat {seat} already has {active} {SEAT_CAP_REFUSAL} {PARALLEL_RUN_LIMIT_KEY} is {cap}"
         )));
     }
     Ok(())
@@ -181,7 +201,7 @@ pub fn refuse_lane_pods(
     active: u32,
 ) -> Result<(), KubeError> {
     odin_registry::at_cap(LaneBudgetKind::Pods, effective, active)
-        .map_err(|detail| KubeError::rejected(format!("lane {lane} pod budget refused: {detail}")))
+        .map_err(|detail| KubeError::rejected(format!("lane {lane} {LANE_POD_REFUSAL} {detail}")))
 }
 
 /// Lists this lane's live Jobs and Claude pods and refuses at the raised cap.
@@ -261,7 +281,7 @@ pub async fn admit_lane_pod_budget_with_pending(
         .count();
     let active = live.saturating_add(u32::try_from(reserved).unwrap_or(u32::MAX));
     odin_registry::at_cap(LaneBudgetKind::Pods, effective, active)
-        .map_err(|detail| KubeError::rejected(format!("lane {lane} pod budget refused: {detail}")))
+        .map_err(|detail| KubeError::rejected(format!("lane {lane} {LANE_POD_REFUSAL} {detail}")))
 }
 
 fn job_key(job: &Job) -> String {
@@ -340,6 +360,216 @@ fn declared_lane_wall(
 
 const LANE_WALL_KEY: &str = odin_registry::WALL_LIMIT_KEY;
 
+/// Whether a refusal is a compute budget (core-hours, GPU-hours, dollars) that a later window
+/// or a raise can lift, so a queued launch may wait for it.
+pub fn is_compute_budget_refusal(error: &KubeError) -> bool {
+    matches!(error, KubeError::Rejected { reason } if reason.contains(odin_registry::COMPUTE_BUDGET_REFUSED))
+}
+
+/// Core-seconds and GPU-seconds a Job may still use: its request × the deadline it has left.
+/// A suspended Job resumes with its whole deadline; a service declares none and projects nothing.
+fn job_projection(job: &Job, now: time::OffsetDateTime) -> (f64, f64) {
+    let Some(spec) = job.spec.as_ref() else {
+        return (0.0, 0.0);
+    };
+    let Some(deadline) = spec.active_deadline_seconds else {
+        return (0.0, 0.0);
+    };
+    let Some(request) = spec
+        .template
+        .spec
+        .as_ref()
+        .and_then(|pod| crate::placement::pod_requests(pod).ok())
+    else {
+        return (0.0, 0.0);
+    };
+    let elapsed = match (
+        spec.suspend,
+        job.status
+            .as_ref()
+            .and_then(|status| status.start_time.as_ref()),
+    ) {
+        (Some(true), _) | (_, None) => 0,
+        (_, Some(started)) => (now.unix_timestamp() - started.0.as_second()).max(0),
+    };
+    let left = (deadline - elapsed).max(0) as f64;
+    projection(request, left)
+}
+
+fn projection(request: odin_domain::huginn::KubeResources, seconds: f64) -> (f64, f64) {
+    (
+        request.cpu_millis as f64 / 1_000.0 * seconds,
+        f64::from(request.gpu_count) * seconds,
+    )
+}
+
+/// Resource request and deadline used to project a Kubernetes launch's compute usage.
+pub struct ComputeLaunchProjection {
+    pub request: odin_domain::huginn::KubeResources,
+    pub deadline_seconds: Option<u32>,
+}
+
+/// Refuses when the lane's metered use in its window, plus what its live Jobs and this launch
+/// may still use, passes `limits.core_hours` or `limits.gpu_hours` (each the declaration or a
+/// `task.steer` raise), or when `limits.compute_usd` is already spent. Lanes declaring none admit.
+pub async fn admit_lane_compute(
+    client: &KubeClient,
+    snapshot: &odin_registry::Snapshot,
+    lane: &LaneId,
+    huginn: Option<&std::path::Path>,
+    exempt: Option<&RunId>,
+    request: odin_domain::huginn::KubeResources,
+    deadline_seconds: Option<u32>,
+) -> Result<(), KubeError> {
+    admit_lane_compute_with_projection(
+        client,
+        snapshot,
+        lane,
+        huginn,
+        exempt,
+        ComputeLaunchProjection {
+            request,
+            deadline_seconds,
+        },
+        (0.0, 0.0, 0.0),
+    )
+    .await
+}
+
+/// As `admit_lane_compute`, including external core-seconds, GPU-seconds and dollars.
+pub async fn admit_lane_compute_with_projection(
+    client: &KubeClient,
+    snapshot: &odin_registry::Snapshot,
+    lane: &LaneId,
+    huginn: Option<&std::path::Path>,
+    exempt: Option<&RunId>,
+    launch: ComputeLaunchProjection,
+    extra_projection: (f64, f64, f64),
+) -> Result<(), KubeError> {
+    let Some(ObjectConfig::Lane(config)) = snapshot
+        .object(RegistryKind::Lane, lane.as_str())
+        .map(|object| &object.config)
+    else {
+        return Err(KubeError::rejected(format!(
+            "lane {lane} has no lane declaration; its compute budget cannot be read"
+        )));
+    };
+    let declared: Vec<_> = LaneBudgetKind::COMPUTE
+        .into_iter()
+        .filter_map(|kind| kind.declared(&config.limits).map(|cap| (kind, cap)))
+        .collect();
+    if declared.is_empty() {
+        return Ok(());
+    }
+    let refused = |detail: String| {
+        KubeError::rejected(format!(
+            "lane {lane} {}: {detail}",
+            odin_registry::COMPUTE_BUDGET_REFUSED
+        ))
+    };
+    let Some(huginn) = huginn else {
+        return Err(refused(
+            "the usage root is missing, so use cannot be read".to_owned(),
+        ));
+    };
+    let raised = odin_registry::RaisedLaneBudgets::load(huginn)
+        .map_err(|error| refused(format!("the raise file is unreadable: {error}")))?;
+    let now_ms = odin_registry::unix_millis();
+    let used = odin_registry::ComputeUsage::load(huginn)
+        .map_err(|error| refused(format!("the usage store is unreadable: {error}")))?
+        .used(lane.as_str(), config.limits.window_days(), now_ms);
+    let label = bounded_label_value(lane.as_str());
+    let timeout = client.request_timeout();
+    let jobs = union_jobs(
+        listed(
+            client.jobs(),
+            format!("{JOB_LABEL_LANE_ID}={label}"),
+            timeout,
+            "Job",
+        )
+        .await?,
+        listed(
+            client.jobs(),
+            format!("{JOB_LABEL_BUDGET_LANE}={label}"),
+            timeout,
+            "Job",
+        )
+        .await?,
+    );
+    let exempt_job = exempt.map(job_name);
+    let now = time::OffsetDateTime::now_utc();
+    let (mut cores, mut gpus) = projection(
+        launch.request,
+        launch.deadline_seconds.map_or(0.0, f64::from),
+    );
+    cores += extra_projection.0;
+    gpus += extra_projection.1;
+    for job in jobs.iter().filter(|job| {
+        occupies_job(job)
+            && exempt_job
+                .as_deref()
+                .is_none_or(|name| job.metadata.name.as_deref() != Some(name))
+    }) {
+        let (job_cores, job_gpus) = job_projection(job, now);
+        cores += job_cores;
+        gpus += job_gpus;
+    }
+    // Placement is not decided yet; reserve the highest price per allocatable core.
+    let mut usd_per_core_hour: f64 = 0.0;
+    if declared
+        .iter()
+        .any(|(kind, _)| *kind == LaneBudgetKind::ComputeUsd)
+    {
+        let nodes: kube::Api<k8s_openapi::api::core::v1::Node> =
+            kube::Api::all(client.client.clone());
+        for object in &snapshot.objects {
+            let ObjectConfig::Node(node) = &object.config else {
+                continue;
+            };
+            let Some(cost) = node.cost.filter(|_| node.enabled && node.allow_workloads) else {
+                continue;
+            };
+            let found = nodes
+                .get_opt(&object.id)
+                .await
+                .map_err(|error| {
+                    refused(format!("priced node {} is unreadable: {error}", object.id))
+                })?
+                .ok_or_else(|| refused(format!("priced node {} is unavailable", object.id)))?;
+            let millis = crate::placement::allocatable_cpu_millis(&found).map_err(|error| {
+                refused(format!(
+                    "priced node {} has no CPU capacity: {error}",
+                    object.id
+                ))
+            })?;
+            if millis == 0 {
+                return Err(refused(format!(
+                    "priced node {} has no CPU capacity",
+                    object.id
+                )));
+            }
+            usd_per_core_hour = usd_per_core_hour.max(cost.usd_per_hour * 1_000.0 / millis as f64);
+        }
+    }
+    for (kind, floor) in declared {
+        let cap = raised
+            .as_ref()
+            .and_then(|raised| raised.effective(lane.as_str(), Some(floor), kind))
+            .or(Some(floor));
+        let projected = match kind {
+            LaneBudgetKind::CoreHours => cores / 3_600.0,
+            LaneBudgetKind::GpuHours => gpus / 3_600.0,
+            LaneBudgetKind::ComputeUsd => {
+                (cores - extra_projection.0) / 3_600.0 * usd_per_core_hour + extra_projection.2
+            }
+            _ => 0.0,
+        };
+        odin_registry::refuse_compute(kind, cap, used.in_limit_units(kind), projected)
+            .map_err(refused)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,6 +610,91 @@ mod tests {
                 None
             ),
             0
+        );
+    }
+
+    const SEAT: &str = r#"
+schema = "odin.registry.v1"
+kind = "seat"
+enabled = true
+description = "Parallel-run fixture."
+categories = ["builder"]
+tool_refs = []
+project_scope = ["odin"]
+brain_scope = []
+limits = { max_parallel_runs = 2, max_sessions = 2, budget = { usd_micros = 1000000, window = { duration_seconds = 2592000 } } }
+"#;
+
+    /// Admits against a seat capped at two runs, with `live` live Jobs and no pods.
+    async fn admit_with_live_jobs(live: usize) -> Result<(), KubeError> {
+        let object = odin_registry::schema::parse_object_toml(
+            RegistryKind::Seat,
+            "worker",
+            "seats/worker/seat.toml",
+            SEAT,
+        )
+        .expect("seat fixture");
+        let snapshot = odin_registry::Snapshot::build(1, vec![object]).expect("snapshot");
+        let items: Vec<_> = (0..live)
+            .map(|index| serde_json::json!({"metadata": {"name": format!("odin-live-{index}")}}))
+            .collect();
+        let api = crate::test_api::ScriptedApi::start(vec![
+            serde_json::json!({"apiVersion": "batch/v1", "kind": "JobList", "metadata": {}, "items": items})
+                .to_string(),
+            serde_json::json!({"apiVersion": "v1", "kind": "PodList", "metadata": {}, "items": []})
+                .to_string(),
+        ])
+        .await;
+        admit_parallel_run(
+            &api.client(),
+            &snapshot,
+            &SeatId::new("worker").unwrap(),
+            None,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn external_live_projection_counts_against_kube_launch() {
+        let object = odin_registry::schema::parse_object_toml(
+            RegistryKind::Lane, "sweep", "lanes/sweep/lane.toml",
+            "schema = 'odin.registry.v1'\nkind = 'lane'\nenabled = true\ndescription = 'test'\nproject = 'odin'\ndefault_seat = 'worker'\nrequires_independent_review = false\n[limits]\ncore_hours = 1\n",
+        ).expect("lane");
+        let snapshot = odin_registry::Snapshot::build(1, vec![object]).expect("snapshot");
+        let empty = serde_json::json!({"apiVersion":"batch/v1", "kind":"JobList", "metadata":{}, "items":[]}).to_string();
+        let api = crate::test_api::ScriptedApi::start(vec![empty.clone(), empty]).await;
+        let root = tempfile::tempdir().unwrap();
+        let error = admit_lane_compute_with_projection(
+            &api.client(),
+            &snapshot,
+            &LaneId::new("sweep").unwrap(),
+            Some(root.path()),
+            None,
+            ComputeLaunchProjection {
+                request: odin_domain::huginn::KubeResources {
+                    cpu_millis: 1000,
+                    ..Default::default()
+                },
+                deadline_seconds: Some(1800),
+            },
+            (1801.0, 0.0, 0.0),
+        )
+        .await
+        .expect_err("offload and new Job together exceed the cap");
+        assert!(is_compute_budget_refusal(&error));
+        assert!(error.to_string().contains("core_hours"));
+    }
+
+    #[tokio::test]
+    async fn a_seat_at_max_parallel_runs_is_refused_and_below_it_admitted() {
+        admit_with_live_jobs(1).await.expect("one of two admits");
+        let error = admit_with_live_jobs(2)
+            .await
+            .expect_err("two of two is full");
+        assert!(matches!(error, KubeError::Rejected { .. }), "{error:?}");
+        assert!(
+            error.to_string().contains(PARALLEL_RUN_LIMIT_KEY),
+            "{error}"
         );
     }
 }

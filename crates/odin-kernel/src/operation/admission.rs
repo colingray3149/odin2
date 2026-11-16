@@ -57,11 +57,24 @@ impl OperationAuthority {
     /// Started operations without outcomes become in-doubt so recovery cannot replay their effects.
     pub fn recover(&self) -> AuthorityResult<u64> {
         let now = utc(self.now_ms())?;
-        let mut ledger = self.lock_store()?;
+        let rows = {
+            let ledger = self.lock_store()?;
+            store::nonterminal_rows(ledger.connection(), None)?
+        };
         let mut recovered = 0_u64;
-        ledger.with_tx(|tx| {
-            for row in store::nonterminal_rows(tx, None)? {
-                if row.effect_state == EffectState::EffectStarted {
+        for row in rows {
+            if row.effect_state != EffectState::EffectStarted {
+                continue;
+            }
+            let mut ledger = self.lock_store()?;
+            let Some(mut fence) = ledger.try_operation_fence(&row.correlation_id)? else {
+                continue;
+            };
+            ledger.with_tx(|tx| {
+                fence.claim(tx)?;
+                let live = store::operation_row(tx, &row.correlation_id)?;
+                if live.is_some_and(|live| live.effect_state == EffectState::EffectStarted) {
+                    fence.check(tx)?;
                     store::transition_operation(
                         tx,
                         &row.correlation_id,
@@ -72,9 +85,9 @@ impl OperationAuthority {
                     )?;
                     recovered += 1;
                 }
-            }
-            Ok(())
-        })?;
+                Ok(())
+            })?;
+        }
         Ok(recovered)
     }
 
@@ -83,21 +96,29 @@ impl OperationAuthority {
         authorized: AuthorizedInvocation,
         request: &InvokeRequest,
     ) -> AuthorityResult<OperationDecision> {
+        self.invoke_authorized_with_catalog(authorized, request, self.catalog.as_ref())
+    }
+
+    /// Invoke against the host-selected immutable admission snapshot while retaining
+    /// this authority's shared in-flight and durable operation state.
+    pub fn invoke_authorized_with_catalog(
+        &self,
+        authorized: AuthorizedInvocation,
+        request: &InvokeRequest,
+        catalog: &dyn OperationCatalog,
+    ) -> AuthorityResult<OperationDecision> {
         let now_ms = self.now_ms();
         let authority = authorized.authority();
         self.check_authority(authority, now_ms)?;
         let invocation = authorized.invocation();
         let contract = authorized.contract().clone();
         let capability = contract.id.to_string();
-        let admitted = self.catalog.admitted(&contract.id).ok_or_else(|| {
+        let admitted = catalog.admitted(&contract.id).ok_or_else(|| {
             OperationRejection::UnknownCapability {
                 capability: capability.clone(),
             }
         })?;
-        if !self
-            .catalog
-            .admits_policy_digest(&admitted, authority.capability_policy_digest())
-        {
+        if !catalog.admits_policy_digest(&admitted, authority.capability_policy_digest()) {
             return Err(OperationRejection::NotAdmitted {
                 capability: capability.clone(),
                 detail: format!(
@@ -113,9 +134,7 @@ impl OperationAuthority {
                 detail: "authorized contract tuple differs from the admitted snapshot".to_owned(),
             });
         }
-        if !self.catalog.resolves(&contract.handler)
-            || !self.catalog.resolves(&contract.evidence_extractor)
-        {
+        if !catalog.resolves(&contract.handler) || !catalog.resolves(&contract.evidence_extractor) {
             return Err(OperationRejection::NotAdmitted {
                 capability: capability.clone(),
                 detail: "handler or evidence extractor binding is not registered".to_owned(),
@@ -195,9 +214,37 @@ impl OperationAuthority {
         // Reject pre-image mismatches before persisting an incomplete operation.
         let reconciliation = self.reconciliation_for(&contract, &payload)?;
 
+        // Own the operation before Prepared is visible, through executor settlement.
+        let fence = {
+            let ledger = self.lock_store()?;
+            ledger.try_operation_fence(request.correlation_id.as_str())?
+        };
+        let Some(mut fence) = fence else {
+            let ledger = self.lock_store()?;
+            let row = store::operation_row(ledger.connection(), request.correlation_id.as_str())?;
+            drop(ledger);
+            if let Some(row) = row {
+                if Self::is_exact_replay(
+                    &row,
+                    request,
+                    &request_digest.to_string(),
+                    &request_json,
+                    authority,
+                    &invocation.listing_digest.to_string(),
+                    capability.as_str(),
+                ) {
+                    return self.drive_existing(row, now_ms);
+                }
+            }
+            return Err(OperationRejection::DuplicateConflict {
+                correlation_id: request.correlation_id.clone(),
+            });
+        };
+
         let prepared = {
             let mut ledger = self.lock_store()?;
             let step = ledger.with_tx(|tx| {
+                fence.claim(tx)?;
                 // Another request may have inserted this correlation since the lookup.
                 if let Some(row) = store::operation_row(tx, request.correlation_id.as_str())? {
                     let identical = Self::is_exact_replay(
@@ -374,7 +421,9 @@ impl OperationAuthority {
         };
 
         match prepared {
+            // A replay is not a dispatch and must not hold the fence while reconciling.
             Prepared::Replayed(row) => {
+                drop(fence);
                 self.assert_row_authority(&row, authority)?;
                 if row.capsule_id != request.capsule_id.as_str() {
                     return Err(OperationRejection::DuplicateConflict {
@@ -408,7 +457,9 @@ impl OperationAuthority {
                         request_digest,
                     },
                     stop_handle,
+                    &fence,
                 );
+                drop(fence);
                 drop(registration);
                 outcome
             }

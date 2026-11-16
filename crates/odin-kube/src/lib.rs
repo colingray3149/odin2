@@ -5,13 +5,16 @@
 mod admission;
 pub mod artifacts;
 pub use admission::{
-    admit_lane_pod_budget, admit_lane_wall, admit_parallel_run, declared_lane_pods,
-    refuse_lane_pods, LANE_POD_LIMIT_KEY, PARALLEL_RUN_LIMIT_KEY,
+    admit_lane_compute, admit_lane_compute_with_projection, admit_lane_pod_budget,
+    admit_lane_pod_budget_with_pending, admit_lane_wall, admit_parallel_run,
+    admit_parallel_run_with_extra, declared_lane_pods, is_cap_refusal, is_compute_budget_refusal,
+    refuse_lane_pods, ComputeLaunchProjection, LANE_POD_LIMIT_KEY, PARALLEL_RUN_LIMIT_KEY,
 };
 mod backend;
 pub mod claude_pod;
 pub mod client;
 pub mod config;
+pub mod control;
 pub mod exec;
 pub mod health;
 pub mod inventory;
@@ -33,7 +36,7 @@ pub mod workload;
 
 pub use crate::client::{KubeClient, KubeError};
 pub use crate::config::{KubeConfig, VpnTransportBinding};
-pub use crate::job::{JobAction, JobLaunch, JobObservation};
+pub use crate::job::{CampaignReservation, JobAction, JobLaunch, JobObservation};
 pub use crate::journal::stored_launch;
 pub use crate::reconciler::{JobReconciler, OrphanVerdict};
 pub use crate::workload::{

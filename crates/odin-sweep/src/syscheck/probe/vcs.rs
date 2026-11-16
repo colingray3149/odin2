@@ -83,7 +83,7 @@ pub(in crate::syscheck) fn git_show(
     if let Some(problem) = command_problem(&outcome) {
         return Err(unavailable(problem));
     }
-    if outcome.stdout_truncated > 0 {
+    if outcome.stdout_truncated {
         return Err(unavailable("the file exceeds the bounded read".to_owned()));
     }
     Ok(outcome.stdout)

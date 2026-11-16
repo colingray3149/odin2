@@ -488,12 +488,30 @@ impl LiveSupervisor {
         // A pod's agent session is bounded by its pod, not the seat's
         // interactive slots (see `interactive_sessions_of`).
         let pod_session = session.manifest.workload.is_some();
-        if let Some(binding) = self.bindings.read().await.get(&durable.seat_id).cloned() {
+        let binding = self.bindings.read().await.get(&durable.seat_id).cloned();
+        if let Some(binding) = &binding {
             if !pod_session {
                 self.refuse_seat_full(&durable.seat_id, binding.max_sessions)
                     .await?;
             }
         }
+        // Interactive sessions resume their transcript, but their new incarnation
+        // uses the seat's current declared lead, not the original launch pair.
+        // Workload sessions remain bound to the model admitted for their pod.
+        let lead = if pod_session {
+            None
+        } else {
+            let binding = binding.ok_or_else(|| LiveError::NotFound {
+                object_kind: "seat".to_owned(),
+                object_id: durable.seat_id.to_string(),
+            })?;
+            Some(binding.launch_options.into_iter().next().ok_or_else(|| {
+                LiveError::InvalidRequest {
+                    code: "undeclared_launch_option".to_owned(),
+                    message: format!("seat {} has no declared launch option", durable.seat_id),
+                }
+            })?)
+        };
         // Read-path reclaim: retire anything that settled Ended before the
         // capacity decision, under this gate hold.
         self.retire_ended().await;
@@ -517,7 +535,12 @@ impl LiveSupervisor {
             return Err(self.roster_full(roster));
         }
         let epoch = self.ledger.reclaim(session_id).await.map_err(live_error)?;
-        let session = self.ledger.session(session_id).await.map_err(live_error)?;
+        let mut session = self.ledger.session(session_id).await.map_err(live_error)?;
+        if let Some(lead) = lead {
+            session.manifest.provider = lead.provider;
+            session.manifest.model = lead.model;
+            session.manifest.harness = lead.harness;
+        }
         let previous = durable.state;
         let actor = match self.launch_actor(session.manifest, epoch, true).await {
             Ok(actor) => actor,

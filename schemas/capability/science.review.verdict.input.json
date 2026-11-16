@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/science.review.verdict.input.json",
+  "title": "science.review.verdict input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "proposal": {
+      "type": "string",
+      "pattern": "^(blake3:[0-9a-f]{64}|artifact:[0-9a-f-]{36}:[0-9a-f]{64})$",
+      "description": "The proposal's artifactId exactly as you were asked to review it."
+    },
+    "approve": {
+      "type": "boolean"
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    }
+  },
+  "required": [
+    "proposal",
+    "approve",
+    "notes"
+  ]
+}

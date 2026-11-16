@@ -330,11 +330,13 @@ async fn identity_blind_backend_dispatches_initial_messages_but_never_replays_in
                     LiveCommandBody::FollowUp {
                         message,
                         owner_text: None,
+                        wake: false,
                     }
                 } else {
                     LiveCommandBody::Prompt {
                         message,
                         owner_text: None,
+                        wake: false,
                     }
                 },
             };
@@ -605,11 +607,13 @@ async fn admitted_messages_recover_before_dispatch_and_settle_exact_identity_onc
                 LiveCommandBody::FollowUp {
                     message,
                     owner_text: None,
+                    wake: false,
                 }
             } else {
                 LiveCommandBody::Prompt {
                     message,
                     owner_text: None,
+                    wake: false,
                 }
             },
         };
@@ -640,11 +644,13 @@ async fn admitted_messages_reconcile_postdispatch_without_resending() {
                 LiveCommandBody::FollowUp {
                     message,
                     owner_text: None,
+                    wake: false,
                 }
             } else {
                 LiveCommandBody::Prompt {
                     message,
                     owner_text: None,
+                    wake: false,
                 }
             },
         };
@@ -694,6 +700,7 @@ async fn durable_command_replays_identity_before_epoch_validation() {
         body: LiveCommandBody::Prompt {
             message,
             owner_text: None,
+            wake: false,
         },
     };
     fixture.ledger.append_command(&command).await.unwrap();
@@ -719,6 +726,7 @@ async fn durable_command_replays_identity_before_epoch_validation() {
     conflict.body = LiveCommandBody::Prompt {
         message: text_message("different"),
         owner_text: None,
+        wake: false,
     };
     assert!(fixture.handle.command(conflict).await.is_err());
     let mut conflict = command.clone();
@@ -736,6 +744,7 @@ async fn durable_command_replays_identity_before_epoch_validation() {
         body: LiveCommandBody::Prompt {
             message: text_message("stale"),
             owner_text: None,
+            wake: false,
         },
     };
     assert!(matches!(
@@ -780,9 +789,7 @@ async fn a_rollover_carries_the_journaled_model_selection_before_its_reinjection
                 route: Some(odin_domain::huginn::ClassRouteDecision {
                     from_class: "fast".into(),
                     to_class: "standard".into(),
-                    warrant: Some(
-                        "repeated typed tool/schema failure: test.run (arguments)".into(),
-                    ),
+                    warrant: Some("repeated typed tool failure: test.run (arguments)".into()),
                     through: EventSeq::new(1),
                     owner_message: None,
                     refusal: None,
@@ -1172,6 +1179,7 @@ async fn applied_turn_abort_settles_idle_before_a_head_checked_prompt() {
         body: LiveCommandBody::Prompt {
             message: text_message("start a turn"),
             owner_text: None,
+            wake: false,
         },
     };
     assert!(matches!(
@@ -1243,6 +1251,39 @@ async fn applied_turn_abort_settles_idle_before_a_head_checked_prompt() {
 }
 
 #[tokio::test]
+async fn prompt_result_error_is_visible_in_history_and_fails_the_session() {
+    let fixture = spawn_fixture(None).await;
+    let failure = b"{\"type\":\"prompt_result\",\"agentInvoked\":false,\"error\":{\"message\":\"No API key found for gateway\"}}\n";
+    ingest_lifecycle_frame(&fixture, failure).await;
+    ingest_lifecycle_frame(&fixture, failure).await;
+    ingest_lifecycle_frame(
+        &fixture,
+        b"{\"type\":\"agent_end\",\"stopReason\":\"stop\"}\n",
+    )
+    .await;
+
+    let bodies = journaled_bodies(&fixture).await;
+    let errors: Vec<_> = bodies
+        .iter()
+        .filter_map(|body| match body {
+            LiveEventBody::Error(error) => Some(error),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(errors.len(), 1, "{bodies:?}");
+    assert_eq!(errors[0].code, "prompt_result_error");
+    assert_eq!(errors[0].message, "No API key found for gateway");
+    assert!(!errors[0].retryable);
+    assert!(!bodies
+        .iter()
+        .any(|body| matches!(body, LiveEventBody::Result(_))));
+    let summary = fixture.handle.summary().unwrap();
+    assert_eq!(summary.state, LiveSessionState::Failed);
+    assert!(summary.failed_at.is_some());
+    fixture.handle.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn terminal_provider_error_stays_failed_and_refuses_a_new_prompt() {
     let fixture = spawn_fixture(None).await;
     ingest_lifecycle_frame(&fixture, b"{\"type\":\"agent_start\"}\n").await;
@@ -1289,6 +1330,7 @@ async fn terminal_provider_error_stays_failed_and_refuses_a_new_prompt() {
                 body: LiveCommandBody::Prompt {
                     message: text_message("must not reach the backend"),
                     owner_text: None,
+                    wake: false,
                 },
             })
             .await
@@ -1492,6 +1534,7 @@ async fn turn_budget_give_up_cancels_once_and_journals_the_honest_terminal() {
             body: LiveCommandBody::Prompt {
                 message: text_message("answer without settling"),
                 owner_text: None,
+                wake: false,
             },
         })
         .await
@@ -1569,6 +1612,7 @@ async fn turn_budget_expired_initial_dispatch_reconciles_once_and_blocks_late_tu
         body: LiveCommandBody::Prompt {
             message: text_message("start a turn"),
             owner_text: None,
+            wake: false,
         },
     });
     let receipt = tokio::time::timeout(std::time::Duration::from_secs(5), prompt)
@@ -1675,6 +1719,7 @@ async fn turn_budget_expired_initial_dispatch_reconciles_once_and_blocks_late_tu
             body: LiveCommandBody::Prompt {
                 message: text_message("retry the turn"),
                 owner_text: None,
+                wake: false,
             },
         })
         .await
@@ -1707,6 +1752,7 @@ async fn a_stop_preempts_a_command_waiting_on_its_backend() {
             body: LiveCommandBody::Prompt {
                 message: text("start a turn"),
                 owner_text: None,
+                wake: false,
             },
         })
         .await

@@ -17,3 +17,5 @@ strengths = "Solid everyday coding and analysis on a generous coding plan."
 # True names a lane seats may run.
 seats = true
 brain_serving = true
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"

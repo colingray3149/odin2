@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "knowledge"
+op = "remember"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Records what the owner told you. One dated line in a person's notes.md (about=<name or slug>) or brain/me/notes.md. Never remember a tool result unasked. about='research:<folder>' notes that research happened."
+handler = { id = "knowledge_remember" }
+input_schema = "schemas/capability/knowledge.remember.input.json"
+output_schema = "schemas/capability/knowledge.remember.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_knowledge_remember_evidence" }
+tests = [
+  "odin-hermes runtime::knowledge::tests::each_declared_knowledge_tool_forwards_its_arguments_and_the_seat",
+]

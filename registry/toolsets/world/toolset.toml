@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "World facts without a web search: weather, time, holidays, currency, definitions, wiki, quakes."
+examples = [
+  'world {op: weather, when: tomorrow}',
+  'world {op: time, place: Tokyo}',
+]

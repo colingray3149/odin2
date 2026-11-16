@@ -10,6 +10,28 @@ use super::prepare::query_row;
 use super::row::{state_text, TransitionOutcome};
 use crate::{encode_utc, LedgerError, LedgerResult};
 
+/// Settle a verified recovery without changing the evidence from the original attempt.
+/// The caller must hold and check the operation fence in this transaction.
+pub fn commit_recovered_operation(
+    tx: &Transaction<'_>,
+    correlation_id: &str,
+    recovery_evidence_digest: &str,
+    now: OffsetDateTime,
+) -> LedgerResult<()> {
+    let updated = tx.execute(
+        "UPDATE operation_journal SET effect_state = 'committed', recovery_evidence_digest = ?1, updated_at = ?2 \
+         WHERE correlation_id = ?3 AND effect_state = 'in_doubt' \
+         AND (recovery_evidence_digest IS NULL OR recovery_evidence_digest = ?1)",
+        params![recovery_evidence_digest, encode_utc(now)?, correlation_id],
+    )?;
+    if updated != 1 {
+        return Err(LedgerError::Conflict(format!(
+            "operation {correlation_id} is not eligible for recovery settlement"
+        )));
+    }
+    Ok(())
+}
+
 /// Compare-and-set state transition: applies `from -> to` only when the
 /// durable row is still in `from`. Replays when it already reached `to`
 /// (the recorded evidence stays whatever the replay claims) and fails with
@@ -228,5 +250,37 @@ mod transition_evidence_immutability {
             row_effect(&connection),
             (EffectState::Committed, Some(genuine))
         );
+    }
+
+    #[test]
+    fn recovery_preserves_failed_attempt_evidence_and_records_success_separately() {
+        let mut connection = journal();
+        prepared(&mut connection);
+        let tx = connection.transaction().unwrap();
+        transition_operation(
+            &tx,
+            CORRELATION,
+            EffectState::EffectStarted,
+            EffectState::InDoubt,
+            Some("failed-attempt"),
+            now_at(1_200),
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        let tx = connection.transaction().unwrap();
+        commit_recovered_operation(&tx, CORRELATION, "verified-success", now_at(1_300)).unwrap();
+        tx.commit().unwrap();
+        let row = operation_row(&connection, CORRELATION).unwrap().unwrap();
+        assert_eq!(row.effect_state, EffectState::Committed);
+        assert_eq!(row.evidence_digest.as_deref(), Some("failed-attempt"));
+        assert_eq!(
+            row.recovery_evidence_digest.as_deref(),
+            Some("verified-success")
+        );
+        let tx = connection.transaction().unwrap();
+        assert!(
+            commit_recovered_operation(&tx, CORRELATION, "replacement", now_at(1_400)).is_err()
+        );
+        tx.rollback().unwrap();
     }
 }

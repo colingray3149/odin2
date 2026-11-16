@@ -113,12 +113,24 @@ impl ConversationSurface {
         request: live::ConversationSayRequest,
     ) -> Result<live::HuginnResponse, live::HuginnProtocolError> {
         let text = request.text.trim().to_owned();
-        if text.is_empty() || text.chars().count() > live::CONVERSATION_MESSAGE_MAX_CHARS {
+        let images = request.images;
+        if (text.is_empty() && images.is_empty())
+            || text.chars().count() > live::CONVERSATION_MESSAGE_MAX_CHARS
+        {
             return Err(live::HuginnProtocolError::InvalidRequest {
                 code: "conversationLine".to_owned(),
                 message: format!(
-                    "an owner line must hold 1 to {} characters",
+                    "an owner line must hold 1 to {} characters or a photo",
                     live::CONVERSATION_MESSAGE_MAX_CHARS
+                ),
+            });
+        }
+        if images.len() > odin_hermes::runtime::images::MAX_TURN_IMAGES {
+            return Err(live::HuginnProtocolError::InvalidRequest {
+                code: "conversationImages".to_owned(),
+                message: format!(
+                    "one owner line carries at most {} photos",
+                    odin_hermes::runtime::images::MAX_TURN_IMAGES
                 ),
             });
         }
@@ -147,7 +159,7 @@ impl ConversationSurface {
         // route): it runs off the async workers.
         let projection = tokio::task::spawn_blocking(move || {
             let _one_say = says.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            runtime.admit_surface_line(&label, &say, &text)
+            runtime.admit_surface_say(&label, &say, &text, &images)
         })
         .await
                 .map_err(|error| {

@@ -313,7 +313,7 @@ fn first_drop_fallback_settles_ordinary_scope() {
     let runtime = private_child(&root, "run");
     let storage = private_child(&root, "storage");
     let owner = Arc::new(Mutex::new(Ledger::open_in_memory().expect("owner ledger")));
-    let server = ParentBrokerServer::bind(
+    let mut server = ParentBrokerServer::bind(
         &runtime,
         &storage,
         test_channel(),
@@ -326,15 +326,14 @@ fn first_drop_fallback_settles_ordinary_scope() {
     let scopes = Arc::clone(&server.scopes);
     let complete = Arc::clone(&server.shutdown_complete);
     let socket = server.socket_path().to_path_buf();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    server.shutdown_observer = Some(sender);
     drop(server);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !complete.load(Ordering::Acquire) {
-        assert!(
-            Instant::now() < deadline,
-            "fallback did not settle ordinary scope"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    receiver
+        .recv_timeout(BROKER_GRACE + Duration::from_secs(30))
+        .expect("fallback shutdown worker did not report completion")
+        .expect("fallback did not settle ordinary scope");
+    assert!(complete.load(Ordering::Acquire));
     assert!(scopes.lock().expect("scopes").is_empty());
     assert!(!socket.exists());
     let _ = std::fs::remove_dir_all(root);

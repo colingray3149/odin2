@@ -57,6 +57,7 @@ impl OperationAuthority {
         request: &InvokeRequest,
         plan: DispatchPlan,
         stop_handle: Arc<StopHandle>,
+        fence: &odin_ledger::OperationFence,
     ) -> AuthorityResult<OperationDecision> {
         let DispatchPlan {
             contract,
@@ -123,6 +124,7 @@ impl OperationAuthority {
                 .unwrap_or(false);
             if !lease_open {
                 ledger.with_tx(|tx| {
+                    fence.check(tx)?;
                     store::transition_operation(
                         tx,
                         request.correlation_id.as_str(),
@@ -148,6 +150,7 @@ impl OperationAuthority {
                         request.correlation_id.as_str(),
                     )?;
                 ledger.with_tx(|tx| {
+                    fence.check(tx)?;
                     store::transition_operation(
                         tx,
                         request.correlation_id.as_str(),
@@ -183,6 +186,7 @@ impl OperationAuthority {
                 }));
             }
             ledger.with_tx(|tx| {
+                fence.check(tx)?;
                 store::transition_operation(
                     tx,
                     request.correlation_id.as_str(),
@@ -210,6 +214,7 @@ impl OperationAuthority {
                     (None, _) => EffectState::Committed,
                 };
                 ledger.with_tx(|tx| {
+                    fence.check(tx)?;
                     store::transition_operation(
                         tx,
                         request.correlation_id.as_str(),
@@ -238,6 +243,7 @@ impl OperationAuthority {
                 let stops = self.requested_stops(&operation_id)?;
                 let mut ledger = self.lock_store()?;
                 ledger.with_tx(|tx| {
+                    fence.check(tx)?;
                     store::transition_operation(
                         tx,
                         request.correlation_id.as_str(),
@@ -271,6 +277,7 @@ impl OperationAuthority {
                 };
                 let mut ledger = self.lock_store()?;
                 ledger.with_tx(|tx| {
+                    fence.check(tx)?;
                     store::transition_operation(
                         tx,
                         request.correlation_id.as_str(),

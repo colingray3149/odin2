@@ -24,6 +24,9 @@ use crate::{SidecarError, SidecarErrorCode};
 const EFFECT_POLL: Duration = Duration::from_millis(50);
 /// How long a stopped effector gets to end before its scope is killed.
 const EFFECTOR_STOP_GRACE: Duration = Duration::from_secs(2);
+/// Scope bounds for the effector (cargo build and test inside its bubble).
+const EFFECTOR_MEMORY_MAX: u64 = 4 << 30;
+const EFFECTOR_TASKS_MAX: u64 = 4096;
 const EFFECTOR_TX_ID: &str = "sidecar";
 const EFFECTOR_WP_ID: &str = "effector";
 pub(super) const EVAL_TERM_GRACE_MS: u64 = 1_000;

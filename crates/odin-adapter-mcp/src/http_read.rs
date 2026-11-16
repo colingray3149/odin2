@@ -1,17 +1,22 @@
-//! Independent plain-HTTP reader used while the Obscura session remains open.
+//! Independent plain-HTTP reader, raced beside the Obscura session and kept as its fallback.
 //! DNS answers and every redirect stay public; no challenge solving or cookies.
 
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::Url;
 
-use crate::read::{document_verdict, DocumentVerdict, PageRead};
+use crate::read::{document_verdict, fits_with_note, DocumentVerdict, PageRead};
+use crate::Stopper;
 
 const READ_BYTES: usize = 8 << 20;
 const ALTERNATE_BUDGET: Duration = Duration::from_secs(5);
+/// The fingerprint fetch's share: it may follow redirects through a slower exit.
+const FINGERPRINT_BUDGET: Duration = Duration::from_secs(12);
+/// How often the fingerprint fetch is checked against its share.
+const FINGERPRINT_POLL: Duration = Duration::from_millis(50);
 /// The most the article extractor may take on one page.
 const ARTICLE_BUDGET: Duration = Duration::from_secs(10);
 
@@ -81,6 +86,114 @@ pub(crate) fn html_text(body: &[u8], article: Option<&str>, deadline: Instant) -
     article
         .and_then(|converter| crate::read::article_text(converter, body, deadline))
         .or_else(|| html2text::from_read(body, 120).ok())
+}
+
+/// The page through the declared fingerprint fetch (`<fetch> <url>` prints `<status> <final
+/// url>`, then the body, exit 0 only for a 2xx page): for a site that refuses a plain client but
+/// not a browser's TLS and HTTP/2. `None` when it refuses, fails or overruns its share of time.
+pub(crate) fn fingerprinted(
+    fetch: &str,
+    url: &str,
+    deadline: Instant,
+    article: Option<&str>,
+) -> Option<PageRead> {
+    let parsed = Url::parse(url).ok()?;
+    if !public_url(&parsed) {
+        return None;
+    }
+    let budget = FINGERPRINT_BUDGET.min(deadline.saturating_duration_since(Instant::now()) / 2);
+    if budget.is_zero() {
+        return None;
+    }
+    let mut child = std::process::Command::new(fetch)
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stdout, &mut bytes);
+        bytes
+    });
+    let until = Instant::now() + budget;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < until => std::thread::sleep(FINGERPRINT_POLL),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    let output = reader.join().ok()?;
+    if !status.success() {
+        return None;
+    }
+    let split = output.iter().position(|byte| *byte == b'\n')?;
+    let head = String::from_utf8_lossy(&output[..split]).into_owned();
+    let (code, final_url) = head.split_once(' ')?;
+    let body = &output[split + 1..];
+    let text = html_text(body, article, deadline)?;
+    match document_verdict(&format!("[{code}] GET {final_url}"), &text) {
+        DocumentVerdict::Loaded(_) if !text.trim().is_empty() => Some(PageRead {
+            url: final_url.to_owned(),
+            text,
+        }),
+        _ => None,
+    }
+}
+
+/// The plain reader racing the browser on one page. A page it reads whole in the first window,
+/// note included, wins: it stops the browser, so the session's wait ends at once. Any other page
+/// waits as the fallback's first rung, and a continuation offset only ever names the browser's text.
+pub(crate) struct PlainRead {
+    page: mpsc::Receiver<Option<PageRead>>,
+    first_window: Option<usize>,
+}
+
+impl PlainRead {
+    pub(crate) fn start(
+        url: &str,
+        deadline: Instant,
+        article: Option<&str>,
+        first_window: Option<usize>,
+        browser: Stopper,
+    ) -> Self {
+        let (sender, page) = mpsc::sync_channel(1);
+        let (url, article) = (url.to_owned(), article.map(str::to_owned));
+        std::thread::spawn(move || {
+            let read = read(&url, deadline, article.as_deref());
+            let won = read
+                .as_ref()
+                .zip(first_window)
+                .is_some_and(|(read, chars)| fits_with_note(read, chars));
+            let _ = sender.send(read);
+            if won {
+                browser.stop();
+            }
+        });
+        Self { page, first_window }
+    }
+
+    /// The page it read, waiting until `deadline` at most.
+    pub(crate) fn page(self, deadline: Instant) -> Option<PageRead> {
+        self.page
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .ok()
+            .flatten()
+    }
+
+    /// Its page, only if it won the race.
+    pub(crate) fn winner(self, deadline: Instant) -> Option<PageRead> {
+        let first_window = self.first_window?;
+        self.page(deadline)
+            .filter(|read| fits_with_note(read, first_window))
+    }
 }
 
 pub(crate) fn read(url: &str, deadline: Instant, article: Option<&str>) -> Option<PageRead> {
@@ -153,6 +266,33 @@ pub(crate) fn read(url: &str, deadline: Instant, article: Option<&str>) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fingerprint_fetch_serves_a_page_and_a_refusal_falls_through() {
+        let stubs = tempfile::tempdir().expect("stub dir");
+        let stub = |name: &str, script: &str| {
+            let path = stubs.path().join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).expect("stub");
+            std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+                .expect("executable");
+            path.display().to_string()
+        };
+        let served = stub(
+            "served",
+            "printf '200 https://a.example/team\\n<html><body><p>The team: Jane Doe, founder.</p></body></html>'",
+        );
+        let refused = stub(
+            "refused",
+            "printf '403 https://a.example/team\\nJust a moment...'; exit 67",
+        );
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let page =
+            fingerprinted(&served, "https://a.example/team", deadline, None).expect("a page");
+        assert_eq!(page.url, "https://a.example/team");
+        assert!(page.text.contains("Jane Doe"), "{}", page.text);
+        assert!(fingerprinted(&refused, "https://a.example/team", deadline, None).is_none());
+        assert!(fingerprinted(&served, "http://10.0.0.11/", deadline, None).is_none());
+    }
 
     #[test]
     fn alternate_reader_rejects_private_and_transition_destinations() {

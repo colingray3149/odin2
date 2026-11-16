@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/simulation.read.output.json",
+  "title": "simulation.read output",
+  "description": "Missions as the board holds them. lastSample is the pod's newest ODIN-STATUS object; frames name each renderer's newest kept frame; exports (one named mission) are its export files with sizes, or exportsUnavailable says why not.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "missions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["run", "label", "stage"],
+        "properties": {
+          "run": { "type": "string" },
+          "label": { "type": "string" },
+          "stage": { "type": "string" },
+          "exports": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": { "path": { "type": "string" }, "bytes": { "type": "integer", "minimum": 0 } },
+              "required": ["path", "bytes"]
+            }
+          },
+          "exportsUnavailable": { "type": "string" }
+        }
+      }
+    }
+  },
+  "required": ["missions"]
+}

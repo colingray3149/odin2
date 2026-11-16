@@ -361,6 +361,38 @@ impl EventNormalizer {
                 return Ok(bodies);
             }
             "prompt_result" => {
+                // A prompt can fail before an agent turn starts; its error is
+                // the terminal outcome, not an empty successful local result.
+                // Mark the normalizer failed as well as journaling the error so
+                // duplicate or late completion frames cannot reopen it.
+                if let Some(error) = value.get("error").filter(|error| !error.is_null()) {
+                    let mut state = self.state.lock().map_err(unavailable)?;
+                    if state.settled() {
+                        return Ok(Vec::new());
+                    }
+                    let previous = state.session_state;
+                    state.session_state = LiveSessionState::Failed;
+                    state.turn_result = TurnResult::Closed;
+                    let message = error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .or_else(|| error.as_str())
+                        .unwrap_or("OMP prompt failed")
+                        .to_owned();
+                    return Ok(vec![
+                        LiveEventBody::Error(SessionError {
+                            code: "prompt_result_error".to_owned(),
+                            message,
+                            retryable: false,
+                            error_status: None,
+                        }),
+                        LiveEventBody::SessionStateChanged(SessionStateChanged {
+                            previous,
+                            current: LiveSessionState::Failed,
+                            reason: None,
+                        }),
+                    ]);
+                }
                 let mut bodies = Vec::with_capacity(2);
                 let summary = string_field(value, &["text", "summary", "result"]);
                 // Pinned RPC reports local-only prompts without agent_end:
@@ -1039,6 +1071,28 @@ mod tests {
                     if result.summary.as_deref() == Some("local")),
                 "{local:?}"
             );
+        }
+
+        #[test]
+        fn prompt_result_errors_fail_both_local_and_agent_turns() {
+            for invoked in [false, true] {
+                let (normalizer, _root) = normalizer(LiveSessionState::Running);
+                let raw = format!(
+                    r#"{{"type":"prompt_result","agentInvoked":{invoked},"text":"not an answer","error":{{"message":"No API key found for gateway"}}}}"#
+                );
+                let bodies = normalizer.normalize_omp(&frame(&raw)).unwrap();
+                assert!(
+                    matches!(
+                        &bodies[..],
+                        [LiveEventBody::Error(error), LiveEventBody::SessionStateChanged(failed)]
+                            if error.code == "prompt_result_error"
+                                && error.message == "No API key found for gateway"
+                                && failed.current == LiveSessionState::Failed
+                    ),
+                    "{bodies:?}"
+                );
+                assert!(normalizer.normalize_omp(&frame(&raw)).unwrap().is_empty());
+            }
         }
 
         /// The bridge-annotated open-loop prompt rejection (the dispatch

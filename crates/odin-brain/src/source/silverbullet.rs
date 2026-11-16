@@ -75,6 +75,9 @@ pub const RESERVED_MEMORY_SEGMENT: &str = "memory";
 /// next projection. The write grammar ([`addressable_page_name`]) stays
 /// permissive so the daemon's generated-write gate is the only writer.
 pub const RESERVED_KNOWLEDGE_SEGMENT: &str = "knowledge";
+/// The namespace of the owner's profile source (the source a seat declares as
+/// `profile_namespace`): its pages live in `me/`, not `memory/<name>/`.
+pub const OWNER_PROFILE_NAMESPACE: &str = "me";
 /// Upper bound for the configured page-count limit of one scoped pin.
 pub const MAX_PAGES_CEILING: usize = 100_000;
 /// One entry from the `/.fs/` file list.
@@ -225,6 +228,14 @@ impl VaultScope {
             excluded,
             reserved_memories: false,
         })
+    }
+
+    /// A generated-only scope over exactly the owner's `me/` profile.
+    pub fn is_owner_profile(&self) -> bool {
+        !self.reserved_memories
+            && self.general.is_empty()
+            && self.generated.len() == 1
+            && self.generated[0] == OWNER_PROFILE_NAMESPACE
     }
 
     /// The exact seat of a generated-only reserved memory scope.

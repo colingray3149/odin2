@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.workload.steer.output.json",
+  "title": "kube.workload.steer output",
+  "description": "accepted = the document is in the run's control map at seq; duplicate = this operation already wrote it; unavailable = typed refusal with reason.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {"type": "string", "enum": ["accepted", "duplicate", "unavailable"]},
+    "runId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "operationId": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
+    "seq": {"type": "integer", "minimum": 1},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 1024}
+  },
+  "required": ["status", "runId"],
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "unavailable"}}, "required": ["status"]}, "then": {"required": ["reason"]}},
+    {"if": {"properties": {"status": {"enum": ["accepted", "duplicate"]}}, "required": ["status"]}, "then": {"required": ["seq"]}}
+  ]
+}

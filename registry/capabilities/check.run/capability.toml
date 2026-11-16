@@ -5,7 +5,7 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Runs nix flake check on the session's capsule (its own clone of the project, with every change staged) in the Nix build sandbox; returns success or the log tail. Up to 20 minutes. the owner's projects are Nix flakes, so this is where their tests run: a checks output running the suite in a Nix-declared environment. A project without a flake.nix gets one first: a dev shell declaring every dependency (built from source where nixpkgs lacks it) and a checks output running its tests."
+description = "Runs nix flake check on the session's capsule (its own clone of the project, with every change staged) in the Nix build sandbox; returns success or the log tail. Up to 20 minutes. The owner's projects are Nix flakes, so this is where their tests run: a checks output running the suite in a Nix-declared environment. A project without a flake.nix gets one first: a dev shell declaring every dependency (built from source where nixpkgs lacks it) and a checks output running its tests."
 handler = { id = "check_run" }
 input_schema = "schemas/capability/check.run.input.json"
 output_schema = "schemas/capability/check.run.output.json"

@@ -37,7 +37,7 @@ impl PlanSetTool {
                 name: Cow::Borrowed(Self::NAME),
                 label: Cow::Borrowed("Plan Set"),
                 description: Cow::Borrowed(
-                    "Replace the objective and the complete ordered todo set of the run bound to this session as one revisioned aggregate. Pass the plan revision you currently observe; stale revisions, duplicate todo ids, and unknown fields are rejected without writing.",
+                    "Replace the complete ordered todo set of the run bound to this session, and its objective when given, as one revisioned aggregate. An omitted objective keeps the current one and an omitted revision means the current one; duplicate todo ids and unknown fields are rejected without writing.",
                 ),
                 parameters: parameters(),
                 hidden: false,
@@ -67,13 +67,43 @@ impl PlanSetTool {
                 tool: Self::NAME,
                 detail: format!("arguments violate the odin_plan_set schema: {error}"),
             })?;
-        let timestamp = parse_unix_milliseconds(Self::NAME, arguments.timestamp_ms)?;
+        let timestamp = match arguments.timestamp_ms {
+            Some(milliseconds) => parse_unix_milliseconds(Self::NAME, milliseconds)?,
+            None => OffsetDateTime::now_utc(),
+        };
+        let ledger = lock_ledger(Self::NAME, &self.ledger)?;
+        let current = ledger.plan(&run_id)?;
+        if let (Some(plan), Some(objective)) = (&current, &arguments.objective) {
+            // An operator-accepted root plan dies with a new objective; a delegated child's
+            // inherited acceptance does not (the ledger carries it).
+            let root_accepted = ledger
+                .plan_acceptance(&run_id)?
+                .is_some_and(|record| record.parent.is_none())
+                && ledger.plan_is_accepted(&run_id)?;
+            if root_accepted && plan.objective != *objective {
+                return Err(HostToolError::Arguments {
+                    tool: Self::NAME,
+                    detail: "a new objective would void the plan the owner accepted; omit \
+                             objective to keep your accepted plan"
+                        .to_owned(),
+                });
+            }
+        }
+        drop(ledger);
         let PlanSetArguments {
             objective,
             todos: decoded,
             expected_revision,
             ..
         } = arguments;
+        let expected_revision =
+            expected_revision.unwrap_or_else(|| current.as_ref().map_or(0, |plan| plan.revision));
+        let objective = objective
+            .or_else(|| current.map(|plan| plan.objective))
+            .ok_or_else(|| HostToolError::Arguments {
+                tool: Self::NAME,
+                detail: "this run has no plan yet; give its objective".to_owned(),
+            })?;
         let todos = decoded
             .into_iter()
             .map(|todo| TodoSpec {
@@ -109,11 +139,23 @@ impl HostTool for PlanSetTool {
         let (run_id, objective, expected_revision, timestamp, todos) =
             self.resolve(&invocation.scope, &invocation.arguments)?;
 
-        let plan = {
-            let mut ledger = lock_ledger(Self::NAME, &self.ledger)?;
-            ledger.replace_plan(&run_id, &objective, &todos, expected_revision, timestamp)?
-        };
-        response(Self::NAME, &PlanView::from_plan(&plan)?)
+        let mut ledger = lock_ledger(Self::NAME, &self.ledger)?;
+        if ledger
+            .plan(&run_id)?
+            .is_some_and(|plan| plan.objective != objective)
+            && ledger
+                .plan_acceptance(&run_id)?
+                .is_some_and(|record| record.parent.is_none())
+            && ledger.plan_is_accepted(&run_id)?
+        {
+            return Err(HostToolError::Arguments {
+                tool: Self::NAME,
+                detail: "a new objective would void the plan the owner accepted; omit objective to keep your accepted plan".to_owned(),
+            });
+        }
+        let plan =
+            ledger.replace_own_todos(&run_id, &objective, &todos, expected_revision, timestamp)?;
+        response(Self::NAME, &PlanView::from_plan(&ledger, &plan)?)
     }
 }
 
@@ -168,11 +210,24 @@ pub(crate) struct PlanView {
     todos: Vec<TodoView>,
     created_at: String,
     updated_at: String,
+    /// Whether side effects may run under this plan right now.
+    accepted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accepted_by: Option<String>,
 }
 
 impl PlanView {
-    /// Projects the durable aggregate; encoding the UTC timestamps is fallible.
-    pub(crate) fn from_plan(plan: &Plan) -> LedgerResult<Self> {
+    /// Projects the durable aggregate and whether its acceptance holds; encoding the UTC
+    /// timestamps is fallible.
+    pub(crate) fn from_plan(ledger: &Ledger, plan: &Plan) -> LedgerResult<Self> {
+        let accepted = ledger.plan_is_accepted(&plan.run_id)?;
+        let accepted_by = if accepted {
+            ledger
+                .plan_acceptance(&plan.run_id)?
+                .map(|record| record.actor)
+        } else {
+            None
+        };
         Ok(Self {
             run_id: plan.run_id.clone(),
             revision: plan.revision,
@@ -184,6 +239,8 @@ impl PlanView {
                 .collect::<Result<Vec<_>, _>>()?,
             created_at: encode_utc(plan.created_at)?,
             updated_at: encode_utc(plan.updated_at)?,
+            accepted,
+            accepted_by,
         })
     }
 }
@@ -213,10 +270,13 @@ impl TodoView {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct PlanSetArguments {
-    objective: String,
+    #[serde(default)]
+    objective: Option<String>,
     todos: Vec<TodoArguments>,
-    expected_revision: i64,
-    timestamp_ms: i64,
+    #[serde(default)]
+    expected_revision: Option<i64>,
+    #[serde(default)]
+    timestamp_ms: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

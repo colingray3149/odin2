@@ -75,7 +75,6 @@ pub(super) fn vault_tools(runtime: &Arc<HermesRuntime>, tools: &mut Vec<Arc<dyn 
     }
     {
         let runtime = Arc::clone(runtime);
-        let memory_runtime = Arc::downgrade(&runtime);
         // The generated-namespace grammar in the model-facing schema is the
         // configured namespace itself, read from the composed vault bridge —
         // declaration data, never a hardcoded name.
@@ -207,8 +206,6 @@ pub(super) fn vault_tools(runtime: &Arc<HermesRuntime>, tools: &mut Vec<Arc<dyn 
             Box::new(move |scope: &Scope, arguments: &Value| gate(scope, arguments)),
         ));
         tools.push(Arc::clone(&writer));
-        tools.push(super::memory::memory_forget_tool(memory_runtime.clone()));
-        tools.push(super::memory::memory_remember_tool(memory_runtime));
     }
 }
 

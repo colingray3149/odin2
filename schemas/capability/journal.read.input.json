@@ -5,6 +5,31 @@
   "$id": "https://odin.local/schemas/capability/journal.read.input.json",
   "title": "journal.read input",
   "properties": {
+    "unit": {
+      "description": "The authority's user unit to read; default odind.",
+      "type": "string",
+      "enum": [
+        "odind",
+        "brain-load",
+        "brain-reduce",
+        "brain-commit",
+        "brain-google-pull",
+        "brain-grow",
+        "brain-inventory",
+        "brain-archive-refresh",
+        "brain-rerank",
+        "media-mirror",
+        "local-models",
+        "hub-embedding",
+        "hub-embedding-proxy",
+        "whisper-server",
+        "litellm",
+        "litellm-node",
+        "omp-auth-broker",
+        "omp-auth-gateway",
+        "odin-models-refresh"
+      ]
+    },
     "lines": {
       "type": "integer",
       "minimum": 1,

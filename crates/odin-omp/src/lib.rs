@@ -12,6 +12,7 @@ pub mod bridge;
 pub mod frames;
 pub mod host_tools;
 pub mod live;
+pub mod loom;
 pub mod probe;
 pub mod process;
 pub mod redact;

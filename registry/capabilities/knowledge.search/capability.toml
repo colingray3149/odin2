@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "lookup"
+op = "brain"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Searches the compiled brain. Returns sections with page, date and a posture label; cite the page. Posture not full: say why once, do not retry. pointer_text: research exists but was not used; tell the owner. reference: papers and manuals that match, with their local paths."
+handler = { id = "knowledge_search" }
+input_schema = "schemas/capability/knowledge.search.input.json"
+output_schema = "schemas/capability/knowledge.search.output.json"
+effect_class = "R0"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_knowledge_search_evidence" }
+tests = [
+  "odin-hermes runtime::knowledge::tests::each_declared_knowledge_tool_forwards_its_arguments_and_the_seat",
+]

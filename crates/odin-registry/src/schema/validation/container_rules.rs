@@ -161,6 +161,18 @@ pub(super) fn validate_container_alert(
             "watchdog consecutive_hits must be in 1..=1000",
         ));
     }
+    if (alert.action == crate::schema::container::ContainerAlertActionToml::Steer)
+        != alert.patch.is_some()
+    {
+        findings.push(fail(
+            object,
+            "container-watchdog-steer",
+            format!(
+                "watchdog {:?}: action = \"steer\" and patch are declared together",
+                alert.id
+            ),
+        ));
+    }
     if alert.cooldown_seconds > 86_400 {
         findings.push(fail(
             object,

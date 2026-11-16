@@ -444,6 +444,56 @@ pub(crate) fn routine_acting(
 }
 
 
+#[test]
+fn project_event_wakes_only_its_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = gate_runtime(dir.path());
+    runtime.set_registry_pin(published_registry(
+        &dir.path().join("registry"),
+        vec![
+            routine_object(
+                "project-alpha-any",
+                "event = \"project_event\"\nproject = \"project-alpha\"",
+            ),
+            routine_object(
+                "project-alpha-jobs",
+                "event = \"project_event\"\nproject = \"project-alpha\"\nmatch = \"job_done\"",
+            ),
+            routine_object(
+                "project-beta-any",
+                "event = \"project_event\"\nproject = \"project-beta\"",
+            ),
+        ],
+    ));
+    runtime.reconcile_routines().unwrap();
+    let at = jiff::Timestamp::now().as_millisecond() + 1;
+    let report = |project, kind, key| {
+        runtime
+            .routine_project_event(project, kind, key, "{\"job\":\"j1\"}", at)
+            .unwrap()
+    };
+    assert_eq!(
+        report("project-alpha", "job_done", "project:project-alpha:j1"),
+        2
+    );
+    assert_eq!(
+        report("project-alpha", "job_done", "project:project-alpha:j1"),
+        0
+    );
+    assert_eq!(
+        report(
+            "project-alpha",
+            "dataset_registered",
+            "project:project-alpha:d1"
+        ),
+        1
+    );
+    assert_eq!(
+        report("project-gamma", "job_done", "project:project-gamma:j1"),
+        0
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_received_csv_wakes_its_routine_once_with_exact_reader_guidance() {
     let dir = tempfile::tempdir().unwrap();

@@ -39,6 +39,8 @@ const STALL: (u16, &str) = (
     "OpenAI completions stream stalled while waiting for the next event",
 );
 const USAGE_LIMIT: (u16, &str) = (429, "429 litellm.RateLimitError: insufficient_quota");
+const PREPAYMENT_EXHAUSTED: (u16, &str) =
+    (402, "402 litellm.APIError: prepayment credits depleted");
 const REJECTED_KEY: (u16, &str) = (
     401,
     "401 litellm.AuthenticationError: Incorrect API key provided",
@@ -415,6 +417,7 @@ impl ChildSessionControl for ActorControl {
             LiveCommandBody::Prompt {
                 message: text,
                 owner_text: None,
+                wake: false,
             },
         )?;
         Ok(())
@@ -1116,6 +1119,11 @@ fn a_failed_provider_stall_is_restarted_resumed_moved_and_ended_within_its_budge
 fn a_failed_provider_refusal_is_restarted_onto_the_next_lane_with_lineage() {
     for (refusal, kind, cause) in [
         (USAGE_LIMIT, ProviderFaultKind::UsageLimit, "usage_limit"),
+        (
+            PREPAYMENT_EXHAUSTED,
+            ProviderFaultKind::UsageLimit,
+            "usage_limit",
+        ),
         (REJECTED_KEY, ProviderFaultKind::RejectedKey, "rejected_key"),
     ] {
         let harness = Harness::new();

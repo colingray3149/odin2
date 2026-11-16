@@ -1,0 +1,19 @@
+schema = "odin.registry.v1"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+toolset = "status"
+op = "lease_enroll"
+description = "Enroll a lease after its owner verifies the SSH host key out of band."
+handler = { id = "compute_lease_enroll" }
+input_schema = "schemas/capability/compute.lease.enroll.input.json"
+output_schema = "schemas/capability/compute.lease.enroll.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator", "operator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+evidence_extractor = { id = "odin_hermes_compute_lease_enroll_evidence" }
+tests = ["odin-registry schema::rental_approvals::tests::lease_intent_and_reservation_are_atomic_and_replayable"]

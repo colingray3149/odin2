@@ -38,6 +38,7 @@ fn card(
         image: None,
         wire: None,
         strict: None,
+        tokenizer: None,
     }
 }
 
@@ -176,13 +177,11 @@ fn run_bounded_returns_the_clients_json_and_names_non_json_answers() {
         "agy-okay",
         r#"printf '%s' '{"status":"OK","response":"Fine.","duration_seconds":2,"usage":{"input_tokens":3,"output_tokens":5}}'"#,
     );
-    let mut okay_command = Command::new(&okay);
-    okay_command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let okay_command = Command::new(&okay);
     let value = run_bounded(okay_command, None, Duration::from_secs(10), "agy").unwrap();
     assert_eq!(value["response"], "Fine.");
     let broken = script(root.path(), "agy-broken", r#"printf 'not json at all'"#);
-    let mut broken_command = Command::new(&broken);
-    broken_command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let broken_command = Command::new(&broken);
     let error =
         run_bounded(broken_command, None, Duration::from_secs(10), "agy").expect_err("non-JSON");
     assert!(error.contains("answered without JSON"), "{error}");
@@ -192,8 +191,7 @@ fn run_bounded_returns_the_clients_json_and_names_non_json_answers() {
 fn a_client_that_prints_nothing_is_killed_at_the_timeout() {
     let root = tempfile::tempdir().unwrap();
     let silent = script(root.path(), "claude-silent", "sleep 30");
-    let mut command = Command::new(&silent);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let command = Command::new(&silent);
     let started = Instant::now();
     let error = run_bounded(command, None, Duration::from_millis(300), "claude")
         .expect_err("a silent client outlives its timeout");

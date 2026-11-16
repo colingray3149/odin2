@@ -427,6 +427,7 @@ fn emergency_kube_config(runtime_manifest: &Path) -> Result<KubeConfig, String> 
             .to_owned()
     })?;
     Ok(KubeConfig {
+        node_data_roots: Default::default(),
         kubeconfig: kube.kubeconfig,
         cluster: kube.cluster,
         namespace: kube.namespace,
@@ -441,6 +442,7 @@ fn emergency_kube_config(runtime_manifest: &Path) -> Result<KubeConfig, String> 
                 dns: transport.dns,
                 launcher: transport.launcher.clone(),
                 resolver: transport.resolver.clone(),
+                forwarded: transport.forwarded,
             }
         }),
     })

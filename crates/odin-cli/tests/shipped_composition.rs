@@ -230,6 +230,7 @@ fn daemon_composition() -> Composition {
             exec: Arc::new(NoPods),
             web_save: None,
             research: None,
+            host_recon: None,
         },
         &contracts,
         &odin_omp::host_tools::operations::FilesystemSchemaCatalog::new(&root),

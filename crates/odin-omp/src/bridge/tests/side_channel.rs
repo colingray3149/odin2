@@ -1,4 +1,5 @@
 use super::*;
+use crate::host_tools::runner::split_images;
 
 #[test]
 fn side_flood_hits_count_and_byte_bounds_without_retained_growth() {
@@ -139,7 +140,7 @@ async fn calls_take_no_slot_during_grace_and_a_full_board_keeps_them_inline() {
     ));
     jobs.start(
         jobs.try_reserve().expect("one detach slot"),
-        "brain_search",
+        "knowledge_search",
         &json!({}),
         Duration::from_secs(180),
         std::time::Instant::now(),

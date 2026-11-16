@@ -18,7 +18,6 @@ pub mod config;
 pub mod context;
 pub mod error;
 pub mod index;
-pub mod learn;
 pub mod projection;
 pub mod retrieval;
 pub mod service;

@@ -44,17 +44,6 @@ pub enum DisplaySource {
     },
 }
 
-impl DisplaySource {
-    /// Returns the X11 display string this source will provide, if resolved
-    /// without probing. Virtual displays resolve during launch.
-    pub fn existing_display(&self) -> Option<&str> {
-        match self {
-            Self::Existing { display, .. } => Some(display),
-            Self::Virtual { .. } => None,
-        }
-    }
-}
-
 /// Viewport geometry handed to Chromium via `--window-size`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -66,11 +55,6 @@ pub struct Viewport {
 impl Viewport {
     pub const fn new(width: NonZeroU32, height: NonZeroU32) -> Self {
         Self { width, height }
-    }
-
-    /// Screen string in the `WxH` form Chromium and Xvfb accept.
-    pub fn screen_spec(&self) -> String {
-        format!("{}x{}", self.width.get(), self.height.get())
     }
 }
 

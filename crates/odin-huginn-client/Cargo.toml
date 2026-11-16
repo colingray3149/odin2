@@ -20,6 +20,7 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+time.workspace = true
 tokio = { version = "1", features = ["fs", "io-util", "net", "rt", "sync", "time"] }
 tokio-tungstenite.workspace = true
 url.workspace = true
@@ -27,5 +28,4 @@ zeroize.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-time.workspace = true
 tokio = { version = "1", features = ["macros"] }

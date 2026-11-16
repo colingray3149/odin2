@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "kube"
+op = "queue_drop"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Drops a held batch or one held launch so it never starts."
+handler = { id = "odin_kube.workload.queue_drop" }
+input_schema = "schemas/capability/kube.workload.queue_drop.input.json"
+output_schema = "schemas/capability/kube.workload.queue_drop.output.json"
+effect_class = "R3"
+seat_tags = ["operator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_kube.workload.queue_drop_evidence" }
+tests = [
+  "odin-cli::bin/odind kube_runtime::launch_queue::tests::queue_lists_and_drops_only_the_callers_held_launches",
+]

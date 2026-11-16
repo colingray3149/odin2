@@ -263,6 +263,64 @@ pub async fn placement(
     }
 }
 
+/// Why a run's container stopped, as its pod status says: the first container that terminated
+/// with a reason other than `Completed` or a non-zero exit, now or in its last restart, e.g.
+/// `OOMKilled` with `container worker was OOMKilled (exit code 137)`. Terminal pods count; `Ok(None)`
+/// means no pod names such a stop.
+pub async fn termination(
+    client: &KubeClient,
+    run_id: &RunId,
+) -> Result<Option<(String, String)>, KubeError> {
+    let selector = run_claim_labels(run_id)
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let pods = tokio::time::timeout(
+        client.request_timeout(),
+        client.pods().list(&ListParams::default().labels(&selector)),
+    )
+    .await
+    .map_err(|error| KubeError::unavailable(format!("workload pod query timed out: {error}")))?
+    .map_err(KubeError::from)?;
+    Ok(pods.items.iter().find_map(pod_termination))
+}
+
+fn pod_termination(pod: &Pod) -> Option<(String, String)> {
+    let status = pod.status.as_ref()?;
+    status
+        .container_statuses
+        .iter()
+        .flatten()
+        .chain(status.init_container_statuses.iter().flatten())
+        .find_map(|container| {
+            [container.state.as_ref(), container.last_state.as_ref()]
+                .into_iter()
+                .flatten()
+                .filter_map(|state| state.terminated.as_ref())
+                .find(|ended| {
+                    ended.exit_code != 0
+                        || ended
+                            .reason
+                            .as_deref()
+                            .is_some_and(|reason| reason != "Completed")
+                })
+                .map(|ended| {
+                    let reason = ended.reason.clone().unwrap_or_else(|| "Error".to_owned());
+                    let message = ended
+                        .message
+                        .as_deref()
+                        .filter(|message| !message.trim().is_empty())
+                        .map_or_else(String::new, |message| format!(": {}", message.trim()));
+                    let detail = format!(
+                        "container {} was {reason} (exit code {}){message}",
+                        container.name, ended.exit_code
+                    );
+                    (reason, detail)
+                })
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +373,30 @@ mod tests {
         .await
         .expect_err("two live carriers");
         assert!(matches!(error, KubeError::Rejected { .. }), "{error:?}");
+    }
+
+    #[test]
+    fn termination_names_an_oom_kill_and_not_a_clean_exit() {
+        let pod = |state: Value| -> Pod {
+            serde_json::from_value(json!({"metadata": {"name": "p"}, "status": {
+                "containerStatuses": [{"name": "worker", "image": "i", "imageID": "",
+                    "ready": false, "restartCount": 0, "state": state}]}}))
+            .expect("pod")
+        };
+        assert_eq!(
+            pod_termination(&pod(
+                json!({"terminated": {"exitCode": 137, "reason": "OOMKilled"}})
+            )),
+            Some((
+                "OOMKilled".to_owned(),
+                "container worker was OOMKilled (exit code 137)".to_owned()
+            ))
+        );
+        assert_eq!(
+            pod_termination(&pod(
+                json!({"terminated": {"exitCode": 0, "reason": "Completed"}})
+            )),
+            None
+        );
     }
 }

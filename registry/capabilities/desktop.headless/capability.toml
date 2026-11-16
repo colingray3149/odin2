@@ -5,7 +5,7 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Used on the desktop only when the owner asks."
+description = "Starts, stops or checks the private headless display and the apps launched on it, when the owner asks."
 handler = { id = "desktop_headless" }
 input_schema = "schemas/capability/desktop.headless.input.json"
 output_schema = "schemas/capability/desktop.act.output.json"

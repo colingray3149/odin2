@@ -3,39 +3,15 @@ kind = "slice"
 inherit_seat_grants = true
 enabled = true
 description = "Kubert operations slice: live k3s operations sessions over the production bridge. It inherits the seat's grants, which include the governed Kubernetes capabilities (snapshot reads, bounded cluster health reads, and bounded workload create, pause, resume, restart, cancel, and summarize)."
-capabilities = [
-  "model.consult",
-  "kube.snapshot.read",
-  "kube.health.read",
-  "kube.workload.create",
-  "kube.workload.pause",
-  "kube.workload.resume",
-  "kube.workload.restart",
-  "kube.workload.cancel",
-  "kube.workload.summarize",
-  "memory.remember",
-  "brain.search",
-  "brain.read",
-  "seat.ask.sinmara",
-  "registry.read",
-  "incident.raise",
-  "artifact.write",
-  "artifact.read",
-  "memory.forget",
-  "browser.observe",
-  "browser.interact",
-  "web.search",
-  "web.read",
-  "web.save",
-  "export.read",
-]
 variables = {}
 [redirects]
 out_of_scope = "NeedsPlan"
 
 [knowledge]
 required = false
-atlas_sources = ["memory.owner", "ops.history", "memory.kubert", "memory.project.odin"]
+atlas_sources = [
+  "memory.owner", "ops.history", "memory.kubert", "memory.project.odin",
+]
 retrieval_mode = "hybrid"
 candidate_limit = 128
 top_k = 16

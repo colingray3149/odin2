@@ -69,3 +69,4 @@ pub(super) static DESKTOP_DISPLAY_BINDING: CompiledCapabilityBinding = CompiledC
         id: "odin_hermes_desktop_display_evidence",
     },
 };
+

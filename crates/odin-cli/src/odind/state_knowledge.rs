@@ -115,8 +115,11 @@ impl OdindTaskStateReader {
             let mut statement = connection
                 .prepare(
                     "SELECT r.run_id, r.lane_id, l.seat_id, l.project_id, r.status, \
-                            r.attempt_number, r.started_at, r.updated_at, r.ended_at \
+                            r.attempt_number, r.started_at, r.updated_at, r.ended_at, \
+                            COALESCE(s.state IN ('ended', 'failed'), 0) \
                      FROM runs r JOIN lanes l ON l.lane_id = r.lane_id \
+                     LEFT JOIN live_sessions s ON r.run_id LIKE 'run:live:%' \
+                          AND s.session_id = substr(r.run_id, 10) \
                      ORDER BY r.run_id ASC",
                 )
                 .and_then(|mut statement| {
@@ -133,6 +136,7 @@ impl OdindTaskStateReader {
                                 updated_at: row.get(7)?,
                                 ended_at: row.get(8)?,
                                 blockers: Vec::new(),
+                                session_stopped: row.get(9)?,
                             })
                         })?
                         .collect::<Result<Vec<_>, _>>()?;
@@ -880,8 +884,7 @@ mod tests {
             "projects/demo/project.toml",
             "schema = \"odin.registry.v1\"\nkind = \"project\"\nenabled = true\n\
              description = \"state fixture\"\nsource_root = \"/nonexistent\"\n\
-             default_seat = \"gungnir\"\nmemory_namespaces = []\n\
-             artifact_policy = \"large-scientific\"\n",
+             default_seat = \"gungnir\"\nmemory_namespaces = []\n",
         )
         .unwrap()
         .config

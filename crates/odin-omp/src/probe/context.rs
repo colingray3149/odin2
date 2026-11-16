@@ -246,6 +246,16 @@ impl CaseContext {
         &self,
         session: LiveSessionDescriptor,
     ) -> Result<OmpBridgeConfig, ProbeError> {
+        self.bridge_config_gated(session, false)
+    }
+
+    /// [`Self::bridge_config`] whose one capability needs the operator's
+    /// approval when `gated`.
+    pub fn bridge_config_gated(
+        &self,
+        session: LiveSessionDescriptor,
+        gated: bool,
+    ) -> Result<OmpBridgeConfig, ProbeError> {
         let artifact_root = self.artifact_root();
         std::fs::create_dir_all(&artifact_root)?;
         let ledger = self.ledger();
@@ -267,7 +277,7 @@ impl CaseContext {
             BTreeMap::new(),
         )?;
         let (operations, operation_binding, admitted_host_tools) =
-            self.operation_surface(&host_tools, &ledger)?;
+            self.operation_surface(&host_tools, &ledger, gated)?;
         Ok(OmpBridgeConfig {
             process: self.process_spec(DEFAULT_MODEL_SELECTOR, Vec::new()),
             worker: self.config.omp.worker.clone(),
@@ -297,6 +307,7 @@ impl CaseContext {
         &self,
         host_tools: &HostToolRegistry,
         ledger: &Arc<Mutex<Ledger>>,
+        gated: bool,
     ) -> Result<
         (
             HostToolOperations,
@@ -354,7 +365,11 @@ impl CaseContext {
             timeout_seconds: NonZeroU32::new(PROBE_TOOL_TIMEOUT_SECONDS).expect("probe timeout"),
             idempotency: IdempotencyPolicy::Required,
             retry: RetryPolicy { max_attempts: 1 },
-            approval: ApprovalRequirement::None,
+            approval: if gated {
+                ApprovalRequirement::Operator
+            } else {
+                ApprovalRequirement::None
+            },
             evidence_extractor: HandlerBinding::Builtin {
                 name: LaneStatusEvidenceTool::ID.to_owned(),
             },

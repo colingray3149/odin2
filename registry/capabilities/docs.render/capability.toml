@@ -10,7 +10,7 @@ input_schema = "schemas/capability/docs.render.input.json"
 output_schema = "schemas/capability/docs.render.output.json"
 effect_class = "R1"
 seat_tags = ["*"]
-timeout_seconds = 300
+timeout_seconds = 540
 idempotency = "required"
 retry = { max_attempts = 0 }
 approval_policy = "none"

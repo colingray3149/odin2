@@ -1,19 +1,16 @@
 //! Non-OMP harnesses: a seat whose declared launch
-//! option names a `process` harness runs that CLI agent (Codex, any
+//! option names a `process` harness runs that CLI agent (any
 //! line-speaking agent) instead of the pinned OMP — one process per
 //! prompt, in the session's own workspace, inside the declared environment
 //! (a confined transient user unit on a fleet host, or a process on an ssh
 //! machine). Its output is decoded into the canonical session-event frames,
 //! so the journal, Huginn, the session's Zellij tab, delegated-task
 //! completion and stop all work exactly as for OMP. Governance is honest:
-//! the agent's own tools are not mediated by the kernel (`observed`). An
-//! `acp` harness runs the same way, its turn spoken over the Agent Client
-//! Protocol instead of decoded from lines (`acp.rs`). Claude Code is not a
-//! seat harness anywhere: it is driven only by the `claude.*` workload
+//! the agent's own tools are not mediated by the kernel (`observed`).
+//! Claude Code is not a seat harness anywhere: it is driven only by the `claude.*` workload
 //! driver, and a route claiming a Claude account is refused below.
 
 mod account;
-mod acp;
 mod decode;
 mod driver;
 mod terminal;
@@ -46,7 +43,7 @@ use super::target::TerminalTargetAdmin;
 use super::zellij::ZellijLiveAdapter;
 use crate::bridge::ObservedFrame;
 use crate::live::kernel_mcp::{KernelMcpServer, McpEndpoint, McpRegistration};
-use driver::{AcpPrompt, Teardown, TurnDriver, TEARDOWN};
+use driver::{Teardown, TurnDriver, TEARDOWN};
 
 pub use account::{AccountRefusal, ProjectAccounts};
 pub use decode::{Decoded, OutputDecoder};
@@ -288,8 +285,7 @@ impl LiveSessionLauncher for HarnessLauncher {
             Some(terminals) => terminals.open(manifest, &workspace).await?,
             None => None,
         };
-        // A process harness reads its MCP config from a file of its own; an
-        // ACP agent is handed the server in `session/new`.
+        // A process harness reads its MCP config from a file of its own.
         let config = (route.harness.mcp_config_arg.is_some()
             && route.harness.protocol == HarnessProtocol::Process)
             .then(|| mcp_config_path(&manifest.session_id.to_string()));
@@ -314,7 +310,7 @@ impl LiveSessionLauncher for HarnessLauncher {
             manifest: manifest.clone(),
             route,
             workspace,
-            kernel,
+            _kernel: kernel,
             mcp_config,
             home: self.home.clone(),
             hand_back: Arc::clone(&self.workspace),
@@ -549,7 +545,7 @@ struct ProcessHarnessControl {
     route: HarnessRoute,
     workspace: PathBuf,
     /// The session's kernel MCP endpoint; dropped with the control.
-    kernel: Option<McpRegistration>,
+    _kernel: Option<McpRegistration>,
     /// The Claude Code MCP config the agent is started with.
     mcp_config: Option<PathBuf>,
     home: PathBuf,
@@ -765,8 +761,8 @@ impl ProcessHarnessControl {
         }
         let reserved = self.reserve()?;
         match self.spawn_agent(&reserved, prompt) {
-            Ok((child, unit, acp, stdin_prompt)) => {
-                self.drive(reserved, child, unit, acp, stdin_prompt);
+            Ok((child, unit, stdin_prompt)) => {
+                self.drive(reserved, child, unit, stdin_prompt);
                 Ok(())
             }
             Err(error) => {
@@ -825,28 +821,20 @@ impl ProcessHarnessControl {
     }
 
     /// Starts the reserved turn's agent on the route's transport: the child,
-    /// its transient unit (fleet host), for ACP the turn's prompt, and for a
-    /// stdin-prompted agent the prompt its driver writes.
-    #[allow(clippy::type_complexity)]
+    /// its transient unit (fleet host), and for a stdin-prompted agent the
+    /// prompt its driver writes.
     fn spawn_agent(
         &self,
         reserved: &Reserved,
         prompt: String,
-    ) -> Result<(Child, Option<String>, Option<AcpPrompt>, Option<String>), LiveError> {
+    ) -> Result<(Child, Option<String>, Option<String>), LiveError> {
         let (model, agent_session, turn) =
             (&reserved.model, &reserved.agent_session, reserved.turn);
-        let acp = self.route.harness.protocol == HarnessProtocol::Acp;
-        // An ACP agent gets its brief inside the conversation, once it is
-        // known whether the agent's own session was loaded.
-        let prompt = if acp {
-            prompt
-        } else {
-            turn_prompt(&self.route.harness, agent_session.is_none(), &prompt)
-        };
+        let prompt = turn_prompt(&self.route.harness, agent_session.is_none(), &prompt);
         let agent = agent_argv(
             &self.route.harness,
             model.as_str(),
-            if acp { None } else { agent_session.as_deref() },
+            agent_session.as_deref(),
             &prompt,
             self.mcp_config.as_deref(),
         );
@@ -866,10 +854,8 @@ impl ProcessHarnessControl {
             }
             EnvironmentTransport::SshHost => {
                 let destination = self.route.environment.host.clone().unwrap_or_default();
-                // A protocol stream must not pass a tty (echo, CR/LF): an
-                // ACP agent ends on its stdin closing instead of a hang-up.
                 (
-                    ssh_host_argv(&destination, &self.workspace, &agent, !acp),
+                    ssh_host_argv(&destination, &self.workspace, &agent, true),
                     None,
                 )
             }
@@ -885,13 +871,11 @@ impl ProcessHarnessControl {
         let mut command = Command::new(&argv[0]);
         command
             .args(&argv[1..])
-            .stdin(
-                if acp || self.route.harness.prompt == HarnessPrompt::Stdin {
-                    Stdio::piped()
-                } else {
-                    Stdio::null()
-                },
-            )
+            .stdin(if self.route.harness.prompt == HarnessPrompt::Stdin {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -899,18 +883,8 @@ impl ProcessHarnessControl {
             LiveError::unavailable("harness_spawn", format!("{}: {error}", argv[0]))
         })?;
         // The driver writes a stdin prompt itself, owned with the turn.
-        let stdin_prompt =
-            (!acp && self.route.harness.prompt == HarnessPrompt::Stdin).then(|| prompt.clone());
-        let acp = acp.then(|| AcpPrompt {
-            prompt,
-            agent_session: agent_session.clone(),
-            mcp_servers: self
-                .kernel
-                .as_ref()
-                .map(|kernel| vec![kernel.endpoint.acp_server()])
-                .unwrap_or_default(),
-        });
-        Ok((child, unit, acp, stdin_prompt))
+        let stdin_prompt = (self.route.harness.prompt == HarnessPrompt::Stdin).then_some(prompt);
+        Ok((child, unit, stdin_prompt))
     }
 
     /// Tracks the driver until shutdown joins it; the driver releases the turn after teardown.
@@ -919,7 +893,6 @@ impl ProcessHarnessControl {
         slot: Reserved,
         child: Child,
         unit: Option<String>,
-        acp: Option<AcpPrompt>,
         stdin_prompt: Option<String>,
     ) {
         let turn = slot.turn;
@@ -952,7 +925,6 @@ impl ProcessHarnessControl {
             teardown: self.teardown,
             turn_id,
             unit,
-            acp,
             stdin_prompt,
         };
         let task = tokio::spawn(driver.run(child, stop));
@@ -1478,7 +1450,7 @@ grace_seconds = 10
             manifest,
             route,
             workspace: std::env::temp_dir(),
-            kernel: None,
+            _kernel: None,
             mcp_config: None,
             home: std::env::temp_dir(),
             hand_back,
@@ -1509,7 +1481,7 @@ grace_seconds = 10
             .spawn()
             .expect("the fixture agent starts");
         let pid = child.id().expect("a running agent");
-        control.drive(slot, child, unit.map(str::to_owned), None, None);
+        control.drive(slot, child, unit.map(str::to_owned), None);
         pid
     }
 

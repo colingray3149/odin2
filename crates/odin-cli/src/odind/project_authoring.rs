@@ -378,6 +378,35 @@ impl DaemonProjectRoute {
         removals: &[String],
         admit: impl Fn(&[odin_registry::RegistryObject]) -> Result<(), String>,
     ) -> Result<(u64, String), String> {
+        self.transact_checked(message, files, edits, removals, admit, |_| Ok(()))
+    }
+
+    /// Check the synced source under the same lock on every push attempt.
+    pub(crate) fn transact_checked(
+        &self,
+        message: &str,
+        files: Vec<(String, String)>,
+        edits: Vec<Edit>,
+        removals: &[String],
+        admit: impl Fn(&[odin_registry::RegistryObject]) -> Result<(), String>,
+        check: impl Fn(&Path) -> Result<(), String>,
+    ) -> Result<(u64, String), String> {
+        self.transact_checked_optional(message, files, edits, removals, admit, |root| {
+            check(root).map(|()| false)
+        })?
+        .ok_or_else(|| "unexpected no-change transaction".to_owned())
+    }
+
+    /// Skip publication only when the synced source already satisfies the request.
+    pub(crate) fn transact_checked_optional(
+        &self,
+        message: &str,
+        files: Vec<(String, String)>,
+        edits: Vec<Edit>,
+        removals: &[String],
+        admit: impl Fn(&[odin_registry::RegistryObject]) -> Result<(), String>,
+        check: impl Fn(&Path) -> Result<bool, String>,
+    ) -> Result<Option<(u64, String)>, String> {
         let refused = |failure: odin_hermes::runtime::WorkloadAuthoringFailure| failure.to_string();
         self.sync.ensure(&self.worktree).map_err(refused)?;
         let _lock = WorktreeLock::acquire(&self.worktree, LOCK_BOUND).map_err(refused)?;
@@ -385,17 +414,13 @@ impl DaemonProjectRoute {
         let active = store
             .load_verified()
             .map_err(|error| format!("active registry publication is invalid: {error}"))?;
-        let next = active
-            .revision
-            .checked_add(1)
-            .ok_or("registry revision space is exhausted")?;
         let anchor = store
             .publication_at(active.revision)
             .map_err(|error| format!("active publication receipt is unreadable: {error}"))?
             .1
             .commit;
         let mut attempt = 0;
-        let candidate = loop {
+        let (candidate, next) = loop {
             attempt += 1;
             let origin = self.sync.fetch(&self.worktree).map_err(refused)?;
             self.sync
@@ -415,6 +440,13 @@ impl DaemonProjectRoute {
             };
             let mut files = files.clone();
             let staged = (|| {
+                if check(&self.worktree)? {
+                    return Ok(None);
+                }
+                let next = active
+                    .revision
+                    .checked_add(1)
+                    .ok_or("registry revision space is exhausted")?;
                 for edit in &edits {
                     let current = match files.iter().find(|(path, _)| *path == edit.source) {
                         Some((_, text)) => text.clone(),
@@ -464,6 +496,12 @@ impl DaemonProjectRoute {
                     candidate.objects(),
                     &active.objects,
                 )
+                .and_then(|()| {
+                    odin_cli::runtime_bindings::rollover_briefs_fit(
+                        &self.admission_config,
+                        candidate.objects(),
+                    )
+                })
                 .and_then(|()| admit(candidate.objects()))
                 .map_err(|error| {
                     tracing::error!(
@@ -472,17 +510,18 @@ impl DaemonProjectRoute {
                     );
                     format!("the new declaration cannot serve: {error}")
                 })?;
-                Ok((commit, candidate))
+                Ok(Some((commit, candidate, next)))
             })();
-            let (commit, candidate) = match staged {
-                Ok(staged) => staged,
+            let (commit, candidate, next) = match staged {
+                Ok(Some(staged)) => staged,
+                Ok(None) => return Ok(None),
                 Err(error) => {
                     discard();
                     return Err(error);
                 }
             };
             let Err(failure) = self.sync.push(&self.worktree, &commit, &origin) else {
-                break candidate;
+                break (candidate, next);
             };
             // A rejected push means another commit landed on `main`: the
             // change is staged again on the new tip, never forced over it.
@@ -494,7 +533,7 @@ impl DaemonProjectRoute {
                 )
                 .is_ok()
             }) {
-                break candidate;
+                break (candidate, next);
             }
             let moved = current.is_ok_and(|current| current != origin);
             if !moved || attempt >= PUSH_ATTEMPTS {
@@ -504,15 +543,22 @@ impl DaemonProjectRoute {
                 "authoring-sync retry attempt={attempt} origin={origin} reason=main_moved"
             );
         };
+        // The publication API expects the active revision for an unchanged
+        // snapshot, even when it advances the receipt to the new commit.
+        let expected = if candidate.objects() == active.objects {
+            active.revision
+        } else {
+            next
+        };
         let result = store
-            .publish_committed(&candidate, next)
+            .publish_committed(&candidate, expected)
             .map_err(|error| format!("registry publication failed: {error}"))?;
         let adopted = self
             .pin
             .reload()
             .map_err(|error| format!("published snapshot adoption failed: {error}"))?;
         request_reload_for(&active, &adopted);
-        Ok((result.receipt.revision, result.receipt.commit))
+        Ok(Some((result.receipt.revision, result.receipt.commit)))
     }
 
     /// Validate before writing any files.
@@ -604,8 +650,8 @@ impl DaemonProjectRoute {
                 format!("registry/lanes/{lane}/lane.toml"),
                 format!(
                     "schema = \"{schema}\"\nkind = \"lane\"\nenabled = true\n\
-                     description = {}\nproject = \"{project}\"\nfamily = \"engine\"\n\
-                     default_seat = \"{seat_id}\"\nqueue = \"interactive\"\n\
+                     description = {}\nproject = \"{project}\"\n\
+                     default_seat = \"{seat_id}\"\n\
                      requires_independent_review = false\n",
                     quoted(&format!("{seat_id} work on {project}")),
                     schema = odin_registry::schema::REGISTRY_SCHEMA,
@@ -635,11 +681,10 @@ impl DaemonProjectRoute {
         let snapshot = self.pin.current();
         // The kind's served Atlas corpus, where one exists; seats remember
         // into their own memory.
-        let (atlas, artifact_policy) = match request.kind.as_str() {
-            "code" => (Some("atlas.code"), "standard"),
-            "research" | "operations" => (None, "standard"),
-            "personal" => (Some("atlas.personal"), "private"),
-            "scientific" => (None, "large-scientific"),
+        let atlas = match request.kind.as_str() {
+            "code" => Some("atlas.code"),
+            "research" | "operations" | "scientific" => None,
+            "personal" => Some("atlas.personal"),
             other => return Err(format!("unknown project kind {other:?}")),
         };
         let memory_namespaces = atlas
@@ -699,7 +744,7 @@ impl DaemonProjectRoute {
             format!(
                 "schema = \"{schema}\"\nkind = \"project\"\nenabled = true\n\
                  description = {}\nsource_root = {}\ndefault_seat = \"{first}\"\n\
-                 memory_namespaces = [{memory_namespaces}]\nartifact_policy = \"{artifact_policy}\"\n",
+                 memory_namespaces = [{memory_namespaces}]\n",
                 quoted(&request.description),
                 quoted(&root_text),
                 schema = odin_registry::schema::REGISTRY_SCHEMA,
@@ -756,6 +801,30 @@ pub(crate) fn with_item_in_array(
     key: &str,
     item: &str,
 ) -> Result<String, String> {
+    with_item_in_array_marked(text, table, key, item, false)
+}
+
+/// The table at a dotted `name` (`live.rollover`), or the document itself.
+fn nested_table<'a>(
+    document: &'a mut toml::Table,
+    table: Option<&str>,
+) -> Option<&'a mut toml::Table> {
+    match table {
+        Some(name) => name
+            .split('.')
+            .try_fold(document, |scope, part| scope.get_mut(part)?.as_table_mut()),
+        None => Some(document),
+    }
+}
+
+/// written on one line cannot carry the mark on one item, so that is refused).
+pub(crate) fn with_item_in_array_marked(
+    text: &str,
+    table: Option<&str>,
+    key: &str,
+    item: &str,
+    personal: bool,
+) -> Result<String, String> {
     let parse = |text: &str| -> Result<toml::Table, String> {
         toml::from_str(text).map_err(|error| format!("declaration: {error}"))
     };
@@ -764,11 +833,7 @@ pub(crate) fn with_item_in_array(
         table: Option<&str>,
         key: &str,
     ) -> Option<&'a mut Vec<toml::Value>> {
-        let scope = match table {
-            Some(name) => document.get_mut(name)?.as_table_mut()?,
-            None => document,
-        };
-        scope.get_mut(key)?.as_array_mut()
+        nested_table(document, table)?.get_mut(key)?.as_array_mut()
     }
     let mut expected = parse(text)?;
     let values =
@@ -801,10 +866,15 @@ pub(crate) fn with_item_in_array(
         let above = text[..line_start - 1].rsplit('\n').next().unwrap_or("");
         let indent = &above[..above.len() - above.trim_start().len()];
         format!(
-            "{}{indent}\"{item}\",\n{}",
+            "{}{indent}\"{item}\",{mark}\n{}",
             &text[..line_start],
             &text[line_start..]
         )
+    } else if personal {
+        return Err(format!(
+            "{key} is written on one line, so one item cannot be marked personal; write the \
+             list one item per line first or add it without personal"
+        ));
     } else {
         let before = text[open + 1..close].trim_end();
         let insert = if before.is_empty() {
@@ -838,7 +908,7 @@ fn list_close(text: &str, open: usize) -> Result<usize, String> {
 
 /// The inverse of [`with_item_in_array`]: one plain list loses `item`,
 /// in place (a missing item leaves the text as it is).
-fn without_item_in_array(
+pub(crate) fn without_item_in_array(
     text: &str,
     table: Option<&str>,
     key: &str,
@@ -848,13 +918,8 @@ fn without_item_in_array(
         toml::from_str(text).map_err(|error| format!("declaration: {error}"))
     };
     let mut expected = parse(text)?;
-    let scope = match table {
-        Some(name) => expected
-            .get_mut(name)
-            .and_then(toml::Value::as_table_mut)
-            .ok_or_else(|| format!("no [{name}] table"))?,
-        None => &mut expected,
-    };
+    let scope = nested_table(&mut expected, table)
+        .ok_or_else(|| format!("no [{}] table", table.unwrap_or_default()))?;
     let values = scope
         .get_mut(key)
         .and_then(toml::Value::as_array_mut)
@@ -884,6 +949,27 @@ fn without_item_in_array(
     let at = inner
         .find(&quoted)
         .ok_or_else(|| format!("{item} is not written plainly in {key}"))?;
+    // An item alone on its line goes with the whole line, its comment (a tag) included.
+    let item_at = open + 1 + at;
+    let line_start = text[..item_at].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = text[item_at..]
+        .find('\n')
+        .map_or(text.len(), |i| item_at + i + 1);
+    let line = &text[line_start..line_end];
+    let own_line = line_start > open
+        && line_end <= close
+        && line.trim().strip_prefix(&quoted).is_some_and(|rest| {
+            let rest = rest.trim_start();
+            let rest = rest.strip_prefix(',').unwrap_or(rest).trim_start();
+            rest.is_empty() || rest.starts_with('#')
+        });
+    if own_line {
+        let edited = format!("{}{}", &text[..line_start], &text[line_end..]);
+        if parse(&edited)? != expected {
+            return Err(format!("{key} could not be shortened in place"));
+        }
+        return Ok(edited);
+    }
     // Drop the item with its separator: a following comma, else a
     // preceding one; then the line it sat on when it is left empty.
     let mut start = open + 1 + at;
@@ -894,6 +980,12 @@ fn without_item_in_array(
         // The space that separated it from an item before it on its line.
         while start > open + 1 && matches!(text.as_bytes()[start - 1], b' ' | b'\t') {
             start -= 1;
+        }
+        // First in the list: the space before the next item goes too.
+        if start == open + 1 {
+            while matches!(text.as_bytes().get(end), Some(b' ' | b'\t')) {
+                end += 1;
+            }
         }
     } else if let Some(comma) = text[open + 1..start].rfind(',') {
         if text[open + 1 + comma + 1..start].trim().is_empty() {
@@ -995,11 +1087,13 @@ pub(crate) fn wake_deferred_delegations(
                     LiveCommandBody::FollowUp {
                         message,
                         owner_text: None,
+                        wake: false,
                     }
                 } else {
                     LiveCommandBody::Prompt {
                         message,
                         owner_text: None,
+                        wake: false,
                     }
                 };
                 entry.wake_command = Some(control.open_delivery(session, body)?);

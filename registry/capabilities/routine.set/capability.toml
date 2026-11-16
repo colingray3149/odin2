@@ -1,4 +1,6 @@
 schema = "odin.registry.v1"
+# Sinmara calls it rarely: its fields stay behind args in her listing.
+seat_ops = { sinmara = { toolset = "calendar", op = "routine", expose = "on_demand" } }
 toolset = "calendar"
 op = "routine"
 kind = "capability"

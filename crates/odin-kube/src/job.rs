@@ -6,13 +6,16 @@
 //! [`KUBE_LABEL_STAGED`] records whether staging and checkpoint ConfigMaps are verified.
 
 /// Reject excess GPU reservations before staging or contacting the API server.
-pub const MAX_LAUNCH_GPU_COUNT: u32 = 8;
+pub const MAX_LAUNCH_GPU_COUNT: u32 =
+    odin_registry::schema::odin_kube_bounds::MAX_CONTAINER_GPU_COUNT;
 
 /// Deadline range for container-profile launches; workloads use their profile limits.
-pub const MIN_LAUNCH_DEADLINE_SECONDS: u32 = 30;
-pub const MAX_LAUNCH_DEADLINE_SECONDS: u32 = 3_600;
+pub const MIN_LAUNCH_DEADLINE_SECONDS: u32 =
+    odin_registry::schema::odin_kube_bounds::MIN_CONTAINER_DEADLINE_SECONDS;
+pub const MAX_LAUNCH_DEADLINE_SECONDS: u32 =
+    odin_registry::schema::odin_kube_bounds::MAX_CONTAINER_DEADLINE_SECONDS;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
@@ -194,6 +197,16 @@ pub struct JobModelsConfigLaunch {
     pub credential_env: String,
 }
 
+/// Immutable campaign placement and maximum lifetime budget for a run.
+/// The absolute expiry is enforced again when a suspended Job is released;
+/// a campaign with less than one whole second remaining cannot be released.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CampaignReservation {
+    pub approved_node: String,
+    pub core_millis_seconds: u64,
+    pub expires_at_unix_seconds: i64,
+}
+
 /// Host-assembled launch from a published profile and kernel-issued worker identity.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct JobLaunch {
@@ -221,9 +234,24 @@ pub struct JobLaunch {
     /// Initial placement only; restart must supply its own rehome target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_target_node: Option<String>,
+    /// Host-selected initial node, distinct from the caller's declared target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admitted_node: Option<String>,
+    /// Durable authority binding retained across every recreation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub campaign_reservation: Option<CampaignReservation>,
     /// GPU requests equal limits; zero reserves no GPU and the scheduler assigns devices.
     #[serde(default)]
     pub gpu_count: u32,
+    /// Places only on nodes labelled with at least this much GPU memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_min_vram_gib: Option<u32>,
+    /// GPU memory the run holds; a desktop node must have it free before the launch is placed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_vram_gib: Option<u32>,
+    /// Node taints (`odin.dev/<name>`) the profile tolerates; empty keeps it on fleet nodes.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub tolerate: BTreeSet<String>,
     /// Enforced by the Job controller via `activeDeadlineSeconds`; `None` sets no deadline.
     #[serde(default)]
     pub deadline_seconds: Option<u32>,
@@ -236,6 +264,10 @@ pub struct JobLaunch {
     /// The run label the launch named, carried to the Job's `odin.label` annotation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// A finished run of the same profile, seat, lane, and project whose state volume this
+    /// run takes over; the run starts on the node that holds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continue_from: Option<RunId>,
     pub operation_id: OperationId,
     pub idempotency_digest: Digest,
 }
@@ -243,6 +275,24 @@ pub struct JobLaunch {
 impl JobLaunch {
     pub fn job_name(&self) -> String {
         job_name(&self.labels.run_id)
+    }
+
+    /// The declared placement labels plus the GPU memory floor.
+    pub fn node_requirements(&self) -> crate::placement::NodeRequirements {
+        crate::placement::NodeRequirements {
+            labels: self.node_selector.clone(),
+            minimums: self
+                .gpu_min_vram_gib
+                .map(|gib| {
+                    (
+                        odin_registry::schema::NODE_GPU_VRAM_LABEL.to_owned(),
+                        u64::from(gib),
+                    )
+                })
+                .into_iter()
+                .collect(),
+            tolerate: self.tolerate.clone(),
+        }
     }
 
     pub fn binding_label_map(&self) -> BTreeMap<String, String> {
@@ -300,6 +350,29 @@ impl JobLaunch {
                     .all(|byte| alnum(*byte) || matches!(byte, b'-' | b'.'))
             {
                 return Err("job launch initial target must be a lowercase node name of 1..=63 bytes with alphanumeric endpoints".to_owned());
+            }
+        }
+        if let Some(reservation) = &self.campaign_reservation {
+            if self.initial_target_node.as_deref() != Some(reservation.approved_node.as_str()) {
+                return Err("campaign launch must target its approved node".to_owned());
+            }
+            let cpu = self
+                .workload
+                .as_ref()
+                .and_then(|plan| plan.resources)
+                .map(|resources| resources.cpu)
+                .filter(|cpu| *cpu > 0)
+                .ok_or_else(|| "campaign launch requires a CPU reservation".to_owned())?;
+            let deadline = self
+                .deadline_seconds
+                .filter(|seconds| *seconds > 0)
+                .ok_or_else(|| "campaign launch requires a finite deadline".to_owned())?;
+            let cost = u64::from(cpu)
+                .checked_mul(1000)
+                .and_then(|cpu| cpu.checked_mul(u64::from(deadline)))
+                .ok_or_else(|| "campaign launch compute budget overflows".to_owned())?;
+            if cost > reservation.core_millis_seconds || reservation.expires_at_unix_seconds <= 0 {
+                return Err("campaign launch exceeds its reserved compute budget".to_owned());
             }
         }
         if self.gpu_count > MAX_LAUNCH_GPU_COUNT {
@@ -510,10 +583,16 @@ mod launch_bound_tests {
             args: vec!["'/bin/true'".to_owned()],
             node_selector: std::collections::BTreeMap::new(),
             initial_target_node: None,
+            admitted_node: None,
+            campaign_reservation: None,
             gpu_count,
+            gpu_min_vram_gib: None,
+            gpu_vram_gib: None,
+            tolerate: Default::default(),
             deadline_seconds,
             service: false,
             workload: None,
+            continue_from: None,
             operation_id: OperationId::new("op-bound").expect("operation id"),
             idempotency_digest: Digest::hash(b"bound"),
         }
@@ -570,6 +649,11 @@ mod launch_bound_tests {
         launch.models_config = Some(models.clone());
         launch.workload = Some(crate::workload::WorkloadPodPlan {
             resources: None,
+            termination_grace_seconds: None,
+            data: Vec::new(),
+            control: None,
+            keep_finished_seconds: None,
+            on_yield: Default::default(),
             script_gateway: None,
             profile: "profile-under-test".to_owned(),
             state_mount: "/state".to_owned(),
@@ -577,6 +661,7 @@ mod launch_bound_tests {
             export_host_folder: "/srv/odin/export".to_owned(),
             state_storage: "2Gi".to_owned(),
             state_storage_class: None,
+            state_carry: true,
             allow_hosts: vec!["example.com".to_owned()],
             network_open: false,
             transport: odin_registry::WorkloadTransport::Direct,
@@ -664,6 +749,11 @@ mod launch_bound_tests {
         launch.models_config = Some(models);
         launch.workload = Some(crate::workload::WorkloadPodPlan {
             resources: None,
+            termination_grace_seconds: None,
+            data: Vec::new(),
+            control: None,
+            keep_finished_seconds: None,
+            on_yield: Default::default(),
             script_gateway: None,
             profile: "profile-under-test".to_owned(),
             state_mount: "not-absolute".to_owned(),
@@ -671,6 +761,7 @@ mod launch_bound_tests {
             export_host_folder: "/srv".to_owned(),
             state_storage: "2Gi".to_owned(),
             state_storage_class: None,
+            state_carry: true,
             allow_hosts: vec![],
             network_open: false,
             transport: odin_registry::WorkloadTransport::Direct,

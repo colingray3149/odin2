@@ -22,6 +22,9 @@ use crate::kube::{kube_reconcile_tick, KubeRuntimeCell};
 const POLL_TICK: StdDuration = StdDuration::from_secs(5);
 /// How often the kube watch and durable feed pumps look again.
 const WATCH_TICK: StdDuration = StdDuration::from_secs(2);
+/// How often a healthy Job watch sweeps finished-run residue. Watch events mark and reap runs as
+/// they finish; the sweep only deletes Jobs past their day of grace and day-old stray policies.
+const RESIDUE_SWEEP: StdDuration = StdDuration::from_secs(600);
 /// The brain warm pump's next look while stores still have rows to warm, and once all are warm.
 const BRAIN_WARM_BUSY: StdDuration = StdDuration::from_secs(1);
 const BRAIN_WARM_IDLE: StdDuration = StdDuration::from_secs(60);
@@ -245,9 +248,7 @@ pub(super) fn arm_service_pumps(
         (None, _) => None,
     };
     if let Some(runtime) = &hermes_armed {
-        // The status pump drains the durable bus and commits its cursor;
-        // it sends nothing (the owner hears from Sinmara's own lines and
-        // replies, and approval questions go out on their own path).
+        // The status pump also delivers durable owner questions; sending can block.
         if let Some(discord) = runtime.settings().discord.as_ref() {
             let capacity = discord.egress_capacity;
             let runtime = Arc::clone(runtime);
@@ -255,8 +256,19 @@ pub(super) fn arm_service_pumps(
                 let mut ticker = delayed_ticker(POLL_TICK);
                 loop {
                     ticker.tick().await;
-                    if let Err(error) = runtime.pump_status_egress(capacity) {
-                        tracing::error!("odin-hermes egress pump failed: {error}");
+                    match tokio::task::spawn_blocking({
+                        let runtime = Arc::clone(&runtime);
+                        move || runtime.pump_status_egress(capacity)
+                    })
+                    .await
+                    {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(error)) => {
+                            tracing::error!("odin-hermes egress pump failed: {error}")
+                        }
+                        Err(error) => {
+                            tracing::error!("odin-hermes egress pump task failed: {error}")
+                        }
                     }
                 }
             });
@@ -410,6 +422,7 @@ pub(super) fn arm_service_pumps(
             // fresh watch on the next bounded tick; an unavailable API
             // server retries without ever taking the daemon down.
             let mut ticker = delayed_ticker(WATCH_TICK);
+            let mut sweep = delayed_ticker(RESIDUE_SWEEP);
             let mut log = WatchLog::default();
             loop {
                 ticker.tick().await;
@@ -425,7 +438,7 @@ pub(super) fn arm_service_pumps(
                 // authority; observation stays live everywhere.
                 kube_reconcile_tick(posture, &control, &mut log).await;
                 pod_recovery_tick(posture, &cell, &mut log).await;
-                let mut stream = match odin_kube::watch::job_observations(client).await {
+                let mut stream = match odin_kube::watch::job_observations(client, cell.job_cache().clone()).await {
                     Ok(stream) => stream,
                     Err(error) => {
                         log.note(format!("watch not opened: {error}"));
@@ -443,6 +456,9 @@ pub(super) fn arm_service_pumps(
                         },
                         _ = ticker.tick() => {
                             pod_recovery_tick(posture, &cell, &mut log).await;
+                            continue;
+                        }
+                        _ = sweep.tick() => {
                             // A healthy watch never returns to the pre-watch sweep.
                             if posture == NodePosture::Authoritative {
                                 if let Err(error) =
@@ -930,8 +946,11 @@ pub(super) fn arm_stream_expiry_pump(
 /// The pause before node inventory and the foreign mirror re-open their watches.
 const KUBE_INVENTORY_EVERY: StdDuration = StdDuration::from_secs(30);
 
-/// Uncached chunks one warm round embeds per seat brain.
-const BRAIN_WARM_BUDGET: usize = 128;
+/// Uncached chunks one warm round embeds per seat brain: one request, one
+/// text per embedder slot. The CPU embedder runs ~60 tokens/s per slot, so
+/// 128 texts took ~70 s against the gateway's 20 s embedding timeout; every
+/// round timed out, was retried, and stored nothing.
+const BRAIN_WARM_BUDGET: usize = 8;
 
 /// How one seat's failed warm round is reported. A store migration in
 /// flight is the expected state while it runs — a warning naming its

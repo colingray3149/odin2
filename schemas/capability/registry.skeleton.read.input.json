@@ -19,6 +19,7 @@
         "new-environment",
         "new-harness",
         "enable-capability",
+        "edit-brain-role",
         "remove-environment"
       ]
     }

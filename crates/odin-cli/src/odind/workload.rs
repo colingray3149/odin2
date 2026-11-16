@@ -525,25 +525,42 @@ fn gateway_credential(
 }
 
 impl LaunchPort {
-    /// A script pod's declared gateway lane, resolved like an agent pod's: the
-    /// lane's own route credential and the serving node's declared endpoint.
-    /// The script names a lane, not a seat model, so its model is the lane.
+    /// A script pod's gateway, resolved like an agent pod's: the serving node's
+    /// declared endpoint and the lane's route credential. The script names a
+    /// lane, not a seat model, so its model is the lane. A project that declares
+    /// `[agents]` gives its pods its own key, `project-<id>` in the same Secret,
+    /// and the role → lane pairs.
     fn script_gateway(
         &self,
         snapshot: &odin_registry::Snapshot,
         profile_id: &str,
-        lane: &str,
+        lane: Option<&str>,
+        project: &ProjectId,
+        roles: &BTreeMap<String, String>,
     ) -> Result<crate::kube_runtime::ScriptGateway, String> {
         let projection = crate::projection::load_gateway_projection(&self.config).map_err(|reason| {
             format!(
                 "workload profile {profile_id:?} cannot read its pinned gateway projection: {reason}"
             )
         })?;
-        let credential = gateway_credential(&self.config, &projection, profile_id, lane, lane)?;
+        let route_lane = lane
+            .or_else(|| roles.values().next().map(String::as_str))
+            .ok_or_else(|| format!("workload profile {profile_id:?} names no gateway lane"))?;
+        let mut credential = gateway_credential(
+            &self.config,
+            &projection,
+            profile_id,
+            route_lane,
+            route_lane,
+        )?;
+        if !roles.is_empty() {
+            credential.key = format!("project-{project}");
+        }
         let endpoint = resolve_node_gateway(snapshot, &self.serving_node)
             .map_err(|error| format!("workload profile {profile_id:?}: {error}"))?;
         Ok(crate::kube_runtime::ScriptGateway {
-            lane: lane.to_owned(),
+            lane: lane.map(str::to_owned),
+            roles: roles.clone(),
             endpoint,
             credential,
         })
@@ -610,6 +627,34 @@ impl LaunchPort {
     ) -> Result<live::OpenSessionRequest, String> {
         let command_id = CommandId::new(format!("kube-workload-open:{operation_id}"))
             .map_err(|error| format!("workload open command id rejected: {error}"))?;
+        let opening = match inputs.opening_prompt.as_deref() {
+            None => "Workload session admitted. Your session guidance carries \
+                     the declared task brief; begin executing it now."
+                .to_owned(),
+            Some(prompt) => {
+                let staged = inputs
+                    .staged_inputs
+                    .iter()
+                    .find(|input| input.prompt)
+                    .ok_or_else(|| {
+                        format!(
+                            "workload profile {}: the launch prompt has no staged input",
+                            inputs.profile.id
+                        )
+                    })?;
+                crate::kube_runtime::opening_prompt_text(prompt, &staged.path)
+            }
+        };
+        // Seeds are worked by the harness: the pod hears that their recon is running and gets it.
+        let opening = match inputs.seeds.is_empty() {
+            true => opening,
+            false => format!(
+                "{opening}\n\nRecon is already running on {}: every relevant tool, chained on \
+                 what each finds. Its findings arrive here as a message; work the brief \
+                 meanwhile and build on them when they come.",
+                inputs.seeds.join(", ")
+            ),
+        };
         let provider = live::ProviderName::new(&inputs.provider)
             .map_err(|error| format!("workload provider rejected: {error}"))?;
         let model = live::ModelName::new(&inputs.model)
@@ -631,16 +676,14 @@ impl LaunchPort {
                 inputs: inputs.staged_inputs.clone(),
                 launching_run: Some(launching_run.to_owned()),
                 unresolved_hosts: inputs.unresolved_hosts.clone(),
+                // Only the limits a profile declares or a launch set; none keeps the binding exact.
+                limits: Some(inputs.limits).filter(|limits| *limits != Default::default()),
+                seeds: inputs.seeds.clone(),
             }),
             // The brief rides system guidance only; this instruction must
             // not duplicate it into the compactable transcript.
             initial_prompt: Some(live::LiveMessage {
-                content: vec![live::LiveContentBlock::Text(
-                    "Workload session admitted. Your session guidance carries \
-                     the declared task brief; begin executing it now, grounding \
-                     each step in the fresh memory facts provided with each turn."
-                        .to_owned(),
-                )],
+                content: vec![live::LiveContentBlock::Text(opening)],
             }),
             served_revision: Some(inputs.snapshot_revision),
         })
@@ -685,16 +728,30 @@ impl crate::kube_runtime::WorkloadLaunchPort for LaunchPort {
                      project {project}"
                 ));
             };
-            let gateway = match profile.profile.seat.gateway_lane.as_deref() {
-                Some(gateway_lane) => {
-                    match self.script_gateway(&snapshot, profile_id, gateway_lane) {
-                        Ok(gateway) => Some(gateway),
-                        Err(reason) => {
-                            return crate::kube_runtime::WorkloadResolve::Refused(reason)
-                        }
+            let roles = snapshot
+                .objects
+                .iter()
+                .find_map(|object| match &object.config {
+                    odin_registry::ObjectConfig::Project(declared)
+                        if object.id == project.as_str() =>
+                    {
+                        Some(declared.agents.clone())
                     }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let gateway_lane = profile.profile.seat.gateway_lane.as_deref();
+            let gateway = if profile.profile.tolerates_external()
+                || profile.profile.offload.is_some()
+            {
+                None
+            } else if gateway_lane.is_some() || !roles.is_empty() {
+                match self.script_gateway(&snapshot, profile_id, gateway_lane, &project, &roles) {
+                    Ok(gateway) => Some(gateway),
+                    Err(reason) => return crate::kube_runtime::WorkloadResolve::Refused(reason),
                 }
-                None => None,
+            } else {
+                None
             };
             return crate::kube_runtime::WorkloadResolve::Script(Box::new(
                 crate::kube_runtime::ScriptLaunchInputs {
@@ -783,7 +840,10 @@ impl crate::kube_runtime::WorkloadLaunchPort for LaunchPort {
                         gateway,
                         credential,
                         staged_inputs: Vec::new(),
+                        opening_prompt: None,
+                        seeds: Vec::new(),
                         unresolved_hosts: Default::default(),
+                        limits: Default::default(),
                     },
                 ))
             }
@@ -844,6 +904,8 @@ impl crate::kube_runtime::WorkloadLaunchPort for LaunchPort {
             inputs: inputs.staged_inputs.clone(),
             launching_run: Some(launching_run.to_string()),
             unresolved_hosts: inputs.unresolved_hosts.clone(),
+            limits: Some(inputs.limits).filter(|limits| *limits != Default::default()),
+            seeds: inputs.seeds.clone(),
         };
         supervisor
             .open_workload(request, binding)

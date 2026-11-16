@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "kube"
+op = "queue"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Lists the launches you have waiting in the launch queue, including batch items waiting for their seat or lane cap."
+handler = { id = "odin_kube.workload.queue" }
+input_schema = "schemas/capability/kube.workload.queue.input.json"
+output_schema = "schemas/capability/kube.workload.queue.output.json"
+effect_class = "R0"
+seat_tags = ["operator"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_kube.workload.queue_evidence" }
+tests = [
+  "odin-cli::bin/odind kube_runtime::launch_queue::tests::queue_lists_and_drops_only_the_callers_held_launches",
+  "odin-cli::bin/odind live::launch_queue::tests::a_cap_refused_batch_item_waits_and_starts_when_a_slot_frees",
+]

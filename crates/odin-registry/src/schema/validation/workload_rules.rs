@@ -36,6 +36,51 @@ pub(super) fn validate_workload(
             "export.deliver_root must name a files.save root",
         ));
     }
+    if let Some(simulation) = &value.simulation {
+        if simulation
+            .max_frame_bytes
+            .is_some_and(|bytes| bytes == 0 || bytes > crate::schema::MAX_FRAME_BYTES)
+        {
+            findings.push(fail(
+                object,
+                "workload-simulation-frame-bytes",
+                "simulation.max_frame_bytes must be in 1..=8388608",
+            ));
+        }
+        if !simulation.render_command.is_empty()
+            && (simulation.renderers.is_empty()
+                || !simulation.render_command[0].starts_with('/')
+                || simulation.render_command.iter().any(String::is_empty))
+        {
+            findings.push(fail(
+                object,
+                "workload-simulation-render-command",
+                "simulation.render_command is an absolute in-image argv and needs declared renderers",
+            ));
+        }
+        if [
+            simulation.keep_frames,
+            simulation.stale_seconds,
+            simulation.render_timeout_seconds,
+            simulation.retire_after_hours,
+        ]
+        .contains(&Some(0))
+        {
+            findings.push(fail(
+                object,
+                "workload-simulation-zero",
+                "simulation.keep_frames, stale_seconds, render_timeout_seconds and \
+                 retire_after_hours must be positive when declared",
+            ));
+        }
+        if simulation.plot.iter().any(|key| key.trim().is_empty()) {
+            findings.push(fail(
+                object,
+                "workload-simulation-plot",
+                "simulation.plot names telemetry keys, none empty",
+            ));
+        }
+    }
     // Require a digest pin; platform images resolve to their deployed digest at launch.
     if !value.image.is_platform() && !valid_digest_pinned_oci_reference(&value.image.reference) {
         findings.push(fail(
@@ -144,6 +189,68 @@ pub(super) fn validate_workload(
                 format!("resources.memory is not a valid quantity: {reason}"),
             ));
         }
+        match (resources.shm_bytes(), resources.memory_bytes()) {
+            (Err(reason), _) => findings.push(fail(
+                object,
+                "workload-resources-shm",
+                format!("resources.shm is not a valid quantity: {reason}"),
+            )),
+            (Ok(Some(shm)), Ok(memory)) if shm >= memory => findings.push(fail(
+                object,
+                "workload-resources-shm",
+                "resources.shm counts inside resources.memory and must be below it",
+            )),
+            _ => {}
+        }
+    }
+    validate_stop_and_data(object, value, findings);
+    if let Some(control) = &value.control {
+        if control.max_bytes == 0 || control.max_bytes > CONTROL_MAP_LIMIT_BYTES / 2 {
+            findings.push(fail(
+                object,
+                "workload-control",
+                format!(
+                    "control.max_bytes must be 1..={}, half the ConfigMap limit",
+                    CONTROL_MAP_LIMIT_BYTES / 2
+                ),
+            ));
+        }
+        if let Err(reason) = control.validator() {
+            findings.push(fail(object, "workload-control", reason));
+        }
+    }
+    if let Some(limits) = &value.limits {
+        if limits
+            .checkpoint_percent
+            .is_some_and(|percent| !CHECKPOINT_PERCENT_RANGE.contains(&percent))
+        {
+            findings.push(fail(
+                object,
+                "workload-limits-checkpoint-percent",
+                format!(
+                    "limits.checkpoint_percent must be in {}..={}",
+                    CHECKPOINT_PERCENT_RANGE.start(),
+                    CHECKPOINT_PERCENT_RANGE.end()
+                ),
+            ));
+        }
+        if limits
+            .max_rollovers
+            .is_some_and(|rollovers| rollovers > MAX_ROLLOVERS_LIMIT)
+        {
+            findings.push(fail(
+                object,
+                "workload-limits-max-rollovers",
+                format!("limits.max_rollovers must be at most {MAX_ROLLOVERS_LIMIT}"),
+            ));
+        }
+        if limits.output_reserve_tokens == Some(0) || limits.tool_result_bytes == Some(0) {
+            findings.push(fail(
+                object,
+                "workload-limits-positive",
+                "limits.output_reserve_tokens and limits.tool_result_bytes must be at least 1",
+            ));
+        }
     }
     if value.gpu_count > odin_kube_bounds::MAX_CONTAINER_GPU_COUNT {
         findings.push(fail(
@@ -155,6 +262,95 @@ pub(super) fn validate_workload(
                 odin_kube_bounds::MAX_CONTAINER_GPU_COUNT
             ),
         ));
+    }
+    if value.gpu_count > 0
+        && !value
+            .placement
+            .iter()
+            .any(|capability| capability == "cuda")
+    {
+        findings.push(fail(
+            object,
+            "workload-gpu-placement",
+            "a profile with gpu_count must place on cuda nodes: add \"cuda\" to placement",
+        ));
+    }
+    if let Some(gpu) = &value.gpu {
+        if value.gpu_count == 0 {
+            findings.push(fail(
+                object,
+                "workload-gpu-memory",
+                "[gpu] memory needs gpu_count of at least 1",
+            ));
+        }
+        if gpu.min_vram_gib == Some(0) || gpu.vram_gib == Some(0) {
+            findings.push(fail(
+                object,
+                "workload-gpu-memory",
+                "gpu.min_vram_gib and gpu.vram_gib must be at least 1 when declared",
+            ));
+        }
+    }
+    if let Some(offload) = &value.offload {
+        // The target sees everything a run carries, and reaches none of the owner's services.
+        if value.runs_agent()
+            || value.seat.gateway_lane.is_some()
+            || !value.network.transport.is_direct()
+            || !value.tools.is_empty()
+            || value.mode != crate::schema::WorkloadMode::Job
+        {
+            findings.push(fail(
+                object,
+                "workload-offload-scope",
+                "an offload profile is a finite script run with no seat.gateway_lane, no \
+                 vpn-required transport and no tools",
+            ));
+        }
+        if offload.targets.is_empty() || offload.targets.iter().any(|target| !valid_id(target)) {
+            findings.push(fail(
+                object,
+                "workload-offload-targets",
+                "offload.targets must name at least one compute target id",
+            ));
+        }
+        require_unique_list(object, "offload.targets", &offload.targets, findings);
+    }
+    require_unique_list(object, "tolerate", &value.tolerate, findings);
+    if value
+        .tolerate
+        .iter()
+        .any(|taint| taint != crate::schema::EXTERNAL_TOLERATION)
+    {
+        findings.push(fail(
+            object,
+            "workload-tolerate",
+            "tolerate may name only \"external\"",
+        ));
+    }
+    if value.tolerates_external() {
+        // The provider sees everything inside a pod on its box: nothing that unlocks the owner's
+        // services may be scheduled there.
+        if value.runs_agent()
+            || value.seat.gateway_lane.is_some()
+            || !value.network.transport.is_direct()
+            || !value.tools.is_empty()
+        {
+            findings.push(fail(
+                object,
+                "workload-external-scope",
+                "a profile tolerating external nodes must be a script pod with no \
+                 seat.gateway_lane, no vpn-required transport and no tools",
+            ));
+        }
+        let image = value.image.reference.as_str();
+        if image == crate::schema::PLATFORM_IMAGE || image.starts_with("localhost/") {
+            findings.push(fail(
+                object,
+                "workload-external-image",
+                "a profile tolerating external nodes needs an image an external box can pull: \
+                 a registry reference, not platform or localhost/",
+            ));
+        }
     }
     require_unique_list(object, "placement", &value.placement, findings);
     for capability in &value.placement {
@@ -193,6 +389,20 @@ pub(super) fn validate_workload(
         let mut ids = std::collections::BTreeSet::new();
         for watchdog in &monitoring.watchdogs {
             validate_container_alert(object, watchdog, findings);
+            if let Some(patch) = &watchdog.patch {
+                let verdict = value
+                    .control
+                    .as_ref()
+                    .ok_or_else(|| "the profile declares no [control] to steer".to_owned())
+                    .and_then(|control| control.admit(&patch.0));
+                if let Err(reason) = verdict {
+                    findings.push(fail(
+                        object,
+                        "workload-monitoring-steer",
+                        format!("watchdog {:?} patch: {reason}", watchdog.id),
+                    ));
+                }
+            }
             if !ids.insert(watchdog.id.as_str()) {
                 findings.push(fail(
                     object,
@@ -312,5 +522,76 @@ pub(super) fn validate_workload(
             "a service runs until stopped and declares no lifetime",
         )),
         (None, crate::schema::workload::WorkloadMode::Service) => {}
+    }
+}
+
+fn validate_stop_and_data(
+    object: &RegistryObject,
+    value: &WorkloadProfileToml,
+    findings: &mut Vec<RegistryFinding>,
+) {
+    if let Some(grace) = value.stop_grace_seconds {
+        let deadline = value
+            .lifetime
+            .as_ref()
+            .map(|lifetime| lifetime.deadline_seconds);
+        if grace == 0 || deadline.is_some_and(|deadline| grace >= deadline) {
+            findings.push(fail(
+                object,
+                "workload-stop-grace",
+                "stop_grace_seconds must be at least 1 and below lifetime.deadline_seconds",
+            ));
+        }
+    }
+    let mut taken: Vec<&str> = vec![value.state.path.as_str(), value.export.pod_path.as_str()];
+    taken.extend(RESERVED_POD_PATHS);
+    let mut names = std::collections::BTreeSet::new();
+    for data in &value.data {
+        if !valid_id(&data.name) || !names.insert(data.name.as_str()) {
+            findings.push(fail(
+                object,
+                "workload-data",
+                format!("data name {:?} must be a unique stable id", data.name),
+            ));
+        }
+        if !valid_pod_path(&data.host_path)
+            || FORBIDDEN_DATA_HOST_ROOTS
+                .iter()
+                .any(|root| std::path::Path::new(&data.host_path).starts_with(root))
+        {
+            findings.push(fail(
+                object,
+                "workload-data-host-path",
+                format!(
+                    "data {:?} host_path {:?} must be a normalized absolute path outside {}",
+                    data.name,
+                    data.host_path,
+                    FORBIDDEN_DATA_HOST_ROOTS.join(", ")
+                ),
+            ));
+        }
+        if !valid_pod_path(&data.pod_path) {
+            findings.push(fail(
+                object,
+                "workload-data-pod-path",
+                format!(
+                    "data {:?} pod_path {:?} must be a normalized absolute path",
+                    data.name, data.pod_path
+                ),
+            ));
+        } else if let Some(other) = taken
+            .iter()
+            .find(|other| paths_nest_or_collide(&data.pod_path, other))
+        {
+            findings.push(fail(
+                object,
+                "workload-data-pod-path",
+                format!(
+                    "data {:?} pod_path {:?} collides or nests with {other:?}",
+                    data.name, data.pod_path
+                ),
+            ));
+        }
+        taken.push(&data.pod_path);
     }
 }

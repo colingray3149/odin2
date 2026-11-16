@@ -281,19 +281,23 @@ pub fn provider_fault_kind(message: &str, status: Option<u16>) -> Option<Provide
         "exceed_context_size",
     ]) {
         Some(ProviderFaultKind::ContextOverflow)
-    } else if status == Some(429) {
+    } else if matches!(status, Some(402 | 429)) {
         Some(ProviderFaultKind::UsageLimit)
     } else if matches!(status, Some(401 | 403)) {
         Some(ProviderFaultKind::RejectedKey)
-    } else if has(&[
-        "quota",
-        "rate limit",
-        "rate_limit",
-        "ratelimiterror",
-        "usage limit",
-        "insufficient_quota",
-        "too many requests",
-    ]) {
+    } else if (lower.contains("prepayment")
+        && lower.contains("credit")
+        && (lower.contains("deplet") || lower.contains("exhaust")))
+        || has(&[
+            "quota",
+            "rate limit",
+            "rate_limit",
+            "ratelimiterror",
+            "usage limit",
+            "insufficient_quota",
+            "too many requests",
+        ])
+    {
         Some(ProviderFaultKind::UsageLimit)
     } else if has(&[
         "unauthorized",
@@ -312,7 +316,7 @@ pub fn provider_fault_kind(message: &str, status: Option<u16>) -> Option<Provide
 
 /// The error code of the extension's authenticated refusal of a request
 /// over the lane's declared context window.
-const CONTEXT_REFUSAL_WINDOW_EXCEEDED: &str = "context_refusal.window_exceeded";
+pub(crate) const CONTEXT_REFUSAL_WINDOW_EXCEEDED: &str = "context_refusal.window_exceeded";
 
 /// The error code prefix of every authenticated context refusal.
 const CONTEXT_REFUSAL_PREFIX: &str = "context_refusal.";
@@ -676,6 +680,8 @@ pub enum WorkloadRest {
 /// message, bounded where it is read.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionFailure {
+    /// The journal sequence of the error event.
+    pub event: u64,
     /// The typed error code, e.g. `provider` or `turn_stopped_error`.
     pub code: String,
     /// The error's own detail, bounded to [`SESSION_FAILURE_MESSAGE_CHARS`].

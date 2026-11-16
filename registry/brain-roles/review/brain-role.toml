@@ -1,0 +1,12 @@
+schema = "odin.registry.v1"
+kind = "brain-role"
+enabled = true
+description = "Weekly lint of compiled pages and the pilot question judge."
+role = "review"
+engine = "lane"
+lanes = ["glm-flash", "terra"]
+[params]
+max_output = 1024
+effort = "low"
+temperature = 0
+max_parallel = 1

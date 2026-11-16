@@ -3,7 +3,7 @@ kind = "context-profile"
 enabled = true
 description = "Conversation and review seats: core memory, live memory and brain context at session start and after compaction; every turn carries cards for the people, projects and places it names."
 # Core memory token budget in the system prompt; integer 1..4294967295.
-core_tokens = 2_048
+core_tokens = 4_096
 # Retrieval token budget at session start and after compaction; integer 1..4294967295.
 inject_tokens = 2_048
 # Maximum retrieved items per context injection; integer 1..65535.

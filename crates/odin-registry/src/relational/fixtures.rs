@@ -114,7 +114,6 @@ description = "fixture"
 source_root = ""
 default_seat = "fixture"
 memory_namespaces = ["atlas.code"]
-artifact_policy = "standard"
 "#
     );
     RegistryObject {
@@ -230,9 +229,7 @@ kind = "lane"
 enabled = true
 description = "fixture"
 project = "fixture"
-family = "transfer"
 default_seat = "fixture"
-queue = "interactive"
 requires_independent_review = false
 direction = "{direction}"
 payload_kind = "{payload}"

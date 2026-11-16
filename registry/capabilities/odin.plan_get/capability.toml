@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "plan"
+op = "get"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Reads the plan of the run this session belongs to: objective, todos, revision."
+handler = { id = "odin_plan_get" }
+input_schema = "schemas/capability/odin.plan_get.input.json"
+output_schema = "schemas/capability/odin.plan_get.output.json"
+effect_class = "R0"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_plan_get_evidence" }
+tests = [
+  "odin-omp host_tools::plan_get::tests::reads_the_bound_runs_plan_and_says_when_there_is_none",
+]

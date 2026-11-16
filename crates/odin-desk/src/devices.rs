@@ -24,6 +24,9 @@ const UDISKS: &str = "org.freedesktop.UDisks2";
 const UDISKS_ROOT: &str = "/org/freedesktop/UDisks2";
 const BLOCK: &str = "org.freedesktop.UDisks2.Block";
 const FILESYSTEM: &str = "org.freedesktop.UDisks2.Filesystem";
+/// How long a Bluetooth connect may take to show its audio output.
+const BLUETOOTH_SETTLE: Duration = Duration::from_secs(10);
+const BLUETOOTH_POLL: Duration = Duration::from_millis(250);
 const HEADLESS_BUS_START_TIMEOUT: Duration = Duration::from_secs(10);
 const HEADLESS_COMPOSITOR_START_TIMEOUT: Duration = Duration::from_secs(10);
 const HEADLESS_START_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -302,6 +305,8 @@ struct BluetoothDevice {
     alias: Option<String>,
     paired: bool,
     connected: bool,
+    /// Headphones, a headset or speakers (BlueZ's icon is audio-*).
+    audio: bool,
 }
 
 #[derive(Serialize)]
@@ -365,6 +370,8 @@ fn bluetooth_devices(connection: &Connection) -> Result<Vec<BluetoothDevice>, St
             alias: property(&mut properties, "Alias")?,
             paired: required(&mut properties, "Paired")?,
             connected: required(&mut properties, "Connected")?,
+            audio: property::<String>(&mut properties, "Icon")?
+                .is_some_and(|icon| icon.starts_with("audio")),
         });
     }
     devices.sort_by(|left, right| left.path.cmp(&right.path));
@@ -474,10 +481,40 @@ impl crate::Desk {
                 proxy
                     .call::<_, _, ()>(method, &())
                     .map_err(|error| format!("BlueZ {method} {}: {error}", device.path))?;
-                let connected: bool = proxy
-                    .get_property("Connected")
-                    .map_err(|error| format!("BlueZ Connected {}: {error}", device.path))?;
-                Ok(json!({"device":device.path.as_str(),"address":device.address,"connected":connected}).to_string())
+                let want = method == "Connect";
+                // Connected, and for headphones or speakers their output too,
+                // so an audio switch right after finds it.
+                let sink = format!("bluez_output.{}", device.address.replace(':', "_"));
+                let deadline = Instant::now() + BLUETOOTH_SETTLE;
+                let (connected, output) = loop {
+                    let connected: bool = proxy
+                        .get_property("Connected")
+                        .map_err(|error| format!("BlueZ Connected {}: {error}", device.path))?;
+                    let output = want
+                        && self
+                            .timed(&self.bin.pactl, &["list", "short", "sinks"])
+                            .is_ok_and(|sinks| sinks.contains(&sink));
+                    if connected == want && (!want || !device.audio || output)
+                        || Instant::now() >= deadline
+                    {
+                        break (connected, output);
+                    }
+                    self.wait(BLUETOOTH_POLL)?;
+                };
+                if connected != want {
+                    return Err(format!(
+                        "{} is still {} after {}s",
+                        device.alias.as_deref().unwrap_or(&device.address),
+                        if connected {
+                            "connected"
+                        } else {
+                            "disconnected"
+                        },
+                        BLUETOOTH_SETTLE.as_secs()
+                    )
+                    .into());
+                }
+                Ok(json!({"device":device.path.as_str(),"address":device.address,"connected":connected,"audioOutput":output.then_some(sink)}).to_string())
             }
             DeviceAction::Drives {} => {
                 let connection = system_bus()?;

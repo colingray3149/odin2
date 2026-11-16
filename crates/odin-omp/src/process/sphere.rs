@@ -2,8 +2,8 @@
 //!
 //! The bubble binds the lane capsule writable at its own path, each declared
 //! data root read-only at its own path, and the one scratch root writable.
-//! Device nodes replace `--dev /dev`: only a declared `/dev/serial/by-id`
-//! node is present. A project without a sphere keeps the seat sandbox.
+//! The process retains bubblewrap's private `/dev` for its runtime; the shell
+//! sees only explicitly selected device nodes. A project without a sphere keeps the seat sandbox.
 
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
@@ -191,8 +191,8 @@ fn nests(outer: &Path, inner: &Path) -> bool {
     inner.starts_with(outer) && inner != outer
 }
 
-/// Drop `--dev /dev` without touching `--proc /proc`.
-fn drop_host_dev(argv: &mut Vec<String>) -> Result<(), String> {
+/// Drop the shell's private `--dev /dev` without touching `--proc /proc`.
+fn drop_shell_dev(argv: &mut Vec<String>) -> Result<(), String> {
     let Some(index) = argv.iter().position(|arg| arg == "--dev") else {
         return Ok(());
     };
@@ -290,12 +290,11 @@ fn push_staged_file(
 /// device under `/dev`. The source is the resolved node, not the symlink:
 /// `--dev-bind` of the by-id path mounts `/dev` and would expose every host
 /// device. The destination stays the declared path, so the action opens the
-/// name it was given and nothing else under `/dev` appears. An unattached
-/// node is omitted; the action that needs it fails at open.
+/// name it was given and nothing else under `/dev` appears. An absent node
+/// is an error naming it: the action declared it and would run without it.
 fn push_attached_node(argv: &mut Vec<String>, node: &Path) -> Result<(), String> {
-    let Ok(resolved) = std::fs::canonicalize(node) else {
-        return Ok(());
-    };
+    let resolved = std::fs::canonicalize(node)
+        .map_err(|error| format!("sphere device {} is not attached: {error}", node.display()))?;
     let metadata = std::fs::metadata(&resolved)
         .map_err(|error| format!("sphere device {} metadata: {error}", node.display()))?;
     if !resolved.starts_with("/dev/")
@@ -335,7 +334,9 @@ pub fn sphere_sandbox_argv(
         confined.writable.push(capsule.to_path_buf());
     }
     let mut argv = super::sandbox::seat_sandbox_argv(subject, &confined)?;
-    drop_host_dev(&mut argv)?;
+    if subject == SandboxSubject::Shell {
+        drop_shell_dev(&mut argv)?;
+    }
     // The shell helper bound the capsule so `--chdir` names it. Bind it
     // once, with the rest of the sphere, below.
     if subject == SandboxSubject::Shell {
@@ -534,6 +535,15 @@ mod tests {
         assert!(refused(&sphere(&["/data"], "/data/scratch")).contains("overlaps scratch"));
         assert!(refused(&sphere(&["/data", "/data/reference"], "/scratch"))
             .contains("overlaps another root"));
+    }
+
+    #[test]
+    fn an_absent_selected_node_fails_naming_it() {
+        let mut argv = Vec::new();
+        let node = Path::new("/dev/serial/by-id/usb-absent");
+        let error = push_selected_device(&mut argv, Some(node), None).unwrap_err();
+        assert!(error.contains("/dev/serial/by-id/usb-absent"), "{error}");
+        assert!(argv.is_empty());
     }
 
     #[test]

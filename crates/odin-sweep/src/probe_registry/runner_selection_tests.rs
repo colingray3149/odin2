@@ -86,8 +86,8 @@ fn k3s_passes_only_on_a_zero_exit_with_the_exact_ready_body() {
         timed_out: false,
         stdout: b"ok\n".to_vec(),
         stderr: Vec::new(),
-        stdout_truncated: 0,
-        stderr_truncated: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
     };
     assert_eq!(k3s_verdict(&probe), Ok("ok".to_owned()));
 }
@@ -99,8 +99,8 @@ fn k3s_timeout_and_failed_conversations_are_blocked_never_green() {
         timed_out: true,
         stdout: Vec::new(),
         stderr: Vec::new(),
-        stdout_truncated: 0,
-        stderr_truncated: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
     };
     let (status, reason) = k3s_verdict(&timed_out).expect_err("a timeout must not pass");
     assert_eq!(status, CheckStatus::Blocked);
@@ -111,8 +111,8 @@ fn k3s_timeout_and_failed_conversations_are_blocked_never_green() {
         timed_out: false,
         stdout: Vec::new(),
         stderr: b"E0910 error: connection refused\n".to_vec(),
-        stdout_truncated: 0,
-        stderr_truncated: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
     };
     let (status, reason) = k3s_verdict(&unreachable).expect_err("a failed call must not pass");
     assert_eq!(status, CheckStatus::Blocked);

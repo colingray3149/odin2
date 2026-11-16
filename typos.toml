@@ -25,6 +25,8 @@ extend-ignore-re = [
 ]
 
 [default.extend-words]
+# The Python CA bundle package (certifi).
+certifi = "certifi"
 # SMTP HELO/EHLO client identity (helo_name); not the greeting hello.
 helo = "helo"
 # POSIX open(2) flag O_WRONLY.

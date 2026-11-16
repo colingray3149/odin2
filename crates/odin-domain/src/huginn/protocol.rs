@@ -26,6 +26,7 @@ use super::ids::{
     ModelName, ProviderName, RequestId, Sequence, SessionListCursor, StreamId, TransferId,
 };
 use super::kube::KubeCommand;
+use super::project_event::ProjectEventReport;
 use super::read_model::{
     DeltaPage, DeltaQuery, ObjectDelta, ObjectDeltaBatch, ObjectSnapshot, ObjectSubscription,
     Revision, SearchPage, SearchQuery, SnapshotPage, SnapshotQuery,
@@ -141,6 +142,14 @@ pub struct ClaudeTranscriptRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<u64>,
 }
+/// Operator request to reconcile one journaled CFD operation from its recorded upstream binding.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoverCfdOperation {
+    pub command_id: CommandId,
+    pub operation_id: String,
+}
+
 /// Transport-neutral request surface. The CLI and every other client use this enum.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(
@@ -162,6 +171,7 @@ pub enum HuginnRequest {
     LaneCommand(LaneCommand),
     KubeCommand(KubeCommand),
     ApprovalDecision(ApprovalDecisionCommand),
+    RecoverCfdOperation(RecoverCfdOperation),
     ListFiles(FileListRequest),
     ReadFile(FileReadRequest),
     WatchFiles(FileWatchRequest),
@@ -206,6 +216,8 @@ pub enum HuginnRequest {
     /// Paired-owner transcript read; answers `ClaudeTranscript` with the existing driver projection.
     ClaudeTranscript(ClaudeTranscriptRequest),
     Deltas(DeltaQuery),
+    /// A project's tooling reports an event that triggers that project's `project_event` routines and watchers; answers `Ack`.
+    ProjectEvent(ProjectEventReport),
     /// Stops all agent work on the authority; answers `Ack`.
     EmergencyStop(EmergencyStopRequest),
     /// Fleet compute samples from the authority; answers `Compute` with a JSON

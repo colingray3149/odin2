@@ -5,11 +5,14 @@
 
 use std::fmt;
 
+mod message;
 mod ratelimit;
 
 use async_trait::async_trait;
 use odin_domain::huginn::OpaqueCredentialHandle;
 use serde_json::{json, Value};
+
+pub use message::{parse_message_create, DiscordAttachment, DiscordMessage};
 
 /// Pinned Discord HTTPS REST API base (protocol version is part of the path).
 pub const DISCORD_API_BASE: &str = "https://discord.com/api/v10";
@@ -99,96 +102,9 @@ impl DiscordCredential {
     }
 }
 
-/// One owner-paired Discord message, already projected off the wire.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DiscordMessage {
-    pub id: String,
-    pub channel_id: String,
-    pub author_id: String,
-    pub guild_id: Option<String>,
-    pub content: String,
-    /// Files attached to the message, served from Discord's CDN.
-    pub attachments: Vec<DiscordAttachment>,
-}
-
-/// One file attached to a message. The URL is confined to Discord's CDN
-/// hosts at parse time; nothing else is ever fetched.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DiscordAttachment {
-    pub id: String,
-    pub filename: String,
-    pub size: u64,
-    pub url: String,
-    pub content_type: Option<String>,
-}
-
-/// The only hosts an attachment URL may name.
-const ATTACHMENT_HOSTS: [&str; 2] = ["cdn.discordapp.com", "media.discordapp.net"];
-
-fn parse_attachment(value: &Value) -> Option<DiscordAttachment> {
-    let url = value.get("url")?.as_str()?;
-    let host = url::Url::parse(url).ok()?;
-    if host.scheme() != "https" || !ATTACHMENT_HOSTS.contains(&host.host_str()?) {
-        return None;
-    }
-    let filename = value.get("filename")?.as_str()?;
-    if filename.is_empty() || filename.len() > 255 {
-        return None;
-    }
-    Some(DiscordAttachment {
-        id: required_snowflake(value.get("id"))?,
-        filename: filename.to_owned(),
-        size: value.get("size")?.as_u64()?,
-        url: url.to_owned(),
-        content_type: value
-            .get("content_type")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-    })
-}
-
-/// Parses a real Gateway `MESSAGE_CREATE` dispatch payload (`t == 0` envelope
-/// `d` object). Returns `None` for anything that is not a usable channel
-/// message; DM messages carry no `guild_id`.
-pub fn parse_message_create(payload: &Value) -> Option<DiscordMessage> {
-    let id = required_snowflake(payload.get("id"))?;
-    let channel_id = required_snowflake(payload.get("channel_id"))?;
-    let author = payload.get("author")?;
-    let author_id = required_snowflake(author.get("id"))?;
-    let guild_id = match payload.get("guild_id") {
-        None | Some(Value::Null) => None,
-        Some(value) => Some(required_snowflake(Some(value))?),
-    };
-    let content = match payload.get("content") {
-        None => String::new(),
-        Some(Value::String(content)) => content.clone(),
-        Some(_) => return None,
-    };
-    let attachments = payload
-        .get("attachments")
-        .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(parse_attachment).collect())
-        .unwrap_or_default();
-    Some(DiscordMessage {
-        id,
-        channel_id,
-        author_id,
-        guild_id,
-        content,
-        attachments,
-    })
-}
-
 /// A Discord snowflake: decimal digits, at most 32.
 pub(crate) fn is_snowflake(id: &str) -> bool {
     !id.is_empty() && id.len() <= 32 && id.bytes().all(|byte| byte.is_ascii_digit())
-}
-
-fn required_snowflake(value: Option<&Value>) -> Option<String> {
-    match value {
-        Some(Value::String(id)) if is_snowflake(id) => Some(id.clone()),
-        _ => None,
-    }
 }
 
 /// A reference to a message the transport actually posted upstream.
@@ -702,9 +618,7 @@ impl DiscordRestTransport {
 pub const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
 
 impl DiscordRestTransport {
-    /// Posts one message carrying one file. The multipart body is built by
-    /// hand — a `payload_json` part and one `files[0]` part — so no extra
-    /// HTTP feature is linked.
+    /// Posts one message carrying one file.
     pub async fn send_file(
         &self,
         channel_id: &str,
@@ -712,10 +626,29 @@ impl DiscordRestTransport {
         file_name: &str,
         bytes: &[u8],
     ) -> Result<DiscordMessageRef, DiscordSendError> {
-        if bytes.is_empty() || bytes.len() > MAX_FILE_BYTES {
+        self.send_files(channel_id, content, &[(file_name, bytes)])
+            .await
+    }
+
+    /// Posts one message carrying `files`, together at most [`MAX_FILE_BYTES`].
+    /// The multipart body is built by hand — a `payload_json` part and one
+    /// `files[n]` part per file — so no extra HTTP feature is linked.
+    pub async fn send_files(
+        &self,
+        channel_id: &str,
+        content: &str,
+        files: &[(&str, &[u8])],
+    ) -> Result<DiscordMessageRef, DiscordSendError> {
+        let total: usize = files.iter().map(|(_, bytes)| bytes.len()).sum();
+        if files.is_empty()
+            || files.iter().any(|(_, bytes)| bytes.is_empty())
+            || total > MAX_FILE_BYTES
+        {
             return Err(DiscordSendError::Rejected {
                 code: 0,
-                message: format!("a file must be 1..={MAX_FILE_BYTES} bytes"),
+                message: format!(
+                    "a message carries one or more non-empty files of at most {MAX_FILE_BYTES} bytes together"
+                ),
             });
         }
         if content.chars().count() > MAX_MESSAGE_CODEPOINTS {
@@ -724,41 +657,57 @@ impl DiscordRestTransport {
                 message: "message content exceeds the Discord code point limit".to_owned(),
             });
         }
-        let file_name: String = file_name
-            .chars()
-            .map(|c| {
-                if c.is_ascii_graphic() && c != '"' && c != '\\' {
-                    c
-                } else {
-                    '_'
-                }
+        let names: Vec<String> = files
+            .iter()
+            .map(|(file_name, _)| {
+                file_name
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_graphic() && c != '"' && c != '\\' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .take(120)
+                    .collect()
             })
-            .take(120)
             .collect();
         let boundary = format!(
             "odin-{}",
-            odin_domain::Digest::hash(bytes)
+            odin_domain::Digest::hash(files[0].1)
                 .to_string()
                 .trim_start_matches("blake3:")
                 .get(..24)
                 .unwrap_or("boundary")
         );
-        let payload = json!({
-            "content": content,
-            "attachments": [{ "id": 0, "filename": file_name }],
-        });
-        let mut body = Vec::with_capacity(bytes.len() + 512);
+        let attachments: Vec<Value> = names
+            .iter()
+            .enumerate()
+            .map(|(id, file_name)| json!({ "id": id, "filename": file_name }))
+            .collect();
+        let payload = json!({ "content": content, "attachments": attachments });
+        let mut body = Vec::with_capacity(total + 512 * files.len());
         body.extend_from_slice(
             format!(
                 "--{boundary}\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\
-                 Content-Type: application/json\r\n\r\n{payload}\r\n--{boundary}\r\n\
-                 Content-Disposition: form-data; name=\"files[0]\"; filename=\"{file_name}\"\r\n\
-                 Content-Type: application/octet-stream\r\n\r\n"
+                 Content-Type: application/json\r\n\r\n{payload}\r\n"
             )
             .as_bytes(),
         );
-        body.extend_from_slice(bytes);
-        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        for (index, ((_, bytes), file_name)) in files.iter().zip(&names).enumerate() {
+            body.extend_from_slice(
+                format!(
+                    "--{boundary}\r\n\
+                     Content-Disposition: form-data; name=\"files[{index}]\"; filename=\"{file_name}\"\r\n\
+                     Content-Type: application/octet-stream\r\n\r\n"
+                )
+                .as_bytes(),
+            );
+            body.extend_from_slice(bytes);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
         let authorization = self.authorization()?;
         let url = format!("{}/channels/{channel_id}/messages", self.api_base);
         let response = self

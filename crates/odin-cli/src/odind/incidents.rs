@@ -175,6 +175,31 @@ impl IncidentDesk {
 
     /// The condition behind `signature` no longer holds (or its source is
     /// gone): the open incident is resolved, and the next raise is news.
+    /// A model account that runs out raises one incident, which wakes the conversation seat;
+    /// the incident clears when the account has room again.
+    pub(crate) fn out_notice(self: &Arc<Self>) -> odin_hermes::runtime::OutNotice {
+        let desk = Arc::clone(self);
+        Arc::new(move |account, lanes, cause| {
+            let signature = format!("models:out:{account}");
+            match cause {
+                Some(cause) => {
+                    desk.raise(RaisedIncident {
+                        source: "models".to_owned(),
+                        severity: IncidentSeverityView::Warning,
+                        summary: format!(
+                            "Model account {account} ran out; lanes {} are passed over until it has room",
+                            lanes.join(", ")
+                        ),
+                        detail: cause.to_owned(),
+                        affected: lanes.to_vec(),
+                        signature,
+                    });
+                }
+                None => desk.clear(&signature, "the account has room again"),
+            }
+        })
+    }
+
     pub(crate) fn clear(&self, signature: &str, reason: &str) {
         let Some(mut entry) = self
             .open
@@ -458,9 +483,286 @@ impl odin_hermes::runtime::incidents::IncidentRoute for IncidentDesk {
     }
 }
 
+/// Daemon authorities observed by a changed-only heartbeat.
+pub(crate) struct HeartbeatWatch {
+    pub(crate) read_model: Arc<odin_huginn::read_model::MaterializedReadModel>,
+    pub(crate) incidents: Arc<IncidentDesk>,
+    pub(crate) tasks: Arc<dyn odin_brain::source::state::tasks::TaskStateReader>,
+    pub(crate) registry: Arc<odin_registry::SnapshotHandle>,
+    pub(crate) simulation: Option<Arc<crate::simulation::SimulationDesk>>,
+}
+
+fn watches_project(
+    watches: &std::collections::BTreeSet<String>,
+    kind: &str,
+    project: &str,
+) -> bool {
+    watches
+        .iter()
+        .any(|watch| watch == kind || watch.split_once(':') == Some((kind, project)))
+}
+
+fn incident_is_watched(
+    incident: &IncidentView,
+    objects: &HashMap<String, String>,
+    is_watched: impl Fn(&str) -> bool,
+) -> bool {
+    incident
+        .run_id
+        .as_ref()
+        .and_then(|run| objects.get(run.as_str()))
+        .is_some_and(|project| is_watched(project))
+        || incident.affected_objects.iter().any(|object| {
+            objects
+                .get(object)
+                .is_some_and(|project| is_watched(project))
+        })
+}
+
+fn telemetry_stale(
+    now: OffsetDateTime,
+    last: Option<OffsetDateTime>,
+    policy: Option<(u32, u32)>,
+) -> bool {
+    match (last, policy) {
+        (Some(last), Some((seconds, multiplier))) => {
+            now - last
+                > time::Duration::seconds(i64::from(seconds).saturating_mul(i64::from(multiplier)))
+        }
+        _ => false,
+    }
+}
+
+impl odin_omp::live::service::HeartbeatWatched for HeartbeatWatch {
+    fn digest(&self, seat: &odin_domain::SeatId) -> String {
+        use odin_registry::{ObjectConfig, RegistryKind};
+        let registry = self.registry.current();
+        let Some(ObjectConfig::Seat(config)) = registry
+            .object(RegistryKind::Seat, seat.as_str())
+            .map(|object| &object.config)
+        else {
+            return format!("seat {seat} unavailable");
+        };
+        let watches = config.live.as_ref().map(|live| &live.watches);
+        let watched = |kind: &str, project: &str| {
+            config.project_scope.iter().any(|id| id.as_str() == project)
+                && watches.is_some_and(|watches| watches_project(watches, kind, project))
+        };
+        let mut lines = Vec::new();
+        let tasks = match self.tasks.snapshot() {
+            Ok(tasks) => tasks,
+            Err(error) => {
+                lines.push(format!("tasks unreadable: {error}"));
+                odin_brain::source::state::tasks::TaskStateSnapshot {
+                    delegations: Vec::new(),
+                    runs: Vec::new(),
+                }
+            }
+        };
+        let mut projects: HashMap<String, String> = tasks
+            .runs
+            .iter()
+            .filter_map(|run| {
+                run.project
+                    .as_ref()
+                    .map(|project| (run.run_id.clone(), project.clone()))
+            })
+            .collect();
+        let mut incident_objects = projects.clone();
+        for project in &config.project_scope {
+            incident_objects.insert(project.to_string(), project.to_string());
+            incident_objects.insert(format!("project:{project}"), project.to_string());
+        }
+        for task in &tasks.delegations {
+            incident_objects.insert(task.child.clone(), task.project.clone());
+        }
+        let stall = |profile: &str| {
+            registry
+                .object(RegistryKind::Workload, profile)
+                .and_then(|object| match &object.config {
+                    ObjectConfig::Workload(profile) => {
+                        profile.monitoring.as_ref().and_then(|monitoring| {
+                            monitoring.stall_seconds.map(|seconds| {
+                                (
+                                    seconds.get(),
+                                    monitoring
+                                        .telemetry_stale_multiplier
+                                        .map_or(2, |value| value.get()),
+                                )
+                            })
+                        })
+                    }
+                    _ => None,
+                })
+        };
+        for run in &tasks.runs {
+            if run.seat.as_deref() == Some(seat.as_str())
+                || run.project.as_deref().is_some_and(|project| {
+                    watched("child_report", project) || watched("stall", project)
+                })
+            {
+                lines.push(format!(
+                    "task {} {} {}",
+                    run.run_id, run.state, run.session_stopped
+                ));
+            }
+        }
+        for task in &tasks.delegations {
+            if task.parent_seat.as_deref() == Some(seat.as_str())
+                || watched("child_report", &task.project)
+            {
+                lines.push(format!(
+                    "delegation {} {} {:?}",
+                    task.child,
+                    task.phase.as_str(),
+                    task.child_state
+                ));
+            }
+        }
+        let now = OffsetDateTime::now_utc();
+        match self
+            .read_model
+            .capture_kinds(&[odin_domain::huginn::ObjectKind::KubeResource])
+        {
+            Ok(capture) => {
+                for object in capture.objects {
+                    let Ok(view) = serde_json::from_value::<odin_domain::huginn::KubeWorkloadView>(
+                        object.value,
+                    ) else {
+                        continue;
+                    };
+                    let odin_domain::huginn::KubeResourceOwnership::Odin {
+                        run_id, lane_id, ..
+                    } = &view.ownership
+                    else {
+                        continue;
+                    };
+                    if !projects.contains_key(run_id.as_str()) {
+                        if let Some(ObjectConfig::Lane(lane)) = registry
+                            .object(RegistryKind::Lane, lane_id.as_str())
+                            .map(|object| &object.config)
+                        {
+                            projects.insert(run_id.to_string(), lane.project.to_string());
+                        }
+                    }
+                    if let Some(project) = projects.get(run_id.as_str()) {
+                        incident_objects.insert(run_id.to_string(), project.clone());
+                        incident_objects.insert(view.resource.uid.to_string(), project.clone());
+                        incident_objects.insert(view.resource.name.clone(), project.clone());
+                    }
+                    if !projects
+                        .get(run_id.as_str())
+                        .is_some_and(|project| watched("workload_watch", project))
+                    {
+                        continue;
+                    }
+                    let stale = view.state == odin_domain::huginn::KubeWorkloadState::Running
+                        && telemetry_stale(
+                            now,
+                            view.status
+                                .as_ref()
+                                .map(|status| status.at)
+                                .or(view.started_at),
+                            view.profile.as_deref().and_then(&stall),
+                        );
+                    lines.push(format!(
+                        "workload {} {:?} stale={stale}",
+                        view.resource.uid, view.state
+                    ));
+                }
+            }
+            Err(error) => lines.push(format!("workloads unreadable: {error}")),
+        }
+        if let Some(simulation) = &self.simulation {
+            match simulation.heartbeat_missions() {
+                Ok(missions) => {
+                    for (run, stage, profile, last, started) in missions {
+                        if !projects
+                            .get(run.as_str())
+                            .is_some_and(|project| watched("simulation", project))
+                        {
+                            continue;
+                        }
+                        let stale = stage == odin_domain::huginn::SimulationMissionStage::Running
+                            && telemetry_stale(now, last.or(started), stall(&profile));
+                        lines.push(format!("mission {run} {stage:?} stale={stale}"));
+                    }
+                }
+                Err(error) => lines.push(format!("missions unreadable: {error}")),
+            }
+        }
+        lines.extend(
+            self.incidents
+                .open_views()
+                .into_iter()
+                .filter(|incident| {
+                    incident_is_watched(incident, &incident_objects, |project| {
+                        [
+                            "workload_watch",
+                            "simulation",
+                            "child_report",
+                            "stall",
+                            "repo_watch",
+                            "project_event",
+                        ]
+                        .iter()
+                        .any(|kind| watched(kind, project))
+                    })
+                })
+                .map(|incident| format!("incident {} {}", incident.incident_id, incident.revision)),
+        );
+        lines.sort();
+        lines.join("\n")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heartbeat_watch_filters_projects_and_kinds() {
+        let watches = [
+            "workload_watch:project-alpha".to_owned(),
+            "simulation".to_owned(),
+        ]
+        .into_iter()
+        .collect();
+        assert!(watches_project(&watches, "workload_watch", "project-alpha"));
+        assert!(!watches_project(&watches, "workload_watch", "odin"));
+        assert!(watches_project(&watches, "simulation", "odin"));
+        assert!(!watches_project(&watches, "stall", "project-alpha"));
+    }
+
+    #[test]
+    fn heartbeat_telemetry_becomes_stale_only_after_twice_stall() {
+        let sample = OffsetDateTime::UNIX_EPOCH;
+        assert!(!telemetry_stale(
+            sample + time::Duration::seconds(120),
+            Some(sample),
+            Some((60, 2))
+        ));
+        assert!(telemetry_stale(
+            sample + time::Duration::seconds(121),
+            Some(sample),
+            Some((60, 2))
+        ));
+        assert!(!telemetry_stale(
+            sample + time::Duration::seconds(121),
+            Some(sample),
+            Some((60, 3))
+        ));
+        assert!(!telemetry_stale(
+            sample + time::Duration::seconds(121),
+            None,
+            Some((60, 2))
+        ));
+        assert!(!telemetry_stale(
+            sample + time::Duration::seconds(121),
+            Some(sample),
+            None
+        ));
+    }
 
     fn desk() -> IncidentDesk {
         IncidentDesk::new(
@@ -528,6 +830,20 @@ mod tests {
             affected: vec!["odin-6df1".to_owned()],
             signature: "watchdog:odin-6df1:residual-high".to_owned(),
         }
+    }
+
+    #[test]
+    fn heartbeat_incidents_follow_attributed_projects() {
+        let desk = desk();
+        desk.raise_at(
+            watchdog(IncidentSeverityView::Warning, 0.1),
+            OffsetDateTime::now_utc(),
+        );
+        let incident = desk.open_views().pop().expect("open incident");
+        let objects = HashMap::from([("odin-6df1".to_owned(), "project-alpha".to_owned())]);
+        assert!(incident_is_watched(&incident, &objects, |project| project == "project-alpha"));
+        assert!(!incident_is_watched(&incident, &objects, |project| project == "odin"));
+        assert!(!incident_is_watched(&incident, &HashMap::new(), |_| true));
     }
 
     #[test]

@@ -157,12 +157,8 @@ impl OutputDecoder {
                 }
                 Err(_) => decoded(Vec::new(), false),
             },
-            HarnessOutput::CodexJson => match serde_json::from_str::<Value>(line) {
-                Ok(value) => decoded(self.codex(&value), false),
-                Err(_) => decoded(Vec::new(), false),
-            },
             // Protocol families are never line-decoded here.
-            HarnessOutput::OmpRpc | HarnessOutput::Acp => decoded(Vec::new(), false),
+            HarnessOutput::OmpRpc => decoded(Vec::new(), false),
         }
     }
 
@@ -255,76 +251,6 @@ impl OutputDecoder {
         frames
     }
 
-    /// Codex `exec --json`.
-    fn codex(&mut self, value: &Value) -> Vec<Value> {
-        let mut frames = Vec::new();
-        let item = value.get("item").unwrap_or(&Value::Null);
-        let id = item.get("id").and_then(Value::as_str).unwrap_or("item");
-        let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
-        match value.get("type").and_then(Value::as_str) {
-            Some("thread.started") => {
-                if let Some(thread) = value.get("thread_id").and_then(Value::as_str) {
-                    self.outcome.agent_session = Some(thread.to_owned());
-                }
-            }
-            Some("item.started") => match kind {
-                "command_execution" => frames.push(tool_start(
-                    id,
-                    &self.tool_name("shell"),
-                    json!({"command": item.get("command").cloned().unwrap_or(Value::Null)}),
-                )),
-                "mcp_tool_call" | "web_search" => {
-                    frames.push(tool_start(id, &self.tool_name(kind), item.clone()))
-                }
-                _ => {}
-            },
-            Some("item.completed") => match kind {
-                "agent_message" => {
-                    if let Some(text) = item.get("text").and_then(Value::as_str) {
-                        self.last_text = Some(text.to_owned());
-                        frames.push(assistant(text));
-                    }
-                }
-                "command_execution" => frames.push(tool_end(
-                    id,
-                    &self.tool_name("shell"),
-                    Value::String(
-                        item.get("aggregated_output")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_owned(),
-                    ),
-                    item.get("exit_code").and_then(Value::as_i64).unwrap_or(0) != 0,
-                )),
-                "file_change" => {
-                    let name = self.tool_name("patch");
-                    let changes = item.get("changes").cloned().unwrap_or(Value::Null);
-                    frames.push(tool_start(id, &name, changes.clone()));
-                    frames.push(tool_end(
-                        id,
-                        &name,
-                        changes,
-                        item.get("status").and_then(Value::as_str) == Some("failed"),
-                    ));
-                }
-                "mcp_tool_call" | "web_search" => {
-                    frames.push(tool_end(id, &self.tool_name(kind), item.clone(), false))
-                }
-                _ => {}
-            },
-            Some("turn.failed") | Some("error") => {
-                let message = value
-                    .pointer("/error/message")
-                    .or_else(|| value.get("message"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("the agent reported an error");
-                self.outcome.failed = Some(message.to_owned());
-            }
-            _ => {}
-        }
-        frames
-    }
-
     /// The turn's outcome; the final answer defaults to the last assistant
     /// text when the family has no explicit result record.
     pub fn finish(&mut self) -> Decoded {
@@ -374,30 +300,6 @@ mod tests {
         assert_eq!(outcome.failed, None);
     }
 
-    /// Real Codex exec --json lines: the thread id is the resume key, a
-    /// failed command is an error tool result, the last message answers.
-    #[test]
-    fn codex_json_turn() {
-        let mut decoder = OutputDecoder::new(HarnessOutput::CodexJson, "codex");
-        let lines = [
-            r#"{"type":"thread.started","thread_id":"01a0"}"#,
-            r#"{"type":"turn.started"}"#,
-            r#"{"type":"item.started","item":{"id":"i0","type":"command_execution","command":"ls","status":"in_progress"}}"#,
-            r#"{"type":"item.completed","item":{"id":"i0","type":"command_execution","command":"ls","aggregated_output":"denied","exit_code":1,"status":"failed"}}"#,
-            r#"{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"Could not list."}}"#,
-            r#"{"type":"turn.completed","usage":{"input_tokens":1}}"#,
-        ];
-        let frames: Vec<Value> = lines
-            .iter()
-            .flat_map(|line| decoder.line(line).frames)
-            .collect();
-        assert_eq!(frames.len(), 3);
-        assert_eq!(frames[1]["isError"], true);
-        let outcome = decoder.finish();
-        assert_eq!(outcome.agent_session.as_deref(), Some("01a0"));
-        assert_eq!(outcome.final_text.as_deref(), Some("Could not list."));
-    }
-
     /// A failed run reaches the driver as the outcome's `failed`, whichever family spoke.
     #[test]
     fn a_failed_turn_carries_its_cause_in_the_outcome() {
@@ -407,8 +309,5 @@ mod tests {
             claude.finish().failed.as_deref(),
             Some("the agent reported an error (error_max_turns)")
         );
-        let mut codex = OutputDecoder::new(HarnessOutput::CodexJson, "codex");
-        codex.line(r#"{"type":"turn.failed","error":{"message":"rate limited"}}"#);
-        assert_eq!(codex.finish().failed.as_deref(), Some("rate limited"));
     }
 }

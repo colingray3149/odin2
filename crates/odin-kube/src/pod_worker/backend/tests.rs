@@ -439,6 +439,7 @@ impl Rig {
                 cluster: CLUSTER.to_owned(),
                 namespace: "default".to_owned(),
                 allowed_nodes: std::collections::BTreeSet::new(),
+                node_data_roots: Default::default(),
                 request_timeout: REQUEST_BOUND,
                 teardown_timeout: teardown,
                 vpn_transport: None,

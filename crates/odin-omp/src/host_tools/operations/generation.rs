@@ -59,14 +59,14 @@ pub(crate) fn same_composition(source: &dyn RevisionMaterialSource, left: u64, r
 const EQUIVALENCE_BELOW: u64 = 32;
 const EQUIVALENCE_ABOVE: u64 = 512;
 
-/// Admits digests from revisions whose composition matches the catalog's revision.
+/// Admits digests from retained revisions with identical executable contracts.
 /// Publications are immutable, so per-revision results can be cached.
 pub struct CompositionEquivalence {
     admission_revision: u64,
     contracts: Arc<BTreeMap<CapabilityId, CapabilityContract>>,
     source: Arc<dyn RevisionMaterialSource>,
-    /// revision → admission digest when it composes like the admission
-    /// revision, else `None`. A raced fill writes the same digest.
+    /// revision → admission digest when contracts match, else `None`.
+    /// A raced fill writes the same digest; authorization retains per-session policy.
     checked: std::sync::Mutex<BTreeMap<u64, Option<Digest>>>,
 }
 
@@ -90,7 +90,7 @@ impl CompositionEquivalence {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// The admission digest of `revision` when it composes like `base`; `Err` when its
+    /// The admission digest of `revision` when contracts match; `Err` when its
     /// publication is pruned or not published yet.
     fn admission_digest_if_identical(
         &self,
@@ -100,7 +100,24 @@ impl CompositionEquivalence {
         if let Some(entry) = self.checked().get(&revision).copied() {
             return Ok(entry);
         }
-        let entry = if self.source.composition_digest_at(revision)? == base {
+        let composition_matches = self.source.composition_digest_at(revision)? == base;
+        // Seat/lane/workload edits change composition without changing executable
+        // capability contracts. Authorization already uses the session's retained
+        // policy; the operation catalog only needs the exact same contract set.
+        let contracts_match = if composition_matches {
+            true
+        } else {
+            match self.source.material_at(revision) {
+                Ok(material) => material.contracts.as_ref() == self.contracts.as_ref(),
+                Err(error) => {
+                    // The publication exists; a host configuration that cannot
+                    // recompose this revision says nothing about later revisions.
+                    tracing::warn!("odin-omp: retained material revision={revision}: {error}");
+                    return Ok(None);
+                }
+            }
+        };
+        let entry = if contracts_match {
             let revision_i64 = i64::try_from(revision)
                 .map_err(|_| format!("revision {revision} exceeds the admission range"))?;
             Some(
@@ -114,9 +131,8 @@ impl CompositionEquivalence {
         Ok(entry)
     }
 
-    /// Whether `digest` is the admission digest of a revision that composes like the
-    /// admission revision: older ones for sessions kept across a restart, newer ones
-    /// for publications since startup.
+    /// Whether `digest` belongs to a retained revision with the same contracts:
+    /// older ones for retained sessions, newer ones for runtime publications.
     pub fn equivalent(&self, digest: Digest) -> bool {
         let base = match self.source.composition_digest_at(self.admission_revision) {
             Ok(base) => base,
@@ -133,7 +149,7 @@ impl CompositionEquivalence {
         };
         let admitted = |revision: u64| {
             tracing::info!(
-                "odin-omp: admission digest of composition-identical revision={revision} admitted admission_revision={}",
+                "odin-omp: admission digest of contract-identical revision={revision} admitted admission_revision={}",
                 self.admission_revision
             );
             true
@@ -222,13 +238,41 @@ mod composition_tests {
     use odin_domain::SeatToken;
     use odin_registry::CompositionDigest;
 
-    /// Revisions 1 and 2 compose identically (a routine between them);
-    /// revision 3 changed a seat; revision 9 is pruned.
+    /// Revisions 1 and 2 compose identically; 3 changes a seat policy but
+    /// keeps contracts; 4 changes a contract. Later revisions are unpublished.
     struct Digests;
 
     impl RevisionMaterialSource for Digests {
         fn material_at(&self, revision: u64) -> Result<RevisionMaterial, String> {
-            Err(format!("no material for {revision}"))
+            use std::collections::{BTreeMap, BTreeSet};
+            use std::sync::Arc;
+            if !(1..=6).contains(&revision) || revision == 5 {
+                return Err(format!("no material for {revision}"));
+            }
+            let mut contracts = BTreeMap::new();
+            if revision == 4 {
+                let contract =
+                    crate::host_tools::operations::production_operation_dispatch::fixture::contract(
+                        "fixture.changed",
+                        "fixture_changed",
+                        "fixture.handler",
+                        "fixture.extract",
+                        odin_domain::EffectClass::R1,
+                    );
+                contracts.insert(contract.id.clone(), contract);
+            }
+            Ok(RevisionMaterial {
+                revision,
+                admission_digest: super::super::admission_digest(&contracts, revision as i64)
+                    .unwrap(),
+                contracts: Arc::new(contracts),
+                seat_operation_bindings: BTreeMap::new(),
+                session_lanes: BTreeMap::new(),
+                tool_index: BTreeMap::new(),
+                contract_adapters: BTreeSet::new(),
+                declaration_decided: BTreeSet::new(),
+                escalation_targets: BTreeSet::new(),
+            })
         }
 
         fn resolve_legacy(&self, _token: &SeatToken) -> Result<u64, String> {
@@ -238,7 +282,7 @@ mod composition_tests {
         fn composition_digest_at(&self, revision: u64) -> Result<CompositionDigest, String> {
             match revision {
                 1 | 2 => Ok(CompositionDigest::from_bytes([1; 32])),
-                3 => Ok(CompositionDigest::from_bytes([3; 32])),
+                3..=6 => Ok(CompositionDigest::from_bytes([3; 32])),
                 _ => Err(format!("publication {revision} is pruned")),
             }
         }
@@ -258,12 +302,25 @@ mod composition_tests {
         let kept = CompositionEquivalence::new(2, Arc::clone(&contracts), Arc::new(Digests));
         assert!(kept.equivalent(at(1)), "the kept vehicle's revision below");
         assert!(
-            !kept.equivalent(at(3)),
-            "a seat change composes differently"
+            kept.equivalent(at(3)),
+            "seat policies are authorized separately"
+        );
+        assert!(
+            !kept.equivalent(at(4)),
+            "changed contracts are not equivalent"
         );
         let started = CompositionEquivalence::new(1, Arc::clone(&contracts), Arc::new(Digests));
         assert!(started.equivalent(at(2)), "a routine published since start");
-        assert!(!started.equivalent(at(3)));
+        assert!(started.equivalent(at(3)));
+        assert!(!started.equivalent(at(4)));
+        assert!(
+            !started.equivalent(at(5)),
+            "unrecomposable material refuses"
+        );
+        assert!(
+            started.equivalent(at(6)),
+            "later valid material remains reachable"
+        );
 
         // Without composition equivalence, only the exact admission digest is admitted.
         let registry = Arc::new(crate::host_tools::HostToolRegistry::new());
@@ -301,6 +358,8 @@ mod composition_tests {
         assert!(!catalog(false).admits_policy_digest(&admitted, at(1)));
         assert!(catalog(true).admits_policy_digest(&admitted, at(1)));
         assert!(catalog(true).admits_policy_digest(&admitted, at(2)));
-        assert!(!catalog(true).admits_policy_digest(&admitted, at(3)));
+        assert!(catalog(true).admits_policy_digest(&admitted, at(3)));
+        assert!(!catalog(true).admits_policy_digest(&admitted, at(4)));
+        assert!(!catalog(true).admits_policy_digest(&admitted, at(9)));
     }
 }

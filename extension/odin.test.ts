@@ -1,7 +1,8 @@
 import { test, expect } from "bun:test";
 import { createHash } from "node:crypto";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import odin from "./odin.ts";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import odin, { readRootTarget } from "./odin.ts";
 
 type Entry = { type: string; data: unknown };
 
@@ -56,7 +57,7 @@ function makePi(available: string[], fails?: (type: string) => Failure | undefin
 /** The extension loaded with the host's declaration of `issued` tools, of which the harness has `available`. */
 function fixture(available: string[], issued: string[], hostUriSchemes?: string, env: Record<string, string | undefined> = {}) {
   const f = makePi(available);
-  const base = { ODIN_HOST_TOOLS: issued.join(","), ODIN_HOST_URI_SCHEMES: hostUriSchemes, ODIN_READ_PATHS: undefined, ODIN_CONTEXT_BUDGET: undefined };
+  const base = { ODIN_HOST_TOOLS: issued.join(","), ODIN_HOST_URI_SCHEMES: hostUriSchemes, ODIN_READ_PATHS: undefined, ODIN_READ_ROOTS: undefined, ODIN_CONTEXT_BUDGET: undefined };
   withEnv({ ...base, ...env }, () => odin(f.pi));
   return f;
 }
@@ -183,10 +184,22 @@ test("a workload pod reads exactly its staged launch-input files, and a declared
   const read = (path: string) => gate({ toolName: "read", input: { path } }, ctx);
   expect(await read("/var/run/odin/staging/input-2")).toBeUndefined();
   expect(await read("/var/run/odin/staging/input-2:raw")).toBeUndefined();
+  // Paging the staged file is allowed: each selector form the harness names.
+  for (const paged of [
+    "/var/run/odin/staging/input-2:10-20",
+    "/var/run/odin/staging/input-2:7",
+    "/var/run/odin/staging/input-2:raw:1-5",
+    "/var/run/odin/staging/input-2:1-5:raw",
+  ]) {
+    expect(await read(paged)).toBeUndefined();
+  }
   for (const refused of [
     "/var/run/odin/staging/input-0",
+    "/var/run/odin/staging/input-0:10-20",
     "/var/run/odin/staging/input-2/../input-0",
-    "/var/run/odin/staging/input-2:10-20",
+    "/var/run/odin/staging/input-2:1-",
+    "/var/run/odin/staging/input-2:raw:7",
+    "/var/run/odin/staging/input-2:1:2:3",
     "/etc/passwd",
     "file:///var/run/odin/staging/input-2",
   ]) {
@@ -505,13 +518,36 @@ test("a malformed host budget declaration fails closed, naming nothing it cannot
 });
 
 test("session start journals each declared lane once, with the counter its tokenizer names", async () => {
-  const f = budgetFixture("gateway|herald-model|8000|500|odin.tokenizer.utf8-bytes.v1;gateway|local-model|9000|600|odin.tokenizer.qwen3.v1", MODEL);
+  const f = budgetFixture(
+    "gateway|herald-model|8000|500|odin.tokenizer.utf8-bytes.v1;gateway|local-model|9000|600|odin.tokenizer.qwen3.v1;gateway|hosted-model|500000|8000|odin.tokenizer.estimate.v1",
+    MODEL,
+  );
   await f.handlers.get("session_start")!({}, f.ctx);
   const lanes = f.entries.filter((entry) => entry.type === "odin.extension.context_budget").map((entry) => entry.data);
   expect(lanes).toMatchObject([
     { model: "herald-model", window: 8000, reserve: 500, counter: "bytes" },
     { model: "local-model", window: 9000, reserve: 600, counter: "qwen3" },
+    { model: "hosted-model", window: 500000, reserve: 8000, counter: "estimate" },
   ]);
+});
+
+test("an estimate lane admits a 480 KB request in its 500k window, then calibrates its ratio from the provider's usage", async () => {
+  const f = budgetFixture("gateway|herald-model|500000|8000|odin.tokenizer.estimate.v1", MODEL);
+  // Uncalibrated: one token per four bytes, so 480 KB is 120 000 tokens.
+  expect(await f.handlers.get(GUARD)!({ payload: sizedPayload(480_000) }, f.ctx)).toBeUndefined();
+  expect(f.aborts).toEqual([]);
+  // 2 000 000 bytes estimate to 500 000 tokens: with the 100-token allowance, past the window.
+  const refusal = await expectRefusal(budgetFixture("gateway|herald-model|500000|8000|odin.tokenizer.estimate.v1", MODEL), sizedPayload(2_000_000));
+  expect(refusal.code).toBe("window_exceeded");
+  expect(refusal.reason).toContain("estimated tokens");
+  // The response reports 480 000 bytes as 240 000 input tokens (100 000 fresh, 140 000 cached): 0.5 tokens per byte from here on.
+  await f.handlers.get("after_provider_response")?.({ requestId: "req-est", headers: {} }, f.ctx);
+  await f.handlers.get("message_end")?.({
+    message: { role: "assistant", responseId: "resp-est", content: [], usage: { input: 100_000, cacheRead: 140_000, cacheWrite: 0 }, stopReason: "stop" },
+  }, f.ctx);
+  const link = f.entries.filter((entry) => entry.type === "odin.extension.model_request_link").at(-1)!.data as { estimate: Record<string, unknown> };
+  expect(link.estimate).toMatchObject({ lane: "gateway/herald-model", request_bytes: 480_000, tokens_per_byte: 0.25, observed_input_tokens: 240_000 });
+  expect((await expectRefusal(f, sizedPayload(1_000_000))).code).toBe("window_exceeded");
 });
 
 const NATIVE_BUDGET = "gateway|herald-model|16384|6144|odin.tokenizer.qwen3.v1";
@@ -1245,4 +1281,20 @@ test("a response links the current attempt, not an abandoned identical payload",
   const stray = linkCapture(afterStray[2].data);
   expect(stray.callId).toBeUndefined();
   expect(stray.traceError).toContain("no captured request");
+});
+
+test("read opens a file inside the seat's own folders and nothing a link leads out to", () => {
+  const base = realpathSync(mkdtempSync("/tmp/odin-read-"));
+  const folder = `${base}/Documents`;
+  mkdirSync(folder);
+  writeFileSync(`${folder}/notes.md`, "one\ntwo\n");
+  writeFileSync(`${base}/secret`, "no");
+  symlinkSync(`${base}/secret`, `${folder}/escape`);
+  const roots = [folder];
+  expect(readRootTarget({ path: `${folder}/notes.md` }, roots)).toBe(`${folder}/notes.md`);
+  expect(readRootTarget({ path: `${folder}/notes.md:1-2` }, roots)).toBe(`${folder}/notes.md:1-2`);
+  expect(readRootTarget({ path: `${folder}/escape` }, roots)).toBeNull();
+  expect(readRootTarget({ path: `${base}/secret` }, roots)).toBeNull();
+  expect(readRootTarget({ path: "Documents/notes.md" }, roots)).toBeNull();
+  expect(readRootTarget({ path: `${folder}/notes.md` }, [])).toBeNull();
 });

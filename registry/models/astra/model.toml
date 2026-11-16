@@ -19,5 +19,8 @@ seats = true
 # Strict tool-call validation; a Codex provider fact.
 strict = true
 
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"
+
 [thinking]
 default = "medium"

@@ -54,6 +54,7 @@
                 }
               },
               "unschedulable": { "type": "boolean" },
+              "mode": { "type": "string", "maxLength": 256 },
               "capacity": { "$ref": "#/$defs/resources" },
               "allocatable": { "$ref": "#/$defs/resources" }
             },

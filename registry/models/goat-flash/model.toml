@@ -18,3 +18,5 @@ strengths = "The cheap fast lane: quick lookups, drafts and fallback turns."
 fallbacks = ["glm-flash", "terra"]
 # True names a lane seats may run.
 seats = true
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"

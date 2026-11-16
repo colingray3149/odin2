@@ -390,11 +390,10 @@ pub(super) fn arm_repo_watch(
         let mut ticker = tokio::time::interval(REPO_WATCH_TICK);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let state = heads_path(&state_root);
+        let mut unwoken: Vec<(String, String)> = Vec::new();
         loop {
             ticker.tick().await;
-            if !runtime.follows(RoutineEvent::RepoPush)
-                && runtime.seats_watching("repo_watch").is_empty()
-            {
+            if !runtime.follows(RoutineEvent::RepoPush) && !runtime.any_seat_watches("repo_watch") {
                 continue;
             }
             let (pass_runtime, projects, state, pool, cancel) = (
@@ -408,13 +407,42 @@ pub(super) fn arm_repo_watch(
             match tokio::task::spawn_blocking(read).await {
                 Ok(Ok(pushed)) => {
                     for (id, detail) in pushed {
-                        crate::child_report::wake_declared(&runtime, "repo_watch", &id, &detail)
-                            .await;
+                        // A later push of the same branch replaces an undelivered one.
+                        let branch = id
+                            .rsplit_once(':')
+                            .map_or(id.as_str(), |(branch, _)| branch);
+                        unwoken.retain(|(kept, _): &(String, String)| {
+                            kept.rsplit_once(':')
+                                .map_or(kept.as_str(), |(kept, _)| kept)
+                                != branch
+                        });
+                        unwoken.push((id, detail));
                     }
                 }
                 Ok(Err(error)) => tracing::error!("repo watch state not recorded: {error}"),
                 Err(error) => tracing::error!("repo watch pass failed: {error}"),
             }
+            // The heads file records a push once it is read; its wake stays
+            // here until a watching session takes it, so a push seen while no
+            // supervisor is open reaches the next one.
+            let mut kept = Vec::new();
+            for (id, detail) in unwoken.drain(..) {
+                let project = id
+                    .strip_prefix("push:")
+                    .and_then(|rest| rest.split(':').next());
+                if !crate::child_report::wake_declared(
+                    &runtime,
+                    "repo_watch",
+                    project,
+                    &id,
+                    &detail,
+                )
+                .await
+                {
+                    kept.push((id, detail));
+                }
+            }
+            unwoken = kept;
         }
     });
 }
@@ -449,19 +477,60 @@ mod tests {
         let remote = SilentRemote::start();
         let (_fixture, project, owner) = watched(&remote);
         let cancel = AtomicBool::new(false);
-        let runner = Lifecycle::new(Some(&*owner.pool), &cancel, StdDuration::from_secs(2));
+        // Open the lifecycle owner before starting the read's deadline; worker
+        // registration and test-harness startup can be slow under suite load.
+        let setup = Lifecycle::new(Some(&*owner.pool), &cancel, StdDuration::from_secs(60));
+        setup
+            .git(&project, &["--version"], None)
+            .expect("warm lifecycle owner");
+        let bound = StdDuration::from_secs(30);
+        let runner = Lifecycle::new(Some(&*owner.pool), &cancel, bound);
         let started = std::time::Instant::now();
         let read = remote_heads(&runner, &project);
         let elapsed = started.elapsed();
-        assert!(read.is_err(), "a silent origin lists no heads: {read:?}");
-        assert!(remote.connections() >= 1, "the read reached the origin");
+        assert_eq!(read.unwrap_err(), "scoped test deadline exceeded");
+        assert!(
+            remote.reached(1, StdDuration::from_secs(10)),
+            "the read reached the origin"
+        );
         assert!(
             remote.all_closed_within(StdDuration::from_secs(10)),
             "the expired read's Git is gone"
         );
         assert!(
-            elapsed < StdDuration::from_secs(15),
+            elapsed < bound + StdDuration::from_secs(15),
             "the read outlived its deadline and proved stop: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn dropping_the_watch_cancels_an_in_flight_origin_read() {
+        let remote = SilentRemote::start();
+        let (_fixture, project, owner) = watched(&remote);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let guard = CancelOnDrop(Arc::clone(&cancel));
+        let (reached, read) = std::thread::scope(|scope| {
+            let read = scope.spawn(|| {
+                let runner =
+                    Lifecycle::new(Some(&*owner.pool), &cancel, StdDuration::from_secs(120));
+                remote_heads(&runner, &project)
+            });
+            let reached = remote.reached(1, StdDuration::from_secs(60));
+            drop(guard);
+            (reached, read.join().expect("watch read thread"))
+        });
+        assert!(reached, "the read reached the origin before cancellation");
+        assert_eq!(read.unwrap_err(), "scoped test cancelled");
+        assert!(
+            remote.all_closed_within(StdDuration::from_secs(10)),
+            "the cancelled read's Git is gone"
+        );
+        let runner = Lifecycle::new(Some(&*owner.pool), &cancel, StdDuration::from_secs(30));
+        assert!(remote_heads(&runner, &project).is_err());
+        assert_eq!(
+            remote.connections(),
+            1,
+            "cancellation prevents another read"
         );
     }
 
@@ -490,6 +559,7 @@ mod tests {
                         matches: None,
                         lead_minutes: None,
                         account: None,
+                        project: None,
                     },
                     action: odin_registry::schema::RoutineActionToml {
                         kind: odin_registry::schema::RoutineActionKind::Brief,

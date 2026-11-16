@@ -54,7 +54,11 @@ pub fn render(objects: &[RegistryObject], seat: &str) -> Result<Sheet, String> {
             if let Some(example) = toolset.examples.iter().find(|example| {
                 example_op(example).is_some_and(|op| ops.iter().any(|held| held == op))
             }) {
-                lines.push(format!("- `{example}`"));
+                lines.push(if example.starts_with(*group) {
+                    format!("- `{example}`")
+                } else {
+                    format!("- `{group} {example}`")
+                });
             }
         }
         sections.push(String::new());
@@ -86,14 +90,18 @@ fn op_of(grant: &Grant) -> String {
         .unwrap_or_else(|| grant.id.rsplit('.').next().unwrap_or(grant.id).to_owned())
 }
 
+/// One sheet line.
 fn entry(name: &str, grant: &Grant) -> String {
-    let asks = grant.capability.approval_policy == CapabilityApprovalToml::Operator
-        && grant.capability.approval_decider.is_owner();
-    format!(
-        "- **{name}**: {}{}",
-        first_sentence(&grant.capability.description),
-        if asks { " [asks you first]" } else { "" }
-    )
+    let description = grant.capability.description.trim();
+    let marker = match (
+        grant.capability.approval_policy == CapabilityApprovalToml::Operator,
+        grant.capability.approval_decider.is_owner(),
+    ) {
+        (true, true) => " [asks you first]",
+        (true, false) => " [decided by declaration]",
+        (false, _) => "",
+    };
+    format!("- **{name}**: {}{marker}", first_sentence(description))
 }
 
 #[cfg(test)]
@@ -144,5 +152,41 @@ mod tests {
     fn internal_capabilities_are_absent() {
         let sheet = sheet();
         assert!(!sheet.contains("discord_intake") && !sheet.contains("**intake**"));
+    }
+
+    #[test]
+    fn try_saying_lines_name_the_toolset() {
+        let rendered = sheet();
+        let section: Vec<&str> = rendered
+            .lines()
+            .skip_while(|line| *line != "## Try saying")
+            .skip(1)
+            .take_while(|line| line.starts_with("- "))
+            .collect();
+        assert!(!section.is_empty());
+        assert!(
+            section.iter().all(|line| !line.starts_with("- `{")),
+            "{section:?}"
+        );
+    }
+
+    #[test]
+    fn desktop_lines_say_what_each_op_does() {
+        let rendered = sheet();
+        assert!(
+            rendered.contains("- **device**: Bluetooth") && rendered.contains("- **scene**: Runs")
+        );
+        assert!(!rendered.contains("Used on the desktop only when"));
+    }
+
+    #[test]
+    fn declaration_decided_ops_are_marked() {
+        let rendered = sheet();
+        let marked = rendered
+            .lines()
+            .filter(|line| line.ends_with("[decided by declaration]"))
+            .count();
+        assert!(marked > 0, "no declaration-decided op is marked");
+        assert!(!rendered.contains("[asks you first] [decided"));
     }
 }

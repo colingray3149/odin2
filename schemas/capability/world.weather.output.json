@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/world.weather.output.json",
+  "title": "world.weather output",
+  "type": "object",
+  "properties": {
+    "done": {
+      "type": "string"
+    },
+    "failed": {
+      "type": "string"
+    },
+    "capability": {
+      "type": "string"
+    }
+  }
+}

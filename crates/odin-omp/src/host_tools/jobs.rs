@@ -515,7 +515,7 @@ mod tests {
         let (id, _) = jobs
             .start(
                 jobs.try_reserve().expect("slot"),
-                "brain_search",
+                "knowledge_search",
                 &json!({ "query": "CS295 class notes" }),
                 Duration::from_secs(180),
                 Instant::now()
@@ -545,7 +545,7 @@ mod tests {
                     barrier.wait();
                     jobs.start(
                         reservation,
-                        "brain_search",
+                        "knowledge_search",
                         &json!({ "query": "notes" }),
                         Duration::from_secs(180),
                         Instant::now(),

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/odin.plan_get.output.json",
+  "title": "odin.plan_get output",
+  "type": "object",
+  "properties": {
+    "revision": { "type": "integer" },
+    "accepted": { "type": "boolean" },
+    "acceptedBy": { "type": "string" }
+  }
+}

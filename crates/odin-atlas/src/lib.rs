@@ -1035,7 +1035,7 @@ mod tests {
             root.join("registry/projects/node_modules/project.toml"),
             "schema = \"odin.registry.v1\"\nkind = \"project\"\nenabled = true\n\
              description = \"An ordinary declared project\"\nsource_root = \"\"\n\
-             default_seat = \"reader\"\nmemory_namespaces = []\nartifact_policy = \"standard\"\n",
+             default_seat = \"reader\"\nmemory_namespaces = []\n",
         )
         .expect("write declared project");
         let atlas = build(AtlasSources::new(root)).expect("build atlas");

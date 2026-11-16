@@ -75,22 +75,6 @@ pub(super) fn bind_hermes_brains(
             })
             .collect(),
     );
-    runtime.set_memory_grants(
-        factory
-            .brains()
-            .iter()
-            .map(|(seat, brain)| {
-                let grant = brain.policy().memory_write_grant(seat);
-                (
-                    seat.clone(),
-                    odin_hermes::runtime::MemoryGrant {
-                        own: grant.own,
-                        profile: grant.profile,
-                    },
-                )
-            })
-            .collect(),
-    );
     runtime.set_profile_namespace(factory.brains().values().find_map(|brain| {
         brain.policy().profile_namespace.as_ref().map(|id| {
             id.as_str()
@@ -99,19 +83,6 @@ pub(super) fn bind_hermes_brains(
                 .to_owned()
         })
     }));
-    runtime.set_review_lanes(
-        factory
-            .brains()
-            .iter()
-            .filter_map(|(seat, brain)| {
-                brain
-                    .policy()
-                    .review_lane
-                    .clone()
-                    .map(|lane| (seat.clone(), lane))
-            })
-            .collect(),
-    );
     // Pre-write scoping: the generated write refuses typed before any
     // IO unless the writing session's project declares exactly one
     // reachable memory namespace.

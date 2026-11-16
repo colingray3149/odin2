@@ -72,8 +72,10 @@ impl RuntimeCommandPort {
             .approval(&command.approval_id)
             .map_err(|error| live::HuginnProtocolError::unavailable("approvalProjection", error))?
             .is_some_and(|approval| {
-                self.owner_preview
-                    .contains(approval.scope.capability_id.as_str())
+                approval.scope.capability_id.as_str() == "plan.root-consent"
+                    || self
+                        .owner_preview
+                        .contains(approval.scope.capability_id.as_str())
             });
         if command.decision == live::ApprovalDecision::Approve
             && ledger
@@ -92,6 +94,7 @@ impl RuntimeCommandPort {
                 if stored.arguments_hash != spec.arguments_hash
                     || stored.target_id != spec.target_id
                     || stored.expected_desired_revision != spec.expected_desired_revision
+                    || stored.issuer != spec.issuer
                 {
                     return Err(live::HuginnProtocolError::Conflict {
                         code: "commandIdReuse".to_owned(),

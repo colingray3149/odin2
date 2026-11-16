@@ -149,6 +149,9 @@ Claude is a workload driver, not a seat. These rows wait on the owner's account.
 | pod.emergency-stop | Emergency-stop, then resume. | Jobs and odind stop. After resume, Sinmara answers. | no checker | global kill; owner window |
 | lifecycle.browser-containment | Open a browser in a pod and report the frame. | A frame artifact. Off-host navigation is refused. | frame | — |
 | board.simulation | Register a simulation mission whose run contains {tag}. | The mission is visible, with its checkpoint and renderers. | tagged run's mission has a checkpoint and renderers | — |
+| board.simulation.render | Show me the latest frame of the stub mission. | The stub pod's `ODIN-STATUS` counters and its moving PNG or SVG `ODIN-RENDER` frame in `odin view`'s Missions tab (Kitty or SIXEL graphics, text fallback otherwise); opened previews fit the available viewport. Sinmara sends the original frame in chat. | no checker | a stub pod printing `ODIN-STATUS` and `ODIN-RENDER` |
+
+`ODIN-RENDER` frames may be PNG or passive SVG. SVG frames reject scripts, links, external resources, animation, stylesheets and processing instructions; unsupported SVG features are refused rather than passed through. The view rasterizes SVG to a bounded PNG preview without changing the original SVG artifact.
 
 ### 5.9 Fleet
 

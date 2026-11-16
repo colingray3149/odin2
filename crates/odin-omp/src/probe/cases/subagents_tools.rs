@@ -47,7 +47,7 @@ pub const READ_TOOL_EVENTS: ConformanceCaseId = ConformanceCaseId::new(12);
 pub const HOST_TOOL_AND_URI: ConformanceCaseId = ConformanceCaseId::new(13);
 
 mod bridge;
-mod host_tool;
+pub(crate) mod host_tool;
 mod read_tool;
 mod shared;
 mod subscription;

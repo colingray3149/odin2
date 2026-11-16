@@ -12,9 +12,6 @@ pub const SIDE_CHANNEL_ACTIVE_BYTE_BUDGET: usize = 16 * 1024 * 1024;
 /// active-table entry, owned task, blocking effect, result send, and outcome
 /// journal. Admission acquires a permit before cloning request state.
 pub const DISPATCH_PERMITS: usize = 16;
-/// The most a call's own `wait_seconds` may extend its job deadline; the seat
-/// tools that accept `wait_seconds` refuse a larger value.
-const MAX_WAIT_SECONDS: u64 = 600;
 #[cfg(test)]
 const TEST_CALL_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -420,68 +417,27 @@ impl Shared {
                 ignored,
             } => {
                 let operations = self.operations.projection_view(&self.operation_binding)?;
-                let operation_binding = self.operation_binding.clone();
-                let session = execution.session_id().clone();
-                // The background slot is reserved only if the call is still
-                // running at the seat's inline deadline: a call that answers
-                // inline never takes one, and a full board at the deadline
-                // keeps the call running inline instead of refusing it.
-                let reserved = operations
-                    .jobs()
-                    .filter(|jobs| {
-                        jobs.runs_in_background(scope.seat.as_ref(), &name)
-                            && !operations.reports_delegated_completion(&name)
-                    })
-                    .map(|jobs| ReservedCall {
-                        deadline: operations
-                            .declared_timeout(&name)
-                            .unwrap_or(crate::host_tools::jobs::DEFAULT_DEADLINE)
-                            .max(crate::host_tools::jobs::MIN_DEADLINE)
-                            + Duration::from_secs(
-                                arguments["wait_seconds"]
-                                    .as_u64()
-                                    .unwrap_or(0)
-                                    .min(MAX_WAIT_SECONDS),
-                            ),
-                        arguments: arguments.clone(),
-                        jobs: Arc::clone(jobs),
-                    });
-                let dispatch_name = name.clone();
-                let request = request_id.clone();
-                let operation = move || -> Result<Value, BridgeError> {
-                    // Every production tool dispatch enters the sole
-                    // operation authority. An unlisted/unbound familiar name
-                    // is rejected by HostToolOperations before any handler.
-                    let result = operations.dispatch_tool(
-                        SessionOperationContext {
-                            binding: &operation_binding,
-                            session: &session,
-                            scope: &scope,
-                            execution: Some(&execution),
-                        },
-                        &dispatch_name,
-                        None,
-                        arguments,
-                        &request,
-                    )?;
-                    let result = with_ignored(result, &ignored);
-                    let error = result
-                        .get("isError")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
-                    let (result, images) = split_images(result);
-                    let text =
-                        model_tool_text(&result).map_err(|cause| BridgeError::Serialization {
-                            detail: cause.to_string(),
-                        })?;
-                    let mut content = vec![json!({"type": "text", "text": text})];
-                    content.extend(images);
-                    Ok(json!({
-                        "content": content,
-                        "details": result,
-                        "isError": error,
-                    }))
+                let reserved = crate::host_tools::runner::reserve_background(
+                    &operations,
+                    &scope,
+                    &name,
+                    &arguments,
+                );
+                let dispatch = crate::host_tools::runner::ToolDispatch {
+                    operations,
+                    binding: self.operation_binding.clone(),
+                    session: execution.session_id().clone(),
+                    scope,
+                    execution,
+                    name: name.clone(),
+                    arguments,
+                    ignored,
+                    request_id: request_id.clone(),
                 };
+                // Every production tool dispatch enters the sole operation
+                // authority. An unlisted/unbound familiar name is rejected by
+                // HostToolOperations before any handler.
+                let operation = move || -> Result<Value, BridgeError> { Ok(dispatch.run()?) };
                 self.run_side_channel(request_id, kind, name, permit, operation, reserved)
                     .await?;
             }
@@ -526,7 +482,7 @@ impl Shared {
             "web_search".to_owned(),
             permit,
             operation,
-            Some(ReservedCall {
+            Some(crate::host_tools::runner::ReservedCall {
                 jobs,
                 arguments: json!({}),
                 deadline: TEST_CALL_TIMEOUT,
@@ -550,59 +506,13 @@ impl Shared {
         name: String,
         _permit: OwnedSemaphorePermit,
         operation: impl FnOnce() -> Result<Value, BridgeError> + Send + 'static,
-        call: Option<ReservedCall>,
+        call: Option<crate::host_tools::runner::ReservedCall>,
     ) -> Result<(), BridgeError> {
-        // One real start time: the job's run time and its absolute deadline
-        // both measure from here, not from when the call detaches.
-        let started = std::time::Instant::now();
-        let progress = odin_domain::progress::Slot::default();
-        let slot = progress.clone();
-        let mut task =
-            tokio::task::spawn_blocking(move || odin_domain::progress::scoped(slot, operation));
-        let outcome = match call {
-            None => (&mut task).await,
-            Some(call) => {
-                match tokio::time::timeout_at(
-                    tokio::time::Instant::from_std(started + call.jobs.inline()),
-                    &mut task,
-                )
-                .await
-                {
-                    Ok(outcome) => outcome,
-                    Err(_) => match call.jobs.try_reserve() {
-                        Ok(reservation) => {
-                            match call.jobs.start(
-                                reservation,
-                                &name,
-                                &call.arguments,
-                                call.deadline,
-                                started,
-                                progress,
-                            ) {
-                                Ok((id, result)) => {
-                                    let watched = BackgroundJob {
-                                        jobs: Arc::clone(&call.jobs),
-                                        deadline_at: started + call.deadline,
-                                    };
-                                    tokio::spawn(watch_job(watched, id, task));
-                                    return self
-                                        .settle_side_call(request_id, kind, name, result)
-                                        .await;
-                                }
-                                Err(reason) => {
-                                    // The journal could not record the job. The
-                                    // effect already started, so keep its permit
-                                    // and deliver its eventual result inline.
-                                    tracing::warn!("call remains inline: {reason}");
-                                    (&mut task).await
-                                }
-                            }
-                        }
-                        // The board is full at the deadline: the call keeps
-                        // running inline to completion.
-                        Err(_board_full) => (&mut task).await,
-                    },
-                }
+        let outcome = match crate::host_tools::runner::run_detachable(&name, operation, call).await
+        {
+            crate::host_tools::runner::Ran::Done(outcome) => outcome,
+            crate::host_tools::runner::Ran::Detached(result) => {
+                return self.settle_side_call(request_id, kind, name, result).await;
             }
         };
         match outcome {
@@ -893,30 +803,6 @@ impl Shared {
     }
 }
 
-/// Takes a handler's `images` (OMP `ImageContent` blocks) out of its result:
-/// they ride the tool result as image blocks, never as text or `details`.
-pub(super) fn split_images(mut result: Value) -> (Value, Vec<Value>) {
-    let is_image = |block: &Value| {
-        block.get("type").and_then(Value::as_str) == Some("image")
-            && block.get("data").is_some_and(Value::is_string)
-            && block.get("mimeType").is_some_and(Value::is_string)
-    };
-    let all_images = result
-        .get("images")
-        .and_then(Value::as_array)
-        .is_some_and(|images| images.iter().all(is_image));
-    if !all_images {
-        return (result, Vec::new());
-    }
-    match result
-        .as_object_mut()
-        .and_then(|object| object.remove("images"))
-    {
-        Some(Value::Array(images)) => (result, images),
-        _ => (result, Vec::new()),
-    }
-}
-
 /// A tool result as journaled: each image block keeps its type and size,
 /// not its base64 data.
 pub(super) fn without_image_data(result: &Value) -> Value {
@@ -964,56 +850,6 @@ pub(super) fn side_result_frame(request_id: &str, kind: SideChannelKind, result:
     }
 }
 
-/// A call of the conversation seat that becomes a job if it is still
-/// running at its inline deadline. The slot itself is taken only then.
-struct ReservedCall {
-    jobs: Arc<crate::host_tools::jobs::JobBoard>,
-    arguments: Value,
-    deadline: Duration,
-}
-
-struct BackgroundJob {
-    jobs: Arc<crate::host_tools::jobs::JobBoard>,
-    /// The call's absolute deadline, measured from its real start.
-    deadline_at: std::time::Instant,
-}
-
-/// Waits out a job and reports how it ended. Past its deadline it fails by
-/// name; the call itself may still finish then, but nothing reports it.
-async fn watch_job(
-    job: BackgroundJob,
-    id: String,
-    task: tokio::task::JoinHandle<Result<Value, BridgeError>>,
-) {
-    let remaining = job
-        .deadline_at
-        .saturating_duration_since(std::time::Instant::now());
-    let outcome = match tokio::time::timeout(remaining, task).await {
-        Ok(Ok(Ok(result))) => {
-            let text = result["content"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|block| block["text"].as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
-            if result["isError"].as_bool() == Some(true) {
-                Err(text)
-            } else {
-                Ok(text)
-            }
-        }
-        Ok(Ok(Err(error))) => Err(model_error_text(&error.to_string())),
-        Ok(Err(error)) => Err(format!("the call's worker failed: {error}")),
-        Err(_) => Err(
-            "it did not finish within its deadline, so it was given up (it may still \
-             complete, but nothing will report it)"
-                .to_owned(),
-        ),
-    };
-    job.jobs.finish(&id, outcome);
-}
-
 /// The pinned `isError` result payload answering a failed side-channel call,
 /// so the child's pending request always terminates.
 pub(super) fn side_error_result(
@@ -1039,7 +875,7 @@ pub(super) fn side_error_result(
     }
 }
 
-pub(super) fn uri_result_value(resolved: &UriResult) -> Value {
+pub(crate) fn uri_result_value(resolved: &UriResult) -> Value {
     let mut content_type = match resolved.content_type.as_str() {
         "text/markdown" => "text/markdown",
         "application/json" => "application/json",

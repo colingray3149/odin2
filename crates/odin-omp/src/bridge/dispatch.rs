@@ -301,6 +301,7 @@ impl Shared {
                     shared_lock(&self.correlation, "correlation")?.settle_frame(value);
                     match value.get("type").and_then(Value::as_str) {
                         Some("agent_end") => self.note_session_turn(value),
+                        Some("turn_end") => self.note_pod_checkpoint(value),
                         Some("auto_compaction_end") => self.open_context_epoch(),
                         _ => {}
                     }

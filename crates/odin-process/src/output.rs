@@ -14,6 +14,10 @@ impl CapturedOutput {
     pub fn truncated(&self) -> bool {
         self.truncated
     }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
 }
 
 pub(crate) struct OutputCollector {
@@ -31,11 +35,12 @@ impl OutputCollector {
         }
     }
 
-    pub(crate) fn drain(&mut self, reader: &mut impl Read) -> io::Result<()> {
+    /// Reads what a nonblocking pipe holds now; `true` once it reached end of file.
+    pub(crate) fn drain(&mut self, reader: &mut impl Read) -> io::Result<bool> {
         let mut buffer = [0_u8; 8_192];
         loop {
             match reader.read(&mut buffer) {
-                Ok(0) => return Ok(()),
+                Ok(0) => return Ok(true),
                 Ok(count) => {
                     let remaining = self.ceiling.saturating_sub(self.bytes.len());
                     let retained = count.min(remaining);
@@ -44,7 +49,8 @@ impl OutputCollector {
                         self.exceeded = true;
                     }
                 }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(false),
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
                 Err(error) => return Err(error),
             }
         }

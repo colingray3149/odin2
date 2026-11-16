@@ -19,6 +19,7 @@ pub mod artifact;
 pub mod audit;
 pub mod browser_control;
 pub mod budget;
+pub mod campaign;
 pub mod checkpoint;
 pub mod command;
 pub mod conversation_delivery;
@@ -32,6 +33,7 @@ pub mod live;
 pub mod materialized;
 pub mod migration;
 pub mod operation;
+pub mod operation_fence;
 pub mod plan;
 pub mod plan_acceptance;
 pub mod pod;
@@ -42,6 +44,7 @@ pub mod stop;
 pub mod task_note;
 pub mod trace;
 pub mod worker;
+pub use operation_fence::OperationFence;
 #[derive(Debug, Error)]
 pub enum LedgerError {
     #[error("SQLite ledger operation failed: {0}")]
@@ -124,6 +127,7 @@ pub struct Ledger {
     connection: Connection,
     additional: Vec<migration::OwnedMigration>,
     commit_events: tokio::sync::watch::Sender<()>,
+    operation_fences: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl Ledger {
@@ -146,6 +150,7 @@ impl Ledger {
             connection,
             additional: Vec::new(),
             commit_events,
+            operation_fences: Default::default(),
         })
     }
 
@@ -171,6 +176,7 @@ impl Ledger {
             connection,
             additional: migration::OwnedMigration::capture(additional),
             commit_events,
+            operation_fences: Default::default(),
         })
     }
 

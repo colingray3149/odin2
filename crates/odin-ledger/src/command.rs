@@ -288,15 +288,33 @@ impl Ledger {
     /// the Hermes status bus scans the whole row set, so a transition
     /// recorded before its bus tracking step still projects.
     pub fn commands(&self) -> LedgerResult<Vec<Command>> {
-        let mut statement = self.connection().prepare(
+        self.select_commands("ORDER BY command_id", [])
+    }
+
+    /// The unsettled command rows whose id starts with `id_prefix` (no
+    /// glob characters), in id order: a recovery sweep reads only the rows
+    /// it may still act on, through the primary key's index.
+    pub fn unsettled_commands(&self, id_prefix: &str) -> LedgerResult<Vec<Command>> {
+        self.select_commands(
+            "WHERE command_id GLOB ?1 AND terminal_status IS NULL ORDER BY command_id",
+            [format!("{id_prefix}*")],
+        )
+    }
+
+    fn select_commands(
+        &self,
+        clause: &str,
+        params: impl rusqlite::Params,
+    ) -> LedgerResult<Vec<Command>> {
+        let mut statement = self.connection().prepare(&format!(
             "SELECT revision, idempotency_key, correlation_id, causation_id, issuer,
                     approval_id, target_kind, target_id, capability_id, capability_version,
                     arguments_hash, arguments_json, expected_desired_revision, issued_at,
                     expires_at, accepted_at, terminal_status, terminal_result_json, terminal_at,
                     command_id
-             FROM commands ORDER BY command_id",
-        )?;
-        let rows = statement.query_map([], |row| {
+             FROM commands {clause}"
+        ))?;
+        let rows = statement.query_map(params, |row| {
             Ok((row.get::<_, String>(19)?, read_command_row(row)?))
         })?;
         rows.map(|row| {

@@ -73,6 +73,14 @@
             "minLength": 1,
             "maxLength": 2048,
             "description": "A running pod's status delta: each field of its newest ODIN-STATUS report, with the previous value when it changed, and how long ago it was reported."
+          },
+          "log": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "string"
+            },
+            "description": "The newest lines of its newest pod's log, redacted, when logLines asked for them."
           }
         },
         "required": [

@@ -230,6 +230,9 @@ impl ConversationRoot {
                 .as_ref()
                 .is_some_and(|summary| summary.state == LiveSessionState::Ended)
             {
+                tracing::info!(
+                    "odin-hermes: conversation session={session_raw} is Ended; it will not be reopened"
+                );
                 return Err(InitializeError::TerminalClosed {
                     session: session_raw,
                 });

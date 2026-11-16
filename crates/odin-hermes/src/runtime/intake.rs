@@ -342,15 +342,37 @@ impl HermesRuntime {
         say: &odin_domain::CommandId,
         text: &str,
     ) -> Result<Value, String> {
+        self.admit_surface_say(surface, say, text, &[])
+    }
+
+    /// [`Self::admit_surface_line`] with the photos sent beside the line:
+    /// each is staged under the mirror's intake like a Discord photo, so
+    /// the turn carries it as an image.
+    pub fn admit_surface_say(
+        &self,
+        surface: &str,
+        say: &odin_domain::CommandId,
+        text: &str,
+        images: &[odin_domain::huginn::ConversationImage],
+    ) -> Result<Value, String> {
         let discord = self
             .settings
             .discord
             .as_ref()
             .ok_or_else(|| "the discord conversation surface is not configured".to_owned())?;
         let text = text.trim();
-        if text.is_empty() {
+        if text.is_empty() && images.is_empty() {
             return Err("an owner line must not be empty".to_owned());
         }
+        let photos = match images.len() {
+            1 => "1 photo".to_owned(),
+            count => format!("{count} photos"),
+        };
+        let mirrored = match (text.is_empty(), images.is_empty()) {
+            (_, true) => text.to_owned(),
+            (true, false) => format!("({photos})"),
+            (false, false) => format!("{text} ({photos})"),
+        };
         let recorded = self
             .store
             .surface_mirror(say)
@@ -398,7 +420,7 @@ impl HermesRuntime {
                     return Ok(json!({ "status": "interrupted" }));
                 }
                 let posted = match self.notify_deliverable(&format!(
-                    "{}{surface}): {text}",
+                    "{}{surface}): {mirrored}",
                     mirror_prefix(&discord.owner_name)
                 )) {
                     Ok(posted) => posted,
@@ -433,12 +455,22 @@ impl HermesRuntime {
                     .map_err(|error| format!("could not record the say's mirror: {error}"))?
             }
         };
+        let content = if images.is_empty() {
+            text.to_owned()
+        } else {
+            let lines = self.stage_surface_images(&mirror, images);
+            if text.is_empty() {
+                lines
+            } else {
+                format!("{text}\n{lines}")
+            }
+        };
         let message = crate::discord::DiscordMessage {
             id: mirror,
             channel_id: discord.notify_channel_id.clone(),
             author_id: discord.owner_user_id.clone(),
             guild_id: None,
-            content: text.to_owned(),
+            content,
             attachments: Vec::new(),
         };
         self.admit_message(&message)

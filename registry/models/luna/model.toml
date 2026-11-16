@@ -1,0 +1,19 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "GPT-6 Luna on the ChatGPT Pro Codex account: the smallest ChatGPT lane, for the brain's bulk passes."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/luna"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "openai-codex/gpt-6-luna"
+# frontier, everyday or fast-cheap.
+tier = "fast-cheap"
+# Account pin holding this card's credentials.
+account = "chatgpt"
+# One line naming when this card is the right pick.
+strengths = "Cheapest ChatGPT lane ($0.10/$0.50 per M tokens, 272k window, image input): bulk extract, distil and caption fallback. Not a seat lane."
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"
+
+[thinking]
+default = "low"

@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "knowledge"
+op = "read"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Reads a brain page or section. cite=true opens a (src: ...) pointer's original with author and date. A folder outside brain/ lists its entries; waiting/research lists research cards."
+handler = { id = "knowledge_read" }
+input_schema = "schemas/capability/knowledge.read.input.json"
+output_schema = "schemas/capability/knowledge.read.output.json"
+effect_class = "R0"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_knowledge_read_evidence" }
+tests = [
+  "odin-hermes runtime::knowledge::tests::each_declared_knowledge_tool_forwards_its_arguments_and_the_seat",
+]

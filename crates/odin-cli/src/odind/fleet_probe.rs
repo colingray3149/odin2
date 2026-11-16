@@ -25,31 +25,16 @@ pub(super) struct SshZellijProbe {
     pub(super) ssh: std::path::PathBuf,
 }
 
-/// Extracts the session names from one `zellij list-sessions -n` listing:
-/// the first whitespace-delimited token of every non-empty line (the
-/// session name; the rest of each line is the creation stamp). No tokens
-/// at all is not an empty-live reading — it is an unusable answer, and the
-/// caller resolves it typed.
-fn session_names(stdout: &str) -> Vec<String> {
-    stdout
-        .lines()
-        .filter_map(|line| line.split_whitespace().next())
-        .filter(|token| !token.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
 /// Only zellij's exact no-sessions marker means a reachable host with zero sessions.
 fn classify(success: bool, stdout: &str, stderr: &str) -> ZellijSessions {
     if success {
-        let names = session_names(stdout);
-        // A successful exit that names no session is an unusable answer (a
-        // dead daemon socket, a truncated transport), not proof of a live
-        // zellij with zero sessions.
-        return if names.is_empty() {
+        // A successful exit that lists nothing is an unusable answer (a dead
+        // daemon socket, a truncated transport), not proof of a live zellij
+        // with zero sessions. Exited sessions still list but are not live.
+        return if stdout.trim().is_empty() {
             ZellijSessions::Unreachable
         } else {
-            ZellijSessions::Live(names)
+            ZellijSessions::Live(odin_omp::live::target::parse_live_sessions(stdout))
         };
     }
     // zellij exits non-zero WITH this exact marker when the host is
@@ -135,6 +120,15 @@ mod tests {
         assert_eq!(
             classify(true, "odin [Created 2h ago]\n", ""),
             ZellijSessions::Live(vec!["odin".to_owned()])
+        );
+        // An exited session is listed but not live.
+        assert_eq!(
+            classify(
+                true,
+                "m89 [Created 4days ago] (EXITED - attach to resurrect)\n",
+                ""
+            ),
+            ZellijSessions::Live(Vec::new())
         );
         // A successful exit naming nothing is unusable, not zero-live.
         assert_eq!(classify(true, "", ""), ZellijSessions::Unreachable);

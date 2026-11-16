@@ -23,7 +23,7 @@ pub struct HarnessToml {
     /// Without a model flag, reject model selection and use the agent default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_arg: Option<String>,
-    /// Process and terminal agents receive the MCP config flag; ACP receives the bridge in session/new.
+    /// Process and terminal agents receive the MCP config flag.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_config_arg: Option<String>,
     /// Substitute the reported agent_session ID; absence starts a new conversation per prompt.
@@ -53,7 +53,6 @@ pub const HARNESS_MAX_BRIEF_BYTES: usize = 2048;
 #[serde(rename_all = "lowercase")]
 pub enum HarnessProtocol {
     Omp,
-    Acp,
     /// Start one process per prompt and decode output line by line.
     Process,
     /// Keep the terminal agent for the session, typing prompts and following its transcript.
@@ -83,9 +82,7 @@ pub enum HarnessPrompt {
 #[serde(rename_all = "kebab-case")]
 pub enum HarnessOutput {
     OmpRpc,
-    Acp,
     ClaudeStreamJson,
-    CodexJson,
     /// Treat every plain-text line as assistant output.
     Text,
 }
@@ -94,9 +91,7 @@ impl HarnessOutput {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::OmpRpc => "omp-rpc",
-            Self::Acp => "acp",
             Self::ClaudeStreamJson => "claude-stream-json",
-            Self::CodexJson => "codex-json",
             Self::Text => "text",
         }
     }
@@ -126,11 +121,7 @@ impl HarnessToml {
                 self.protocol,
                 HarnessProtocol::Process | HarnessProtocol::Terminal
             ) {
-                problems.push(
-                    "mcp_config_arg is for a process or terminal harness (an acp agent gets \
-                     the bridge in session/new)"
-                        .to_owned(),
-                );
+                problems.push("mcp_config_arg is for a process or terminal harness".to_owned());
             }
             if !flag.starts_with("--") || flag.contains(char::is_whitespace) {
                 problems
@@ -155,16 +146,8 @@ impl HarnessToml {
                         .push("an omp harness is governed (its tools pass the kernel)".to_owned());
                 }
             }
-            HarnessProtocol::Acp => {
-                if self.prompt != HarnessPrompt::Rpc || self.output != HarnessOutput::Acp {
-                    problems
-                        .push("an acp harness takes prompt = \"rpc\", output = \"acp\"".to_owned());
-                }
-            }
             HarnessProtocol::Terminal => {
-                if self.prompt != HarnessPrompt::Keys
-                    || matches!(self.output, HarnessOutput::OmpRpc | HarnessOutput::Acp)
-                {
+                if self.prompt != HarnessPrompt::Keys || self.output == HarnessOutput::OmpRpc {
                     problems.push(
                         "a terminal harness takes prompt = \"keys\" and the line output family \
                          of its transcript files"
@@ -193,11 +176,11 @@ impl HarnessToml {
             HarnessProtocol::Process => {
                 if self.prompt == HarnessPrompt::Rpc
                     || self.prompt == HarnessPrompt::Keys
-                    || matches!(self.output, HarnessOutput::OmpRpc | HarnessOutput::Acp)
+                    || self.output == HarnessOutput::OmpRpc
                 {
                     problems.push(
                         "a process harness takes prompt = \"argv\" or \"stdin\" and a line \
-                         output family (claude-stream-json, codex-json, text)"
+                         output family (claude-stream-json, text)"
                             .to_owned(),
                     );
                 }

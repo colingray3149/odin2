@@ -207,10 +207,6 @@ pub trait ConversationEgress: Send + Sync {
     /// and `ask` is the owner's message it answers. Hosts gate what the turn
     /// may touch on it.
     fn turn_opened(&self, _provenance: Provenance, _ask: &str) {}
-
-    /// One owner turn was answered: the seat may learn from it, in the
-    /// background.
-    fn turn_answered(&self, _exchange: crate::runtime::review::Exchange) {}
 }
 
 /// A status post that failed, and whether the message may exist anyway (the
@@ -413,7 +409,15 @@ impl KernelApprovals for DaemonKernelApprovals {
                 owner_user_id,
                 now,
             ) {
-                runtime.withdraw_unasked_question(&self.ledger, &approval_id, &error);
+                let root_plan = self
+                    .ledger
+                    .lock()
+                    .root_plan_consent(&approval_id)
+                    .map_err(|error| error.to_string())?
+                    .is_some();
+                if !root_plan {
+                    runtime.withdraw_unasked_question(&self.ledger, &approval_id, &error);
+                }
             }
         }
         Ok(runtime
@@ -643,12 +647,6 @@ impl ConversationEgress for std::sync::Weak<HermesRuntime> {
             .map(|runtime| runtime.background_jobs())
             .unwrap_or_default()
     }
-
-    fn turn_answered(&self, exchange: crate::runtime::review::Exchange) {
-        if let Some(runtime) = self.upgrade() {
-            runtime.review_after(exchange);
-        }
-    }
 }
 
 /// Everything the root needs, exactly declared.
@@ -702,4 +700,6 @@ pub struct ConversationRootConfig {
 pub struct ClassRoute {
     pub class: &'static str,
     pub gateway: String,
+    /// The seat's declared escalation lane, preferred over the next class's pick while it has room.
+    pub escalation: Option<String>,
 }

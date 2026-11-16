@@ -68,6 +68,7 @@ impl ScriptedApi {
                 cluster: "scripted".to_owned(),
                 namespace: "default".to_owned(),
                 allowed_nodes: Default::default(),
+                node_data_roots: Default::default(),
                 request_timeout: std::time::Duration::from_secs(5),
                 teardown_timeout: std::time::Duration::from_secs(5),
                 vpn_transport: None,

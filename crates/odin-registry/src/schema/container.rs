@@ -35,6 +35,26 @@ pub struct ContainerAlertToml {
     pub slice: SliceId,
     #[serde(default, skip_serializing_if = "ContainerAlertActionToml::is_notify")]
     pub action: ContainerAlertActionToml,
+    /// With `action = "steer"`: the control document written when the alert fires.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<SteerPatch>,
+}
+
+/// A watchdog's control document, ordered by its JSON text so alerts stay sortable.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct SteerPatch(pub serde_json::Value);
+
+impl Ord for SteerPatch {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.to_string().cmp(&other.0.to_string())
+    }
+}
+
+impl PartialOrd for SteerPatch {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -45,6 +65,8 @@ pub enum ContainerAlertActionToml {
     Notify,
     /// Cancel the workload, then tell the launching seat.
     Stop,
+    /// Write the alert's `patch` to the pod's control map; no model is woken unless it fails.
+    Steer,
 }
 
 impl ContainerAlertActionToml {

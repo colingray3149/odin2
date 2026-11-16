@@ -95,7 +95,7 @@ stop_grace_seconds = 10
 
 #[test]
 fn a_harness_cannot_sign_claude_code_in() {
-    use crate::schema::{AccountKind, HarnessOutput, HarnessPrompt, HarnessProtocol, HarnessToml};
+    use crate::schema::{AccountKind, HarnessPrompt, HarnessProtocol, HarnessToml};
     let mut harness: HarnessToml = toml::from_str(
         r#"
 schema = "odin.registry.v1"
@@ -114,21 +114,12 @@ grace_seconds = 10
 "#,
     )
     .expect("fixture");
-    for protocol in [
-        HarnessProtocol::Process,
-        HarnessProtocol::Terminal,
-        HarnessProtocol::Acp,
-    ] {
+    for protocol in [HarnessProtocol::Process, HarnessProtocol::Terminal] {
         harness.protocol = protocol;
         match protocol {
             HarnessProtocol::Terminal => {
                 harness.prompt = HarnessPrompt::Keys;
                 harness.transcripts = Some("{account}/projects/{workspace_slug}".to_owned());
-            }
-            HarnessProtocol::Acp => {
-                harness.prompt = HarnessPrompt::Rpc;
-                harness.output = HarnessOutput::Acp;
-                harness.transcripts = None;
             }
             HarnessProtocol::Process => {
                 harness.prompt = HarnessPrompt::Argv;

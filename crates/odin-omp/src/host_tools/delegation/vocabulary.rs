@@ -177,6 +177,10 @@ pub enum TaskControl {
     /// not a message: the worker is not steered, and an exact-limit or
     /// below-floor value is refused by name.
     RaiseLaneBudget(odin_registry::LaneBudgetRaise),
+    /// Re-inherit the delegating parent's currently accepted plan, after an
+    /// owner re-approval voided the worker's inherited acceptance. Only the
+    /// delegating session may, and only while its own plan holds.
+    Reaccept,
 }
 
 #[derive(Clone, Debug)]

@@ -18,7 +18,8 @@ use crate::conversation::QUIET_REPLY;
 
 #[derive(Clone, Debug)]
 struct AskArguments {
-    project: String,
+    /// `None` takes the asking session's own project.
+    project: Option<String>,
     subject: String,
     question: String,
     urgency: String,
@@ -52,7 +53,10 @@ fn check_urgency(urgency: &str) -> Result<(), HostToolError> {
 fn parse_ask_arguments(arguments: &Value) -> Result<AskArguments, HostToolError> {
     let (subject, question) = subject_and_question(arguments)?;
     let parsed = AskArguments {
-        project: parse_string(arguments, "project", 64)?,
+        project: match arguments.get("project") {
+            None | Some(Value::Null) => None,
+            Some(_) => Some(parse_string(arguments, "project", 64)?),
+        },
         subject,
         question,
         urgency: parse_string(arguments, "urgency", 16)?,
@@ -180,31 +184,48 @@ fn prepare_ask(
     };
     let parsed = parse_ask_arguments(arguments)?;
     let prompt = build_ask_prompt(&target, &parsed);
-    let project =
-        odin_domain::ProjectId::new(parsed.project).map_err(|error| HostToolError::Arguments {
-            tool: TOOL,
-            detail: format!("invalid project id: {error}"),
-        })?;
     // The target's declared project bindings are the admission fact: a
     // project the daemon's configured lane bindings do not bind to the
     // target is refused typed, before any governed owner is consulted — no
     // delegation row, token, child, or prompt can exist for a guessed
     // project. A target with no binding refuses every project.
     let bound_projects = runtime.seat_bound_projects.get(&target);
+    let bound_names = || {
+        bound_projects
+            .map(|projects| {
+                projects
+                    .iter()
+                    .map(|project| project.as_str().to_owned())
+                    .collect::<BTreeSet<String>>()
+            })
+            .unwrap_or_default()
+    };
+    let project = match parsed.project {
+        Some(project) => {
+            odin_domain::ProjectId::new(project).map_err(|error| HostToolError::Arguments {
+                tool: TOOL,
+                detail: format!("project must be a registry project id: {error}"),
+            })?
+        }
+        None => scope
+            .project
+            .clone()
+            .ok_or_else(|| HostToolError::Arguments {
+                tool: TOOL,
+                detail: format!(
+                    "project is missing and the asking session has none: give project as \
+                     one of {:?}",
+                    bound_names()
+                ),
+            })?,
+    };
     if !bound_projects.is_some_and(|projects| projects.contains(&project)) {
         return Err(HostToolError::Arguments {
             tool: TOOL,
             detail: format!(
                 "project {project} is not bound to seat {target} by the daemon's \
-                 configured lane bindings; bound projects {:?}",
-                bound_projects
-                    .map(|projects| {
-                        projects
-                            .iter()
-                            .map(|project| project.as_str().to_owned())
-                            .collect::<BTreeSet<String>>()
-                    })
-                    .unwrap_or_default()
+                 configured lane bindings; give project as one of {:?}",
+                bound_names()
             ),
         });
     }
@@ -274,7 +295,14 @@ fn escalate(
         .as_ref()
         .map_or_else(|| "its project".to_owned(), |project| project.to_string());
     let digest = odin_domain::Digest::hash(format!("{subject}\n{question}").as_bytes()).to_string();
-    let ask_id = format!("ask-{session}-{}", &digest[digest.len() - 16..]);
+    // A high ask is its own question on its own stream, so an earlier medium ask on the same
+    // subject cannot swallow it.
+    let high = urgency == "high";
+    let ask_id = format!(
+        "ask-{session}-{}{}",
+        &digest[digest.len() - 16..],
+        if high { "-high" } else { "" }
+    );
     let mut text = format!(
         "{seat} (worker session {session}, working on {project}) asks you a {urgency}-urgency \
          question and is waiting for the answer.\nSubject: {subject}\n{question}"
@@ -291,7 +319,10 @@ fn escalate(
     // The same subject from the same seat is one question however many of its
     // sessions ask it: the repeats wait on the answer to the first.
     let subject_key = super::cause_of(&subject).to_lowercase();
-    let stream = format!("ask:{seat}:{subject_key}");
+    let stream = format!(
+        "ask:{seat}:{subject_key}{}",
+        if high { ":high" } else { "" }
+    );
     let unavailable = |reason| HostToolError::Unavailable {
         tool: TOOL,
         reason: format!("the escalation could not be queued for {target}: {reason}"),
@@ -604,9 +635,6 @@ fn seat_ask_parameters(
         }
         return parameters;
     }
-    if let Some(Value::Array(required)) = parameters.get_mut("required") {
-        required.push(json!("project"));
-    }
     let bound_hint = if bound_projects.is_empty() {
         "none are bound to this target now".to_owned()
     } else {
@@ -629,7 +657,8 @@ fn seat_ask_parameters(
         parameters.pointer_mut("/properties/project/description")
     {
         description.push_str(&format!(
-            " Currently bound projects: {bound_hint}. New bindings become available after \
+            " Omitted, it is your own session's project. Currently bound projects: \
+             {bound_hint}. New bindings become available after \
              the daemon reloads."
         ));
     }
@@ -764,10 +793,8 @@ pub(super) fn seat_ask_binding(runtime: &Arc<HermesRuntime>) -> Arc<dyn HostTool
 mod tests {
     use super::*;
 
-    /// Two sessions of one seat asking the same subject make one wake; the
-    /// second worker is told the first ask holds it.
-    #[test]
-    fn the_same_subject_from_two_sessions_is_asked_once() {
+    /// A runtime with empty ledgers, where an escalation queues its wake.
+    fn runtime() -> (tempfile::TempDir, Arc<HermesRuntime>) {
         let dir = tempfile::tempdir().unwrap();
         let runtime = HermesRuntime::open(
             crate::config::HermesSettings::new(
@@ -794,25 +821,50 @@ mod tests {
             None,
         )
         .unwrap();
-        let ask = |session: &str, question: &str| {
-            let scope = Scope {
-                seat: Some(odin_domain::SeatId::new("kubert").unwrap()),
-                session: Some(odin_domain::SessionId::new(session).unwrap()),
-                ..Scope::default()
-            };
-            let arguments = json!({ "subject": "Pod 7 hinge", "question": question });
-            escalate(
-                &runtime,
-                &odin_domain::SeatId::new("sinmara").unwrap(),
-                &scope,
-                &arguments,
-            )
-            .unwrap()
+        (dir, runtime)
+    }
+
+    /// Asks `session`'s question about the subject `Pod 7 hinge` at `urgency`.
+    fn ask(runtime: &Arc<HermesRuntime>, session: &str, question: &str, urgency: &str) -> Value {
+        let scope = Scope {
+            seat: Some(odin_domain::SeatId::new("kubert").unwrap()),
+            session: Some(odin_domain::SessionId::new(session).unwrap()),
+            ..Scope::default()
         };
-        let first = ask("sess-a", "may I restart it?");
+        let arguments = json!({
+            "subject": "Pod 7 hinge",
+            "question": question,
+            "urgency": urgency,
+        });
+        escalate(
+            runtime,
+            &odin_domain::SeatId::new("sinmara").unwrap(),
+            &scope,
+            &arguments,
+        )
+        .unwrap()
+    }
+
+    /// Two sessions of one seat asking the same subject make one wake; the
+    /// second worker is told the first ask holds it.
+    #[test]
+    fn the_same_subject_from_two_sessions_is_asked_once() {
+        let (_dir, runtime) = runtime();
+        let first = ask(&runtime, "sess-a", "may I restart it?", "medium");
         assert_eq!(first["status"], "escalated");
-        let second = ask("sess-b", "may I restart it?");
+        let second = ask(&runtime, "sess-b", "may I restart it?", "medium");
         assert_eq!(second["status"], "already_asked");
         assert_eq!(second["ask_id"], first["ask_id"]);
+    }
+
+    /// A high ask on a subject a medium ask already raised is its own question, and escalates.
+    #[test]
+    fn a_high_ask_on_a_medium_subject_escalates_too() {
+        let (_dir, runtime) = runtime();
+        let medium = ask(&runtime, "sess-a", "may I restart it?", "medium");
+        assert_eq!(medium["status"], "escalated");
+        let high = ask(&runtime, "sess-b", "may I restart it?", "high");
+        assert_eq!(high["status"], "escalated", "{high}");
+        assert_ne!(high["ask_id"], medium["ask_id"]);
     }
 }

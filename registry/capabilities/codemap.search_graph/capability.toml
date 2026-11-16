@@ -1,6 +1,7 @@
 schema = "odin.registry.v1"
-toolset = "code"
-op = "search"
+# Sinmara calls it rarely: its fields stay behind args in her listing.
+toolset = "lookup"
+op = "code"
 kind = "capability"
 enabled = true
 implementation = "codemap"

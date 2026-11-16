@@ -560,6 +560,23 @@ fn sessions_resolve_their_own_publication_generation() {
         matches!(removed, Err(HostToolOperationError::UnknownTool { .. })),
         "the removed capability must refuse for the new generation"
     );
+    // A capability both publications admit runs under generation 2's own
+    // admission, though odind started on publication 1's contracts.
+    fixture
+        .operations
+        .dispatch_tool(
+            SessionOperationContext {
+                binding: &binding2,
+                session: &session2,
+                scope: &fixture.scope,
+                execution: None,
+            },
+            super::fixture::READ_TOOL,
+            None,
+            json!({"value": "x"}),
+            "generation-two-read",
+        )
+        .expect("generation 2 admits its own contracts at invoke");
 
     // The original session retains the capability removed from publication 2.
     let listing1 = fixture

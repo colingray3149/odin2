@@ -7,6 +7,9 @@ tool_refs = [
   "task.read",
   "task.steer",
   "task.note",
+  "knowledge.search",
+  "knowledge.read",
+  "knowledge.status",
   "task.pause",
   "seat.ask.sinmara",
   "seat.ask.gungnir",
@@ -16,18 +19,18 @@ tool_refs = [
   "artifact.read",
   "export.read",
   "model.consult",
+  "simulation.read",
 ]
 project_scope = [
   "odin",
   "rig",
 ]
 slice = "supervisor-watch"
-models = ["gateway/terra", "gateway/glm-flash", "gateway/astra", "gateway/zai-glm"]
+models = ["gateway/terra", "gateway/glm-flash", "gateway/astra", "gateway/zai-glm", "gateway/sol"]
 brain_scope = [
   "state.repos",
   "state.tasks",
   "memory.project.odin",
-  "memory.project.rig",
 ]
 guidance = """
 Supervise the delegated project lanes. Read their task state and notes, steer or pause them when appropriate, and report material results and decisions to Sinmara. Ask Gungnir for engineering work and Kubert for operations; inspect pod health, summaries, and artifacts when useful. Build, merge, and push stay with the lanes and the code; your granted capabilities name what you hold.
@@ -50,7 +53,12 @@ watches = ["child_report", "stall", "repo_watch", "workload_watch"]
 # Exactly half the selected model card's window. A 1_000_000-token card
 # fires at 500_000; threshold_tokens does not cap the fraction.
 threshold_tokens = 180_000
-max_brief_bytes = 8_000
+# A recovery owner brief measured 10_477 bytes and was refused at
+# 8_000: owner text is carried exactly, never trimmed. 24_576 carries it
+# plus the capped memory and repo sections after task notes drop, stays
+# under ROLLOVER_BRIEF_BYTES_MAX (32_768), and fits supervisor-watch's
+# max_item_tokens (24_640) with the 64-byte marker margin.
+max_brief_bytes = 24_576
 history_tail_events = 64
 window_fraction = 50
 # Two same-session rollovers, then a fresh session from task notes,
@@ -58,6 +66,8 @@ window_fraction = 50
 fresh_after_rollovers = 2
 # Event wakes are the path; this is only the slow backstop.
 heartbeat_minutes = 30
+# Skipped while watched task states, workloads, mission stages and incidents are unchanged.
+heartbeat_when = "changed"
 # A prompt is new information: retire and open fresh, do not inject.
 fresh_on_new_information = true
 
@@ -66,7 +76,6 @@ atlas_sources = [
   "state.repos",
   "state.tasks",
   "memory.project.odin",
-  "memory.project.rig",
 ]
 required_tags = []
 denied_tags = []
@@ -75,7 +84,6 @@ top_k = 16
 [context]
 max_bundle_tokens = 24_576
 profile = "medium"
-review_lane = "glm-flash"
 consult = { lane = "astra", effort = "high" }
 
 [tools]

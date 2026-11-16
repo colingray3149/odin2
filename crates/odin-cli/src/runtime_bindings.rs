@@ -27,6 +27,69 @@ pub fn brief_fits_item_ceiling(max_brief_bytes: usize, max_item_tokens: u32) -> 
     max_brief_bytes + BRIEF_MARKER_MARGIN <= max_item_tokens as usize
 }
 
+/// Every configured seat's declared rollover brief (plus the marker) fits its slice's item
+/// ceiling, and stays under the runtime's hard cap. Checked on a candidate before it
+/// publishes, so a live edit of either side is refused by name instead of breaking a rollover.
+pub fn rollover_briefs_fit(
+    config: &OdindConfig,
+    registry: &[RegistryObject],
+) -> Result<(), String> {
+    let pairs: Vec<(String, String)> = config
+        .seats
+        .iter()
+        .map(|binding| (binding.seat.to_string(), binding.slice.to_string()))
+        .collect();
+    rollover_briefs_fit_for(&pairs, registry)
+}
+
+/// [`rollover_briefs_fit`] over explicit (seat, slice) bindings.
+pub fn rollover_briefs_fit_for(
+    bindings: &[(String, String)],
+    registry: &[RegistryObject],
+) -> Result<(), String> {
+    let find = |kind: RegistryKind, id: &str| {
+        registry
+            .iter()
+            .find(|object| object.kind() == kind && object.id == id)
+            .map(|object| &object.config)
+    };
+    for (seat_id, slice_id) in bindings {
+        let Some(ObjectConfig::Seat(seat)) = find(RegistryKind::Seat, seat_id) else {
+            continue;
+        };
+        let Some(budget) = seat
+            .live
+            .as_ref()
+            .and_then(|live| live.rollover.as_ref())
+            .map(|rollover| rollover.max_brief_bytes)
+        else {
+            continue;
+        };
+        if budget > odin_omp::live::rollover::ROLLOVER_BRIEF_BYTES_MAX {
+            return Err(format!(
+                "seat {seat_id}'s live.rollover.max_brief_bytes {budget} is over the {} byte cap",
+                odin_omp::live::rollover::ROLLOVER_BRIEF_BYTES_MAX
+            ));
+        }
+        let ceiling = match find(RegistryKind::Slice, slice_id) {
+            Some(ObjectConfig::Slice(slice)) => slice
+                .context
+                .as_ref()
+                .map(|context| context.max_item_tokens.get()),
+            _ => None,
+        };
+        if let Some(ceiling) = ceiling.filter(|&ceiling| !brief_fits_item_ceiling(budget, ceiling))
+        {
+            return Err(format!(
+                "seat {seat_id}'s live.rollover.max_brief_bytes {budget} plus the \
+                 {BRIEF_MARKER_MARGIN}-byte marker does not fit slice {slice_id}'s \
+                 context.max_item_tokens {ceiling}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Validated inputs shared by the live runtime and operator provisioning.
 pub struct RuntimeInputs {
     pub node: NodeIdentity,
@@ -300,6 +363,14 @@ impl RuntimeInputs {
                         window_fraction: declared.window_fraction,
                         fresh_after_rollovers: declared.fresh_after_rollovers,
                         heartbeat_minutes: declared.heartbeat_minutes,
+                        heartbeat_when: match declared.heartbeat_when {
+                            odin_registry::schema::HeartbeatWhen::Always => {
+                                odin_omp::live::rollover::HeartbeatWhen::Always
+                            }
+                            odin_registry::schema::HeartbeatWhen::Changed => {
+                                odin_omp::live::rollover::HeartbeatWhen::Changed
+                            }
+                        },
                         fresh_on_new_information: declared.fresh_on_new_information,
                     },
                 )
@@ -525,6 +596,83 @@ pub fn pod_exec_specs(
             _ => None,
         })
         .collect()
+}
+
+/// A seat's recon plan (osint.recon outside a pod): every enabled tool that joins recon.
+pub fn seat_recon_plan(registry: &[RegistryObject]) -> Option<Arc<serde_json::Value>> {
+    let mut plans = recon_plans_where(registry, |_| true);
+    plans.remove("")
+}
+
+/// Each workload profile's recon plan: the tools it grants that declare `[exec.recon]`, as
+/// odin-recon runs them. A profile granting none has no plan.
+pub fn recon_plans(registry: &[RegistryObject]) -> BTreeMap<String, Arc<serde_json::Value>> {
+    let mut plans = recon_plans_where(registry, |_| false);
+    plans.remove("");
+    plans
+}
+
+/// The plans of every workload profile, and under `""` the plan of every tool when `seat` holds.
+fn recon_plans_where(
+    registry: &[RegistryObject],
+    seat: impl Fn(&str) -> bool,
+) -> BTreeMap<String, Arc<serde_json::Value>> {
+    let steps: BTreeMap<&str, serde_json::Value> = registry
+        .iter()
+        .filter(|object| object.enabled())
+        .filter_map(|object| match &object.config {
+            ObjectConfig::Capability(capability) if capability.is_pod_exec() => {
+                let step = capability
+                    .exec
+                    .as_ref()?
+                    .recon_step(&object.id, capability.timeout_seconds.get())?;
+                Some((object.id.as_str(), step))
+            }
+            _ => None,
+        })
+        .collect();
+    // A plan's budget is the declared timeout of the longest capability that runs one
+    // (osint.recon; each kind's search runs with its own).
+    let budget = registry
+        .iter()
+        .filter_map(|object| match &object.config {
+            ObjectConfig::Capability(capability)
+                if object.enabled()
+                    && capability
+                        .exec
+                        .as_ref()
+                        .and_then(|exec| exec.stdin.as_ref())
+                        .is_some_and(|stdin| stdin.plan) =>
+            {
+                Some(capability.timeout_seconds.get())
+            }
+            _ => None,
+        })
+        .max();
+    let plan = |tools: Vec<serde_json::Value>| {
+        Arc::new(serde_json::json!({ "tools": tools, "budget": budget }))
+    };
+    let mut plans: BTreeMap<String, Arc<serde_json::Value>> = BTreeMap::new();
+    if seat("") && !steps.is_empty() {
+        plans.insert(String::new(), plan(steps.values().cloned().collect()));
+    }
+    plans.extend(
+        registry
+            .iter()
+            .filter(|object| object.enabled())
+            .filter_map(|object| match &object.config {
+                ObjectConfig::Workload(profile) => {
+                    let tools: Vec<serde_json::Value> = profile
+                        .tools
+                        .iter()
+                        .filter_map(|tool| steps.get(tool.as_str()).cloned())
+                        .collect();
+                    (!tools.is_empty()).then(|| (object.id.clone(), plan(tools)))
+                }
+                _ => None,
+            }),
+    );
+    plans
 }
 
 /// Every compiled workflow family: the generic ones and the personal ones.
@@ -965,7 +1113,7 @@ pub const ARCHIVE_INGEST_BINDING: OperatorCapabilityBinding = OperatorCapability
     output_schema: "schemas/capability/archive.ingest.output.json",
     handler: "odind_archive_ingest",
     evidence_extractor: "odind_archive_ingest_evidence",
-    timeout_seconds: 1800,
+    timeout_seconds: 14400,
     retry_max_attempts: 0,
     seat_tag: "operator",
     owner: "odind archive prepare|ingest|status|backfill",
@@ -985,6 +1133,28 @@ pub fn admitted_registry_bindings() -> Vec<odin_registry::relational::AdmittedBi
                 .map(|binding| binding.admitted_binding()),
         )
         .collect()
+}
+
+#[cfg(test)]
+mod rollover_brief_tests {
+    use super::*;
+
+    #[test]
+    fn the_shipped_supervisor_brief_fits_its_slice_and_an_oversize_one_is_refused() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry");
+        let mut objects = odin_registry::parse_objects(&odin_registry::walk(&root).objects).objects;
+        let bindings = [("supervisor".to_owned(), "supervisor-watch".to_owned())];
+        rollover_briefs_fit_for(&bindings, &objects).expect("the shipped registry passes");
+        for object in &mut objects {
+            if let ObjectConfig::Seat(seat) = &mut object.config {
+                if let Some(rollover) = seat.live.as_mut().and_then(|live| live.rollover.as_mut()) {
+                    rollover.max_brief_bytes = odin_omp::live::rollover::ROLLOVER_BRIEF_BYTES_MAX;
+                }
+            }
+        }
+        let refused = rollover_briefs_fit_for(&bindings, &objects).unwrap_err();
+        assert!(refused.contains("supervisor-watch"), "{refused}");
+    }
 }
 
 #[cfg(test)]
@@ -1054,3 +1224,4 @@ mod seat_tool_law_tests {
         );
     }
 }
+

@@ -14,6 +14,10 @@ placement = "__placement__"
 mode = "__mode__"
 # Allowed host capability IDs, narrowed from the seat's tools; omitted means none.
 tools = "__tools__"
+# Run limits a launch may lower, each at or under its value; omitted means none declared.
+limits = "__limits__"
+# Worker CPU and memory reservation as an inline table; omitted keeps the platform defaults.
+resources = "__resources__"
 
 [image]
 # platform uses the deployed image; otherwise require an OCI reference with @sha256:<digest>.

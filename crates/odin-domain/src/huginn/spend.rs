@@ -49,6 +49,10 @@ pub struct SpendView {
     /// spend, not added to it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workloads: Vec<SpendLine>,
+    /// Compute spend (leases, offload runs), apart from the model total; each label names
+    /// its source.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compute: Vec<SpendLine>,
     /// The remainder no seat tag accounts for: total minus the seat-tagged
     /// rows (embeddings, untagged callers).
     pub untagged_usd_cents: u64,

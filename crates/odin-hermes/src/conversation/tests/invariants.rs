@@ -425,11 +425,41 @@ async fn a_question_decided_on_another_surface_resumes_the_conversation() {
     .await
     .expect("this conversation's question is owned");
     root.join_background(StdDuration::from_secs(30)).await;
+    assert_eq!(
+        *approvals.ran.lock(),
+        ["approval:r3:email.send:huginn"],
+        "a device's yes runs the held call, as a DM yes does"
+    );
     assert!(
         egress.sends().iter().any(|sent| sent == "Sent it."),
         "the continuation answered: {:?}",
         egress.sends()
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_device_yes_runs_the_call_another_seat_parked() {
+    let dir = scratch_dir();
+    let plane = Arc::new(FakePlane::new(dir.path()).await);
+    let egress = Arc::new(FakeEgress::new());
+    let approvals = Arc::new(FakeApprovals::empty());
+    let root = root_in(
+        dir.path(),
+        Arc::clone(&plane) as Arc<dyn ConversationPlane>,
+        egress,
+        approvals.clone(),
+    );
+    root.initialize().await.expect("initialize");
+    let parked = "approval:r1:project.campaign_approve:planner";
+    root.decide_external(parked, true, async {
+        approvals
+            .decisions
+            .lock()
+            .push((parked.to_owned(), OwnerDecision::AllowOnce));
+    })
+    .await
+    .expect("another seat's approval stands alone");
+    assert_eq!(*approvals.ran.lock(), [parked]);
 }
 
 /// A settled kernel decision's continuation uses the same durable

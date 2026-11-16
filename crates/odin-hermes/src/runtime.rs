@@ -4,6 +4,7 @@
 //! The caller starts the composed gateway listener; credentials stay out of model configuration.
 
 mod approval;
+pub mod approval_card;
 pub(crate) mod authority;
 mod bus;
 mod catalog;
@@ -24,8 +25,8 @@ pub mod incidents;
 mod intake;
 mod jobs;
 mod journal;
+mod knowledge;
 mod local_models;
-mod memory;
 mod model_complete;
 mod model_set;
 pub(crate) mod models;
@@ -37,22 +38,24 @@ mod recovery;
 pub mod registry_author;
 mod registry_read;
 mod reminders;
-pub mod review;
+pub mod rental;
 pub mod routines;
 mod seat_ask;
 pub mod shared_files;
 pub use models::{
-    lane_standing, local_family, read_model_board, set_local_list, validate_model_launches,
-    validate_rendered_gateway, LaneStanding, LocalMember,
+    lane_standing, local_family, read_model_board, set_local_list, set_out_notice,
+    validate_model_launches, validate_rendered_gateway, LaneStanding, LocalMember, OutNotice,
 };
 mod run_stats;
+mod simulation;
 mod spend;
 pub use crate::schedule::EventWake;
 pub use follow_through::{RunningJob, Unmet};
 pub use reminders::{cause_of, child_turn_wake_id};
 pub use routines::RunFacts;
 pub use run_stats::{DaemonRunStatsRoute, RunStatsRoute};
-pub use spend::{read_gateway_spend, read_tag_model_groups};
+pub use simulation::SimulationRoute;
+pub use spend::{append_compute, read_gateway_spend, read_tag_model_groups};
 mod time_ops;
 mod tools;
 pub mod workflows;
@@ -168,13 +171,6 @@ pub struct HermesLedgers {
     pub purchase: Arc<Mutex<Ledger>>,
 }
 
-/// Directories one seat may change. `profile` is the directory name, not `memory.<name>`.
-#[derive(Clone, Debug)]
-pub struct MemoryGrant {
-    pub own: bool,
-    pub profile: Option<String>,
-}
-
 pub struct HermesRuntime {
     settings: HermesSettings,
     store: Arc<ConversationTaskStore>,
@@ -229,12 +225,15 @@ pub struct HermesRuntime {
     /// Daemon-bound measured run attribution (`run.stats`). Unbound
     /// dispatches fail closed; the tool never invents a figure.
     run_stats: Mutex<Option<Arc<dyn RunStatsRoute>>>,
+    /// Daemon-bound simulation board (`simulation.read`, `simulation.frame`); unbound fails closed.
+    simulation: Mutex<Option<Arc<dyn SimulationRoute>>>,
     /// Daemon-bound `workspace.connect` resolver; unbound dispatches fail closed.
     workspace_connector: Mutex<Option<Arc<dyn authority::WorkspaceConnectRoute>>>,
     /// Daemon-bound channel to the pc desktop, and the owner ask it may serve.
     desk: desktop::DeskCell,
     /// Daemon-bound Claude driver; absent routes refuse before effects.
     claude_session_route: Mutex<Option<Arc<dyn claude::ClaudeSessionRoute>>>,
+    rental_route: Mutex<Option<Arc<dyn rental::RentalRoute>>>,
     /// Daemon-bound one-shot reviewer; absent routes refuse before effects.
     claude_review_route: Mutex<Option<Arc<dyn claude::ClaudeReviewRoute>>>,
     /// Daemon-bound official-client consult route (Claude Code and agy);
@@ -263,18 +262,18 @@ pub struct HermesRuntime {
     routine_route: Mutex<Option<Arc<dyn routines::RoutineRoute>>>,
     /// The daemon's skeleton authoring route.
     registry_author_route: Mutex<Option<Arc<dyn registry_author::RegistryAuthorRoute>>>,
+    /// Card sources of the capabilities that declare `preview = "card"`, by capability id.
+    approval_cards: Mutex<BTreeMap<String, Arc<dyn approval_card::ApprovalCardSource>>>,
     /// The memory each (seat, project) remembers into: the project's own
     /// declared memory namespace when it declares one, set by the daemon
     /// from the published brain policies. Absent pairs use seat memory.
     project_memory: Mutex<BTreeMap<(odin_domain::SeatId, odin_domain::ProjectId), String>>,
-    /// Per-seat write grant: own namespace, and the profile directory when declared.
-    memory_grants: Mutex<BTreeMap<odin_domain::SeatId, MemoryGrant>>,
     /// Directory name of the owner profile, for refresh of pages every core reads live.
     profile_namespace: Mutex<Option<String>>,
     /// Base URL of the model gateway (`hermes.model_gateway`). Absent refuses
-    /// review, consult and spend reads.
+    /// consult and spend reads.
     model_gateway: Mutex<Option<String>>,
-    review_lanes: Mutex<BTreeMap<odin_domain::SeatId, String>>,
+    compute_usage_root: Mutex<Option<PathBuf>>,
     /// Daemon-bound plain-language owner decision intake for pending
     /// conversation permissions; unbound means every DM is a normal intent.
     owner_decision: Mutex<Option<Arc<dyn OwnerDecisionRoute>>>,
@@ -317,6 +316,31 @@ pub struct HermesRuntime {
 }
 
 impl HermesRuntime {
+    /// Binds the model gateway model.consult and spend reads call.
+    pub fn set_model_gateway(&self, url: String) {
+        if let Ok(mut cell) = self.model_gateway.lock() {
+            *cell = Some(url);
+        }
+    }
+
+    /// Binds the daemon's compute meter store for spend.read.
+    pub fn set_compute_usage_root(&self, path: PathBuf) {
+        if let Ok(mut cell) = self.compute_usage_root.lock() {
+            *cell = Some(path);
+        }
+    }
+
+    pub fn compute_usage_root(&self) -> Option<PathBuf> {
+        self.compute_usage_root
+            .lock()
+            .ok()
+            .and_then(|cell| cell.clone())
+    }
+
+    pub fn model_gateway(&self) -> Option<String> {
+        self.model_gateway.lock().ok().and_then(|cell| cell.clone())
+    }
+
     /// Composes the runtime from validated settings, the daemon's durable
     /// ledgers, the pinned snapshot's admitted capability contracts, the
     /// governed task owner (when delegation governance is configured), the
@@ -544,9 +568,11 @@ impl HermesRuntime {
             terminal_reader: Mutex::new(None),
             huginn_reader: Mutex::new(None),
             run_stats: Mutex::new(None),
+            simulation: Mutex::new(None),
             workspace_connector: Mutex::new(None),
             desk: Default::default(),
             claude_session_route: Mutex::new(None),
+            rental_route: Mutex::new(None),
             claude_review_route: Mutex::new(None),
             consult_route: Mutex::new(None),
             fleet_drain: Mutex::new(None),
@@ -559,11 +585,15 @@ impl HermesRuntime {
             incident_route: Mutex::new(None),
             routine_route: Mutex::new(None),
             registry_author_route: Mutex::new(None),
+            approval_cards: Mutex::new(BTreeMap::from([(
+                "odin.plan_accept".to_owned(),
+                Arc::new(approval_card::PlanAcceptCard)
+                    as Arc<dyn approval_card::ApprovalCardSource>,
+            )])),
             project_memory: Mutex::new(BTreeMap::new()),
-            memory_grants: Mutex::new(BTreeMap::new()),
             profile_namespace: Mutex::new(None),
             model_gateway: Mutex::new(None),
-            review_lanes: Mutex::new(BTreeMap::new()),
+            compute_usage_root: Mutex::new(None),
             owner_decision: Mutex::new(None),
         }))
     }
@@ -917,6 +947,17 @@ impl HermesRuntime {
         self.run_stats.lock().ok().and_then(|cell| cell.clone())
     }
 
+    /// Binds the daemon's simulation board.
+    pub fn set_simulation_route(&self, route: Arc<dyn SimulationRoute>) {
+        if let Ok(mut cell) = self.simulation.lock() {
+            *cell = Some(route);
+        }
+    }
+
+    pub(crate) fn simulation_route(&self) -> Option<Arc<dyn SimulationRoute>> {
+        self.simulation.lock().ok().and_then(|cell| cell.clone())
+    }
+
     /// Completes a settled run's measured attribution: captures the final
     /// snapshot and writes it to the run's pod export for the renderer.
     /// The caller owns blocking (the route bridges to the runtime handle);
@@ -999,43 +1040,10 @@ impl HermesRuntime {
         }
     }
 
-    /// Binds each seat's writable memory directories.
-    pub fn set_memory_grants(&self, grants: BTreeMap<odin_domain::SeatId, MemoryGrant>) {
-        if let Ok(mut cell) = self.memory_grants.lock() {
-            *cell = grants;
-        }
-    }
-
     pub fn set_profile_namespace(&self, namespace: Option<String>) {
         if let Ok(mut cell) = self.profile_namespace.lock() {
             *cell = namespace;
         }
-    }
-
-    pub(crate) fn memory_grant(&self, seat: &odin_domain::SeatId) -> MemoryGrant {
-        let Ok(grants) = self.memory_grants.lock() else {
-            return MemoryGrant {
-                own: false,
-                profile: None,
-            };
-        };
-        if grants.is_empty() {
-            return MemoryGrant {
-                own: true,
-                profile: None,
-            };
-        }
-        grants.get(seat).cloned().unwrap_or(MemoryGrant {
-            own: false,
-            profile: None,
-        })
-    }
-
-    pub(crate) fn profile_namespace(&self) -> Option<String> {
-        self.profile_namespace
-            .lock()
-            .ok()
-            .and_then(|cell| cell.clone())
     }
 
     /// The memory name one seat remembers into for one project: the

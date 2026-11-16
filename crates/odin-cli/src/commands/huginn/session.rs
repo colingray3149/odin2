@@ -149,12 +149,14 @@ impl HuginnSessionCommand {
                 live::LiveCommandBody::Prompt {
                     message,
                     owner_text: Some(owner),
+                    wake: false,
                 }
             })?,
             Self::FollowUp(arguments) => session_message_request(arguments, |message, owner| {
                 live::LiveCommandBody::FollowUp {
                     message,
                     owner_text: Some(owner),
+                    wake: false,
                 }
             })?,
             Self::Steer(arguments) => session_message_request(arguments, |message, _owner| {

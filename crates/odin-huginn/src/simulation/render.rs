@@ -196,6 +196,101 @@ impl SimulationRenderBoard {
         Ok((from, to))
     }
 
+    /// The oldest render of `run_id` that is waiting for its renderer to start.
+    pub fn next_requested(&self, run_id: &odin_domain::RunId) -> Option<&SimulationRenderView> {
+        self.renders
+            .values()
+            .filter(|render| {
+                &render.run_id == run_id && render.status == SimulationRenderStatus::Requested
+            })
+            .min_by_key(|render| render.requested_at)
+    }
+
+    /// The running render of `run_id` that a frame from `renderer_id` completes.
+    pub fn running_for(
+        &self,
+        run_id: &odin_domain::RunId,
+        renderer_id: &RendererId,
+    ) -> Option<RenderId> {
+        self.renders
+            .values()
+            .filter(|render| {
+                &render.run_id == run_id
+                    && &render.renderer_id == renderer_id
+                    && render.status == SimulationRenderStatus::Running
+            })
+            .min_by_key(|render| render.requested_at)
+            .map(|render| render.render_id)
+    }
+
+    pub fn of_run<'a>(
+        &'a self,
+        run_id: &'a odin_domain::RunId,
+    ) -> impl Iterator<Item = &'a SimulationRenderView> + 'a {
+        self.renders
+            .values()
+            .filter(move |render| &render.run_id == run_id)
+    }
+
+    pub fn render(&self, render_id: &RenderId) -> Option<&SimulationRenderView> {
+        self.renders.get(render_id)
+    }
+
+    /// Records a frame the pod produced on its own: a complete render nobody requested. Its
+    /// parameters are the mission's case (the pod's own defaults).
+    pub fn record(
+        &mut self,
+        mission: &SimulationMissionView,
+        render_id: RenderId,
+        renderer_id: &RendererId,
+        output: ArtifactRef,
+        at: OffsetDateTime,
+    ) -> Result<SimulationRenderView> {
+        if !mission
+            .supported_renderers
+            .iter()
+            .any(|declared| declared == renderer_id)
+        {
+            return Err(HuginnProtocolError::Unsupported {
+                operation: format!("renderer {renderer_id} is not declared by this surface"),
+            });
+        }
+        if self.renders.contains_key(&render_id) {
+            return Err(HuginnProtocolError::Conflict {
+                code: "renderExists".to_string(),
+                message: format!("render {render_id} already exists"),
+            });
+        }
+        let view = SimulationRenderView {
+            render_id,
+            run_id: mission.run_id.clone(),
+            revision: 1,
+            renderer_id: renderer_id.clone(),
+            renderer_version: "pod".to_string(),
+            parameters_digest: mission.case.content_digest,
+            input_digest: mission.case.content_digest,
+            status: SimulationRenderStatus::Complete,
+            progress_basis_points: FULL_PROGRESS_BASIS_POINTS,
+            requested_at: at,
+            finished_at: Some(at),
+            output: Some(output),
+            failure_evidence: None,
+        };
+        self.renders.insert(render_id, view.clone());
+        Ok(view)
+    }
+
+    /// Drops a finished render (its frame aged out of the board).
+    pub fn forget(&mut self, render_id: &RenderId) {
+        if self
+            .renders
+            .get(render_id)
+            .is_some_and(|render| is_terminal(render.status))
+        {
+            self.renders.remove(render_id);
+        }
+    }
+
     /// Records failure evidence on a terminal Failed job.
     pub fn fail(
         &mut self,

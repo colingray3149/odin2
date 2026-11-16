@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.workload.queue.output.json",
+  "title": "kube.workload.queue output",
+  "description": "ok: the caller's held launches, oldest first. unavailable: the queue is not configured or unreadable, with reason.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {"type": "string", "enum": ["ok", "unavailable"]},
+    "held": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "operation": {"type": "string", "minLength": 1, "maxLength": 128},
+          "profile": {"type": "string", "minLength": 1, "maxLength": 256},
+          "lane": {"type": "string", "maxLength": 128},
+          "batch": {"type": "string", "minLength": 1, "maxLength": 128},
+          "heldAtMs": {"type": "integer"},
+          "waitsOnCaps": {"type": "boolean"}
+        },
+        "required": ["operation", "profile", "lane", "heldAtMs", "waitsOnCaps"]
+      }
+    },
+    "dropped": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1, "maxLength": 128}
+    },
+    "reason": {"type": "string", "minLength": 1, "maxLength": 1024}
+  },
+  "required": ["status"],
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "unavailable"}}, "required": ["status"]},
+      "then": {"required": ["reason"]}
+    },
+    {
+      "if": {"properties": {"status": {"const": "ok"}}, "required": ["status"]},
+      "then": {"required": ["held"]}
+    }
+  ]
+}

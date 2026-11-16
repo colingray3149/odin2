@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/simulation.frame.output.json",
+  "title": "simulation.frame output",
+  "description": "The frame shared with the calling seat as a PNG or safe SVG artifact (send it with discord.file.send or files.drop). PNG is shown as an image block; SVG is shared as a file.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "artifact": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+    "name": { "type": "string", "minLength": 1 },
+    "mediaType": { "const": "image/png" },
+    "sizeBytes": { "type": "integer", "minimum": 0 },
+    "text": { "type": "string" },
+    "textArtifact": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+    "note": { "type": "string" },
+    "images": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": { "const": "image" },
+          "mimeType": { "const": "image/jpeg" },
+          "data": { "type": "string", "description": "Base64 JPEG; the side channel sends it as the result's image block." }
+        },
+        "required": ["type", "mimeType", "data"]
+      }
+    }
+  },
+  "required": ["artifact", "name", "mediaType", "sizeBytes"]
+}

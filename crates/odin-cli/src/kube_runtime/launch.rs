@@ -108,6 +108,8 @@ pub(super) struct LaunchRequest<'a> {
     pub(super) initial_target_node: Option<String>,
     /// The operator-named run label, carried to the Job's `odin.label` annotation.
     pub(super) label: Option<String>,
+    /// The finished run whose state this launch takes over.
+    pub(super) continue_from: Option<RunId>,
 }
 
 impl LaunchRequest<'_> {
@@ -207,7 +209,11 @@ pub(super) fn profile_launch(
         args: vec![script],
         node_selector: BTreeMap::new(),
         gpu_count: container.gpu_count,
+        gpu_min_vram_gib: None,
+        gpu_vram_gib: None,
+        tolerate: Default::default(),
         deadline_seconds: container.deadline_seconds,
+        campaign_reservation: None,
         service: false,
         // Container-profile launches carry no workload pod binding; the
         // workload-profile dispatch owns building WorkloadPodPlan values.
@@ -217,8 +223,10 @@ pub(super) fn profile_launch(
         idempotency_digest: request.idempotency_digest("create", &container.base),
         operation_id: request.operation_id,
         initial_target_node: request.initial_target_node,
+        admitted_node: None,
         budget_lane: request.budget_lane,
         label: request.label,
+        continue_from: request.continue_from,
     })
 }
 
@@ -227,6 +235,8 @@ pub(super) struct WorkloadLaunchParts<'a> {
     pub(super) request: LaunchRequest<'a>,
     pub(super) profile: &'a WorkloadProfileToml,
     pub(super) plan: odin_kube::workload::WorkloadPodPlan,
+    /// The run's resolved lifetime; `None` for a service.
+    pub(super) deadline_seconds: Option<u32>,
     pub(super) model: String,
     pub(super) extension: JobExtensionLaunch,
     pub(super) policy_input: KubeContentIdentity,
@@ -245,6 +255,7 @@ pub(super) fn workload_profile_launch(
         request,
         profile,
         plan,
+        deadline_seconds,
         model,
         extension,
         policy_input,
@@ -307,14 +318,20 @@ pub(super) fn workload_profile_launch(
         // capabilities; scheduler admission still decides among them.
         node_selector: profile.placement_labels(),
         gpu_count: profile.gpu_count,
-        // A job's declared lifetime is its hard wall clock; a service has none.
-        deadline_seconds: profile.deadline_seconds(),
+        gpu_min_vram_gib: profile.min_vram_gib(),
+        gpu_vram_gib: profile.gpu.as_ref().and_then(|gpu| gpu.vram_gib),
+        tolerate: profile.tolerate.iter().cloned().collect(),
+        // A job's resolved lifetime is its hard wall clock; a service has none.
+        deadline_seconds,
+        campaign_reservation: None,
         service: false,
         idempotency_digest: request.idempotency_digest("workload-create", &profile.image.reference),
         operation_id: request.operation_id,
         initial_target_node: request.initial_target_node,
+        admitted_node: None,
         budget_lane: request.budget_lane,
         label: request.label,
+        continue_from: request.continue_from,
     })
 }
 
@@ -332,9 +349,53 @@ pub(super) fn profile_resources(
                 memory_bytes: resources
                     .memory_bytes()
                     .map_err(|reason| arguments_error(tool, reason))?,
+                shm_bytes: resources
+                    .shm_bytes()
+                    .map_err(|reason| arguments_error(tool, reason))?,
             })
         })
         .transpose()
+}
+
+/// The profile's declared read-only data mounts.
+pub(super) fn profile_data(
+    profile: &WorkloadProfileToml,
+) -> Vec<odin_kube::workload::WorkloadDataMount> {
+    profile
+        .data
+        .iter()
+        .map(|data| odin_kube::workload::WorkloadDataMount {
+            name: data.name.clone(),
+            host_path: data.host_path.clone(),
+            pod_path: data.pod_path.clone(),
+        })
+        .collect()
+}
+
+/// Apply the same admitted per-launch deadline used for agent workloads.
+pub(super) fn admit_script_limits(
+    tool: &'static str,
+    inputs: &mut crate::kube_runtime::ScriptLaunchInputs,
+    input: &super::admission::ProfileInput,
+) -> Result<(), HostToolError> {
+    let limits = super::admission::admitted_limits(tool, &inputs.profile, input)?;
+    if let Some(deadline) = limits.deadline_seconds {
+        if inputs
+            .profile
+            .profile
+            .stop_grace_seconds
+            .is_some_and(|grace| grace >= deadline)
+        {
+            return Err(arguments_error(
+                tool,
+                "deadlineSeconds must exceed the profile's stop grace",
+            ));
+        }
+        if let Some(lifetime) = inputs.profile.profile.lifetime.as_mut() {
+            lifetime.deadline_seconds = deadline;
+        }
+    }
+    Ok(())
 }
 
 /// Script pods use the declared image, argv, resources, and lifecycle without
@@ -347,6 +408,12 @@ pub(super) fn script_profile_launch(
 ) -> Result<JobLaunch, HostToolError> {
     let tool = request.tool;
     let profile = &inputs.profile.profile;
+    if (profile.tolerates_external() || profile.offload.is_some()) && inputs.gateway.is_some() {
+        return Err(arguments_error(
+            tool,
+            "external and offload scripts cannot receive gateway credentials",
+        ));
+    }
     let command = profile
         .script
         .as_ref()
@@ -365,6 +432,7 @@ pub(super) fn script_profile_launch(
         export_host_folder: profile.export.host_folder.clone(),
         state_storage: profile.state.storage.clone(),
         state_storage_class: None,
+        state_carry: profile.state.carry != Some(false),
         allow_hosts: profile.network.allow_hosts.clone(),
         network_open: profile.network.open,
         transport: profile.network.transport,
@@ -374,9 +442,19 @@ pub(super) fn script_profile_launch(
         export_deliver_root: None,
         company: None,
         resources: profile_resources(tool, profile)?,
+        termination_grace_seconds: profile.stop_grace_seconds,
+        data: profile_data(profile),
+        control: profile.control.clone(),
+        keep_finished_seconds: profile
+            .lifetime
+            .as_ref()
+            .and_then(|lifetime| lifetime.keep_finished_seconds)
+            .map(std::num::NonZeroU32::get),
+        on_yield: profile.on_yield,
         script_gateway: inputs.gateway.as_ref().map(|gateway| {
             odin_kube::workload::WorkloadScriptGateway {
                 lane: gateway.lane.clone(),
+                roles: gateway.roles.clone(),
                 url: gateway.endpoint.as_str().to_owned(),
                 gateway: odin_kube::workload::WorkloadGatewayTarget {
                     host: gateway.endpoint.host().to_owned(),
@@ -412,7 +490,11 @@ pub(super) fn script_profile_launch(
         args: args.to_vec(),
         node_selector: profile.placement_labels(),
         gpu_count: profile.gpu_count,
+        gpu_min_vram_gib: profile.min_vram_gib(),
+        gpu_vram_gib: profile.gpu.as_ref().and_then(|gpu| gpu.vram_gib),
+        tolerate: profile.tolerate.iter().cloned().collect(),
         deadline_seconds: profile.deadline_seconds(),
+        campaign_reservation: None,
         service: profile.mode == odin_registry::WorkloadMode::Service,
         workload: Some(plan),
         extension: None,
@@ -420,8 +502,10 @@ pub(super) fn script_profile_launch(
         idempotency_digest: request.idempotency_digest("script-create", &profile.image.reference),
         operation_id: request.operation_id,
         initial_target_node: request.initial_target_node,
+        admitted_node: None,
         budget_lane: request.budget_lane,
         label: request.label,
+        continue_from: request.continue_from,
     })
 }
 
@@ -448,6 +532,7 @@ mod profile_launch_tests {
             initial_target_node: target.map(str::to_owned),
             budget_lane: None,
             label: None,
+            continue_from: None,
         }
     }
 
@@ -530,6 +615,22 @@ deadline_seconds = 600
         }
     }
 
+    #[test]
+    fn script_launch_uses_the_admitted_deadline() {
+        let mut inputs = script("bounded-script");
+        let declared = inputs.profile.profile.deadline_seconds().unwrap();
+        let requested = declared / 2;
+        let input = create_input(
+            serde_json::json!({"profile": "bounded-script", "limits": {"deadlineSeconds": requested}}),
+        );
+        admit_script_limits("test", &mut inputs, &input).unwrap();
+        assert_eq!(inputs.profile.profile.deadline_seconds(), Some(requested));
+        let excessive = create_input(
+            serde_json::json!({"profile": "bounded-script", "limits": {"deadlineSeconds": declared + 1}}),
+        );
+        assert!(admit_script_limits("test", &mut inputs, &excessive).is_err());
+    }
+
     /// The env a script pod's container receives, read from its launch plan.
     fn script_env(launch: &JobLaunch) -> Vec<(String, Option<String>)> {
         launch
@@ -547,7 +648,8 @@ deadline_seconds = 600
         let mut inputs = script("gateway-script");
         inputs.profile.profile.seat.gateway_lane = Some("zai-glm".to_owned());
         inputs.gateway = Some(crate::kube_runtime::ScriptGateway {
-            lane: "zai-glm".to_owned(),
+            lane: Some("zai-glm".to_owned()),
+            roles: BTreeMap::new(),
             endpoint: odin_registry::schema::NodeGatewayEndpoint::parse(
                 "http://gateway.example.net:4000/v1",
             )
@@ -598,6 +700,98 @@ deadline_seconds = 600
             "the key is a Secret reference, never a literal"
         );
         assert!(plan.agent.is_none(), "a script pod runs no agent");
+        inputs.profile.profile.tolerate.push("external".to_owned());
+        let refused = script_profile_launch(
+            request(
+                &binding,
+                RunId::new("run:live:external-secret").expect("run id"),
+                None,
+                "op-external-secret",
+                None,
+            ),
+            &inputs,
+            Vec::new(),
+            None,
+        );
+        assert!(
+            refused.is_err(),
+            "an external launch must never carry a gateway credential"
+        );
+    }
+
+    #[test]
+    fn a_project_with_agents_gets_its_key_and_roles() {
+        let launch_with = |gateway: crate::kube_runtime::ScriptGateway| {
+            let mut inputs = script("project-agents");
+            inputs.gateway = Some(gateway);
+            let binding = KubeLaunchBinding {
+                model: "kubert-mini".to_owned(),
+                budget_policy_digest: Digest::hash(b"project-agents-budget"),
+            };
+            script_profile_launch(
+                request(
+                    &binding,
+                    RunId::new("run:live:project-agents").expect("run id"),
+                    None,
+                    "op-project-agents",
+                    None,
+                ),
+                &inputs,
+                Vec::new(),
+                None,
+            )
+            .expect("the project script builds a launch")
+        };
+        let gateway = |key: &str, roles: &[(&str, &str)]| crate::kube_runtime::ScriptGateway {
+            lane: None,
+            roles: roles
+                .iter()
+                .map(|(role, lane)| ((*role).to_owned(), (*lane).to_owned()))
+                .collect(),
+            endpoint: odin_registry::schema::NodeGatewayEndpoint::parse(
+                "http://gateway.example.net:4000/v1",
+            )
+            .expect("endpoint"),
+            credential: odin_kube::workload::WorkloadCredentialEnv {
+                env_name: "ODIN_GATEWAY_KEY".to_owned(),
+                secret: "litellm-gateway".to_owned(),
+                key: key.to_owned(),
+            },
+        };
+        let secret_key = |launch: &JobLaunch| {
+            let plan = launch.workload.as_ref().expect("plan");
+            plan.gateway_env()[0]
+                .value_from
+                .clone()
+                .and_then(|source| source.secret_key_ref)
+                .map(|selector| selector.key)
+                .expect("secret key ref")
+        };
+        let project = launch_with(gateway(
+            "project-demo",
+            &[("judge", "astra"), ("monitor", "glm-flash")],
+        ));
+        assert_eq!(secret_key(&project), "project-demo");
+        assert_eq!(
+            script_env(&project)[1..],
+            [
+                (
+                    "ODIN_GATEWAY_URL".to_owned(),
+                    Some("http://gateway.example.net:4000/v1".to_owned())
+                ),
+                (
+                    "ODIN_GATEWAY_ROLES".to_owned(),
+                    Some("judge=astra,monitor=glm-flash".to_owned())
+                ),
+            ]
+        );
+        let mut plain = gateway("pods", &[]);
+        plain.lane = Some("zai-glm".to_owned());
+        let plain = launch_with(plain);
+        assert_eq!(secret_key(&plain), "pods");
+        assert!(script_env(&plain)
+            .iter()
+            .all(|(name, _)| name != "ODIN_GATEWAY_ROLES"));
     }
 
     #[test]
@@ -634,6 +828,43 @@ deadline_seconds = 600
         assert_eq!(
             pod_run(ask("question one"), 1),
             pod_run(ask("question one"), 1)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn offload_admission_and_job_lifecycle_share_one_lock() {
+        use std::sync::{Arc, Mutex};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let api = super::super::fake_api::FakeKubeApi::start().await;
+        let ledger = Arc::new(Mutex::new(
+            odin_ledger::Ledger::open(dir.path().join("ledger.sqlite3")).expect("ledger"),
+        ));
+        let channel =
+            odin_kernel::recovery_worker_channel("unix:path=/run/user/0/bus").expect("channel");
+        let stops = Arc::new(odin_kernel::StopAuthority::new(
+            Arc::clone(&ledger),
+            channel,
+        ));
+        let lifecycle = Arc::default();
+        let reconciler = odin_kube::JobReconciler::new(
+            api.client(dir.path()),
+            ledger,
+            stops,
+            Arc::clone(&lifecycle),
+            dir.path().join("artifacts"),
+        )
+        .expect("reconciler");
+
+        let guard = reconciler.admission_guard().await;
+        assert!(
+            lifecycle.try_lock().is_err(),
+            "Job admission must wait for offload publication"
+        );
+        drop(guard);
+        assert!(
+            lifecycle.try_lock().is_ok(),
+            "the lock is released after admission"
         );
     }
 
@@ -757,6 +988,180 @@ deadline_seconds = 600
             "{refused:?}"
         );
         assert_eq!(api.jobs().len(), 3);
+    }
+
+    /// A full node refuses a launch as a capacity refusal before anything is written: no Job, and
+    /// no journaled launch that a later recovery would replay as a pending create.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_launch_no_node_has_room_for_writes_nothing() {
+        use std::sync::{Arc, Mutex};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let api = super::super::fake_api::FakeKubeApi::start().await;
+        // A Pending pod pinned to the one admitted node holds all of its CPU.
+        api.seed(
+            "/api/v1/pods/full",
+            serde_json::json!({
+                "apiVersion": "v1", "kind": "Pod",
+                "metadata": {"name": "full", "namespace": "default", "uid": "uid-full"},
+                "spec": {
+                    "containers": [{"name": "c", "image": "busybox",
+                                    "resources": {"requests": {"cpu": "16"}}}],
+                    "affinity": {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {
+                        "nodeSelectorTerms": [{"matchFields": [
+                            {"key": "metadata.name", "operator": "In", "values": ["pc"]}
+                        ]}]
+                    }}}
+                },
+                "status": {"phase": "Pending"}
+            }),
+        );
+        let ledger = Arc::new(Mutex::new(
+            odin_ledger::Ledger::open(dir.path().join("ledger.sqlite3")).expect("ledger"),
+        ));
+        let channel =
+            odin_kernel::recovery_worker_channel("unix:path=/run/user/0/bus").expect("channel");
+        let stops = Arc::new(odin_kernel::StopAuthority::new(
+            Arc::clone(&ledger),
+            channel,
+        ));
+        let artifacts = dir.path().join("artifacts");
+        std::fs::create_dir_all(&artifacts).expect("artifact root");
+        let reconciler = odin_kube::JobReconciler::new(
+            api.client(dir.path()),
+            Arc::clone(&ledger),
+            stops,
+            Arc::default(),
+            artifacts,
+        )
+        .expect("reconciler");
+        let binding = KubeLaunchBinding {
+            model: "kubert-mini".to_owned(),
+            budget_policy_digest: Digest::hash(b"full-node-budget"),
+        };
+        let run = pod_run(serde_json::json!({ "profile": "asker" }), 1);
+        let launch = script_profile_launch(
+            request(
+                &binding,
+                run.clone(),
+                None,
+                "op-00000000000000000000000000000021",
+                None,
+            ),
+            &script("asker"),
+            Vec::new(),
+            None,
+        )
+        .expect("the script profile builds a launch");
+
+        let refused = reconciler
+            .room_for(&launch)
+            .await
+            .expect_err("a full node has no room");
+        assert!(
+            odin_kube::placement::is_capacity_refusal(&refused),
+            "{refused}"
+        );
+        assert!(api.jobs().is_empty(), "no Job was written");
+        assert!(
+            reconciler.stored_launch(&run).expect("journal").is_none(),
+            "no launch was journaled"
+        );
+    }
+
+    /// A run that declares GPU memory waits while the desktop holds too much of it, goes ahead
+    /// once enough is free, and never samples a node that is not a desktop.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_gpu_launch_waits_while_the_desktop_holds_vram() {
+        use std::sync::{Arc, Mutex};
+
+        const GIB: u64 = 1024 * 1024 * 1024;
+        let free = Arc::new(Mutex::new(Some(5 * GIB)));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let probe: super::super::VramProbe = {
+            let free = Arc::clone(&free);
+            let seen = Arc::clone(&seen);
+            Arc::new(move |node: String| {
+                seen.lock().unwrap().push(node.clone());
+                let answer = if node == "pc" {
+                    Ok(*free.lock().unwrap())
+                } else {
+                    Ok(None)
+                };
+                Box::pin(async move { answer })
+            })
+        };
+        let coordinator = super::super::KubeCommandCoordinator::new(None).with_vram_probe(probe);
+        let binding = KubeLaunchBinding {
+            model: "kubert-mini".to_owned(),
+            budget_policy_digest: Digest::hash(b"vram-budget"),
+        };
+        let mut inputs = script("trainer");
+        inputs.profile.profile.gpu_count = 1;
+        inputs.profile.profile.placement = vec!["cuda".to_owned()];
+        inputs.profile.profile.gpu = Some(odin_registry::WorkloadGpuToml {
+            min_vram_gib: None,
+            vram_gib: Some(6),
+        });
+        let launch = script_profile_launch(
+            request(
+                &binding,
+                pod_run(serde_json::json!({ "profile": "trainer" }), 1),
+                None,
+                "op-00000000000000000000000000000031",
+                None,
+            ),
+            &inputs,
+            Vec::new(),
+            None,
+        )
+        .expect("the GPU script profile builds a launch");
+        assert_eq!(launch.gpu_vram_gib, Some(6));
+        assert_eq!(
+            launch.gpu_min_vram_gib,
+            Some(6),
+            "the need is also the card floor"
+        );
+        let no_probe = super::super::KubeCommandCoordinator::new(None);
+        assert!(no_probe.vram_shortfall(&launch, Some("pc")).await.is_some());
+
+        let waits = coordinator
+            .vram_shortfall(&launch, Some("pc"))
+            .await
+            .expect("5 GiB to spare cannot hold a 6 GiB run");
+        assert!(waits.contains("pc has 5120 MiB"), "{waits}");
+        // The probe already took the desktop's reserve off: exactly the need fits.
+        *free.lock().unwrap() = Some(6 * GIB);
+        assert!(coordinator
+            .vram_shortfall(&launch, Some("pc"))
+            .await
+            .is_none());
+        // A node that is not a desktop is not checked; an existing Job is never re-checked.
+        assert!(coordinator
+            .vram_shortfall(&launch, Some("rented"))
+            .await
+            .is_none());
+        assert!(coordinator.vram_shortfall(&launch, None).await.is_none());
+        // A launch declaring no GPU memory never samples.
+        seen.lock().unwrap().clear();
+        let plain = script_profile_launch(
+            request(
+                &binding,
+                pod_run(serde_json::json!({ "profile": "asker" }), 1),
+                None,
+                "op-00000000000000000000000000000032",
+                None,
+            ),
+            &script("asker"),
+            Vec::new(),
+            None,
+        )
+        .expect("the script profile builds a launch");
+        assert!(coordinator
+            .vram_shortfall(&plain, Some("pc"))
+            .await
+            .is_none());
+        assert!(seen.lock().unwrap().is_empty());
     }
 
     /// An agent pod launched while a publication waits for the reload would

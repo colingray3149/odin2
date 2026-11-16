@@ -10,10 +10,12 @@ import { shimmerText } from "../omp/theme/shimmer";
 import { getEditorTheme, getSelectListTheme, theme } from "../omp/theme/theme";
 import type { Component, TUI } from "../omp/tui";
 import { truncateToWidth, visibleWidth, wrapLiteralLine } from "../omp/utils";
-import type { ApprovalRow, BridgeMessage, CatalogRow, CiRow, ComputeSample, FeaturesValue, IncidentRow, InjectionRecord, LocalClaude, ModelBoard, PodRow, SeatInfo, SessionInfo, ViewCommand } from "./protocol";
+import type { ApprovalRow, BridgeMessage, CatalogRow, CiRow, ComputeSample, FeaturesValue, IncidentRow, InjectionRecord, KnowledgeValue, LocalClaude, MissionsValue, ModelBoard, PlanRow, PodRow, SeatInfo, SessionInfo, ViewCommand } from "./protocol";
 import { quietBadge, shortModel, spentLabel, spoken } from "./protocol";
 import { boardRows } from "./board";
 import { featureRows } from "./features";
+import { brainRows } from "./knowledge";
+import { type MissionFrame, missionRows } from "./missions";
 import { computeRows, hostRow } from "./compute";
 import { foldClaudePage } from "./claude";
 import { overviewRows } from "./overview";
@@ -36,6 +38,8 @@ const SPEND_FRESH_MS = 3 * 60_000;
 const WHEEL_LINES = 3;
 const MODELS = "models";
 const CAPABILITIES = "capabilities";
+const BRAIN = "brain";
+const MISSIONS = "missions";
 /** The bridge names a Claude Code tab's session with this prefix (`claude_line` in odin-cli's view.rs). */
 const isClaude = (session: string | undefined): session is string => session?.startsWith("claude:") === true;
 /** The composer's unsent line, beside the view log, read when saved so a relocated state dir is the one restored. */
@@ -91,9 +95,19 @@ function seatEntries(seats: readonly SeatInfo[], conversation?: string, claude: 
 		label: "Overview",
 	});
 	entries.push({
+		seat: { id: MISSIONS, name: "Missions", state: "online", models: [], sessions: [] },
+		session: undefined,
+		label: "Missions",
+	});
+	entries.push({
 		seat: { id: CAPABILITIES, name: "Capabilities", state: "online", models: [], sessions: [] },
 		session: undefined,
 		label: "Capabilities",
+	});
+	entries.push({
+		seat: { id: BRAIN, name: "Brain", state: "online", models: [], sessions: [] },
+		session: undefined,
+		label: "Brain",
 	});
 	return entries;
 }
@@ -143,6 +157,7 @@ export class App implements Component {
 	#link: { ok: boolean; text: string } | undefined;
 	#bridgeDown: string | undefined;
 	#spend: Extract<BridgeMessage, { t: "spend" }> | undefined;
+	#budgets: Extract<BridgeMessage, { t: "budgets" }>["lanes"] = [];
 	/** When the spend line arrived; a figure the bridge stopped refreshing goes dim. */
 	#spendAt = 0;
 	#models: { rows?: string[]; error?: string } | undefined;
@@ -150,6 +165,16 @@ export class App implements Component {
 	#features: { value?: FeaturesValue; note?: string } | undefined;
 	/** An F5 refresh is out: the tab says so until the bridge answers. */
 	#featuresWaiting = false;
+	/** The Brain tab's last value, and an F5 refresh in flight. */
+	#knowledge: KnowledgeValue | undefined;
+	#knowledgeWaiting = false;
+	/** The Missions tab: the board, the chosen row, whether it is open, and its newest frame. */
+	#missions: MissionsValue | undefined;
+	#missionIndex = 0;
+	#missionOpen = false;
+	#missionFrame: MissionFrame | undefined;
+	/** What the bridge was last told: the tab shows. */
+	#missionsShown = false;
 	#notice: { text: string; until: number } | undefined;
 	#scroll = 0;
 	/** Transcript rows at the last render, so a scrolled view can hold its place. */
@@ -183,6 +208,7 @@ export class App implements Component {
 	#pods: PodRow[] = [];
 	#localClaude: LocalClaude | undefined;
 	#ci: { rows: CiRow[]; note?: string } | undefined;
+	#plans: PlanRow[] = [];
 	#board: ModelBoard | null | undefined;
 	#boardNote: string | null | undefined;
 	/** The newest compute sample per node, held while the overview page is open. */
@@ -269,12 +295,26 @@ export class App implements Component {
 				this.#spend = message;
 				this.#spendAt = Date.now();
 				break;
+			case "budgets":
+				this.#budgets = message.lanes;
+				break;
 			case "modelRows":
 				this.#models = { rows: message.rows ?? this.#models?.rows, error: message.error };
 				break;
 			case "features":
 				this.#features = { value: message.value ?? this.#features?.value, note: message.note };
 				this.#featuresWaiting = false;
+				this.#knowledgeWaiting = false;
+				break;
+			case "knowledge":
+				this.#knowledge = message.value;
+				break;
+			case "missions":
+				this.#missions = message.value;
+				this.#missionIndex = Math.min(this.#missionIndex, Math.max(0, message.value.rows.length - 1));
+				break;
+			case "frame":
+				this.#missionFrame = message;
 				break;
 			case "models":
 				this.#board = message.board ?? null;
@@ -294,6 +334,9 @@ export class App implements Component {
 				break;
 			case "ci":
 				this.#ci = message;
+				break;
+			case "plans":
+				this.#plans = message.rows;
 				break;
 			case "compute":
 				// A snapshot is the whole fleet. A miss replaces that host; a host
@@ -434,6 +477,7 @@ export class App implements Component {
 		this.#selected = { seat: entry.seat.id, session };
 		if (changed) this.#contextOpen = false;
 		this.#setComputeActive(entry.seat.id === OVERVIEW);
+		if ((entry.seat.id === MISSIONS) !== this.#missionsShown) this.#syncMissions();
 		if (!changed && !this.#rewatch) return;
 		this.#rewatch = false;
 		// The seat's session ended and no successor is live yet: keep showing what it showed.
@@ -542,6 +586,11 @@ export class App implements Component {
 		} else if (matchesKey(data, "f5") && this.#selected.seat === CAPABILITIES) {
 			// The authority evaluates now; the next features message settles the tab.
 			this.#featuresWaiting = this.send({ t: "features" });
+		} else if (matchesKey(data, "f5") && this.#selected.seat === BRAIN) {
+			// The features request wakes the pump that re-reads status.json; its answer ends "refreshing".
+			this.#knowledgeWaiting = this.send({ t: "features" });
+		} else if (this.#selected.seat === MISSIONS && empty && this.#missionKey(data)) {
+			// Handled: ↑↓ choose, enter opens, r renders, p pauses, u resumes.
 		} else if (matchesKey(data, "ctrl+r")) {
 			// Not ctrl+o (OMP's key): Zellij takes ctrl+g/p/t/n/h/s/o/q/b and most alt keys.
 			this.#expanded = !this.#expanded;
@@ -552,10 +601,40 @@ export class App implements Component {
 		return consumed;
 	}
 
+	/** The Missions tab's keys while the composer is empty; false leaves the key to the composer. */
+	#missionKey(data: string): boolean {
+		const rows = this.#missions?.rows ?? [];
+		const mission = rows[this.#missionIndex];
+		if (matchesKey(data, "up") || matchesKey(data, "down")) {
+			const step = matchesKey(data, "up") ? -1 : 1;
+			this.#missionIndex = Math.max(0, Math.min(rows.length - 1, this.#missionIndex + step));
+			this.#syncMissions();
+		} else if (matchesKey(data, "enter")) {
+			this.#missionOpen = !this.#missionOpen;
+			this.#syncMissions();
+		} else if (mission && (data === "r" || data === "p" || data === "u")) {
+			const t = data === "r" ? "render" : data === "p" ? "pause" : "resume";
+			this.send({ t, id: crypto.randomUUID(), run: mission.run });
+		} else {
+			return false;
+		}
+		return true;
+	}
+
+	/** Tells the bridge whether the Missions tab shows and which mission is open. */
+	#syncMissions(): void {
+		const open = this.#selected.seat === MISSIONS;
+		this.#missionsShown = open;
+		const run = open && this.#missionOpen ? this.#missions?.rows[this.#missionIndex]?.run : undefined;
+		this.send({ t: "missions", open, run });
+	}
+
 	/** A seat's own session tab: not the overview, the model book, Capabilities or a Claude session. */
 	#seatTab(): boolean {
 		const { seat, session } = this.#selected;
-		return session !== undefined && seat !== OVERVIEW && seat !== MODELS && seat !== CAPABILITIES && !isClaude(session);
+		return (
+			session !== undefined && seat !== OVERVIEW && seat !== MODELS && seat !== CAPABILITIES && seat !== BRAIN && seat !== MISSIONS && !isClaude(session)
+		);
 	}
 
 	/** Opens the panel and asks the bridge for the session's latest record; closing keeps nothing. */
@@ -590,7 +669,7 @@ export class App implements Component {
 
 	/** A page (overview, models, capabilities) reads from its top; a transcript sits on the composer. */
 	#isPage(): boolean {
-		return [OVERVIEW, MODELS, CAPABILITIES].includes(this.#selected.seat);
+		return [OVERVIEW, MODELS, CAPABILITIES, BRAIN, MISSIONS].includes(this.#selected.seat);
 	}
 
 	/** Up by `lines` (down when negative); `#scroll` counts rows away from the anchor, so a page moves the other way. */
@@ -781,7 +860,7 @@ export class App implements Component {
 		else if (!this.#link) parts.push(theme.fg("dim", "connecting to Huginn…"));
 		else if (!this.#link.ok) parts.push(theme.fg("error", `${theme.status.error} ${this.#link.text}`));
 		const left = ` ${parts.join(sep)}`;
-		const f5 = this.#selected.seat === CAPABILITIES ? "F5 refresh · " : "";
+		const f5 = this.#selected.seat === CAPABILITIES || this.#selected.seat === BRAIN ? "F5 refresh · " : "";
 		const hint = theme.fg("dim", `tab seat · ${f5}wheel/pgup scroll · ctrl+r details `);
 		const room = width - visibleWidth(left) - visibleWidth(hint);
 		return room >= 2 ? left + " ".repeat(room) + hint : truncateToWidth(left, width);
@@ -793,6 +872,15 @@ export class App implements Component {
 		}
 		if (this.#selected.seat === CAPABILITIES) {
 			return featureRows(this.#features?.value, this.#features?.note, width, this.#featuresWaiting);
+		}
+		if (this.#selected.seat === BRAIN) {
+			return brainRows(this.#knowledge, width, this.#knowledgeWaiting);
+		}
+		if (this.#selected.seat === MISSIONS) {
+			return missionRows(
+				this.#missions, this.#missionIndex, this.#missionOpen, this.#missionFrame, width,
+				() => this.tui.requestRender(), this.#transcriptHeight(),
+			);
 		}
 		if (this.#selected.seat === OVERVIEW) {
 			const samples = [...this.#compute.values()].sort((left, right) => left.node.localeCompare(right.node));
@@ -809,6 +897,14 @@ export class App implements Component {
 					: computeRows(samples, width);
 			return [
 				...computers,
+				...(this.#budgets.length === 0 ? [] : [
+					"",
+					` ${theme.fg("accent", "Lane compute budgets")}`,
+					...this.#budgets.flatMap(lane => {
+						const amount = (value: { used: number; cap: number | null }) => `${value.used.toFixed(1)}/${value.cap ?? "unlimited"}`;
+						return wrapLiteralLine(` ${lane.lane} (${lane.windowDays}d): ${amount(lane.coreHours)} core-h · ${amount(lane.gpuHours)} GPU-h · $${amount(lane.computeUsd)}`, width);
+					}),
+				]),
 				...overviewRows(
 					{
 						seats: this.#seats,
@@ -818,6 +914,7 @@ export class App implements Component {
 						pods: this.#pods,
 						local: this.#localClaude,
 						ci: this.#ci,
+						plans: this.#plans,
 						spend: this.#spend?.seats,
 						models: this.#models,
 					},

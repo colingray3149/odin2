@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "build"
+op = "science_verdict"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Records an independent science verdict (approve, or changes with notes) on one proposal artifact: a dataset version, surrogate promotion, validation claim or out-of-domain decision. The verdict is bound to that artifact's exact digest; a changed proposal is a new artifact and needs its own verdict."
+handler = { id = "science_review_verdict" }
+input_schema = "schemas/capability/science.review.verdict.input.json"
+output_schema = "schemas/capability/science.review.verdict.output.json"
+effect_class = "R1"
+seat_tags = ["judge"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_science_review_verdict_evidence" }
+tests = [
+  "odin-cli::bin/odind coding_route::science_review::tests::a_verdict_binds_the_exact_proposal",
+]

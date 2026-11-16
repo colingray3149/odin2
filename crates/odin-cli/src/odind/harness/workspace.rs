@@ -424,6 +424,20 @@ mod tests {
     use odin_domain::{NodeId, ProjectId, SeatId, SliceId};
     use odin_process::test_support::RegisteredWorkerFixture;
 
+    const FIXTURE_HARNESS: &str = r#"schema = "odin.registry.v1"
+kind = "harness"
+enabled = true
+description = "Process harness fixture."
+protocol = "process"
+governance = "observed"
+command = ["fixture-agent"]
+prompt = "argv"
+output = "text"
+[stop]
+signal = "SIGINT"
+grace_seconds = 10
+"#;
+
     fn sh(directory: &Path, args: &[&str]) -> String {
         let output = std::process::Command::new("git")
             .arg("-C")
@@ -495,11 +509,8 @@ mod tests {
             harness: None,
         };
         let route = HarnessRoute {
-            harness_id: "codex".to_owned(),
-            harness: toml::from_str(include_str!(
-                "../../../../../registry/harnesses/codex/harness.toml"
-            ))
-            .expect("codex parses"),
+            harness_id: "fixture-agent".to_owned(),
+            harness: toml::from_str(FIXTURE_HARNESS).expect("fixture harness parses"),
             environment_id: "pod-authority".to_owned(),
             environment: toml::from_str(include_str!(
                 "../../../../../registry/environments/pod-authority/environment.toml"
@@ -618,11 +629,8 @@ mod tests {
             harness: None,
         };
         let route = HarnessRoute {
-            harness_id: "codex".to_owned(),
-            harness: toml::from_str(include_str!(
-                "../../../../../registry/harnesses/codex/harness.toml"
-            ))
-            .expect("codex parses"),
+            harness_id: "fixture-agent".to_owned(),
+            harness: toml::from_str(FIXTURE_HARNESS).expect("fixture harness parses"),
             environment_id: "pod-authority".to_owned(),
             environment: toml::from_str(include_str!(
                 "../../../../../registry/environments/pod-authority/environment.toml"

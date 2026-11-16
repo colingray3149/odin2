@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/simulation.frame.input.json",
+  "title": "simulation.frame input",
+  "description": "The mission (run id, label or workload name) and, optionally, one of its renderers; without one the newest frame of any renderer.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "mission": { "type": "string", "minLength": 1, "maxLength": 253 },
+    "renderer": { "type": "string", "minLength": 1, "maxLength": 128 }
+  },
+  "required": ["mission"]
+}

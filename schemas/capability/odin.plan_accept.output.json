@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/odin.plan_accept.output.json",
+  "title": "odin.plan_accept output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "session": { "type": "string" },
+    "revision": { "type": "integer" },
+    "accepted": { "type": "boolean" },
+    "acceptedBy": { "type": "string" }
+  },
+  "required": ["session", "revision", "accepted", "acceptedBy"]
+}

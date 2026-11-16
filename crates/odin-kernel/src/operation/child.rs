@@ -246,12 +246,22 @@ impl ChildEffectGrant {
             self.registration_id,
             request.correlation_id.as_str()
         );
+        let mut fence = {
+            let ledger = self
+                .store
+                .lock()
+                .map_err(|error| refused(format!("store poisoned: {error}")))?;
+            ledger
+                .try_operation_fence(&correlation)?
+                .ok_or_else(|| refused("child request is in flight"))?
+        };
         let replay = {
             let mut ledger = self
                 .store
                 .lock()
                 .map_err(|error| refused(format!("store poisoned: {error}")))?;
             ledger.with_tx(|tx| {
+                fence.claim(tx)?;
                 let now_ms = (self.clock)();
                 let (parent, registration) = load_registration(tx, &self.registration_id, now_ms)?;
                 if registration.target != self.target {
@@ -317,6 +327,7 @@ impl ChildEffectGrant {
             .lock()
             .map_err(|error| refused(format!("store poisoned: {error}")))?;
         ledger.with_tx(|tx| {
+            fence.check(tx)?;
             let row = store::operation_row(tx, &correlation)?
                 .ok_or_else(|| refused("started request missing"))?;
             let result_id = format!("child-result:{correlation}");
@@ -633,6 +644,7 @@ mod tests {
             effect_state: EffectState::Committed,
             reconciliation_json: "{}".into(),
             evidence_digest: None,
+            recovery_evidence_digest: None,
             executor_id: PreparedEffect::OMP_HOST_EXECUTOR.into(),
             prepared_binding: "{}".into(),
             binding_digest: "binding".into(),

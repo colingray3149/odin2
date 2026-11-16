@@ -23,6 +23,7 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use super::admission::CheckedDispatchPrefix;
+use super::catalog::GenerationCatalog;
 use super::policy::{
     correlation_for, expired_exact_scope, host_tool_command_id, restore_consumed_approval,
     APPROVAL_IDENTITY_ATTEMPTS, APPROVAL_ID_ARGUMENT, DECLARATION_DECIDER, GRANT_DECIDER,
@@ -31,6 +32,7 @@ use super::{
     HostToolOperationError, HostToolOperations, SessionOperationBinding, SessionOperationContext,
 };
 use crate::host_tools::plan_set::PlanSetTool;
+use crate::host_tools::todo_update::TodoUpdateTool;
 
 /// The in-host transport never narrows the authority-derived reservation.
 /// Both the ceiling and the charged reservation are bound into the durable
@@ -190,10 +192,15 @@ impl HostToolOperations {
                     .map_err(|detail| HostToolOperationError::Composition { detail }),
                 None => Ok(result),
             });
-        // Log refusals because the returned error otherwise reaches only the model.
+        // Log failures because the returned error otherwise reaches only the model.
         if let Err(error) = &result {
+            let label = if error.is_failure() {
+                "failed"
+            } else {
+                "refused"
+            };
             tracing::error!(
-                "odin-omp: host tool refused tool={tool_name} session={session} request={request_id}: {error}"
+                "odin-omp: host tool {label} tool={tool_name} session={session} request={request_id}: {error}"
             );
         }
         result
@@ -454,7 +461,12 @@ impl HostToolOperations {
                 schemas: &*self.schemas,
                 listing: &listing,
             };
-            let outcome = if tool_name == PlanSetTool::NAME {
+            // A seat's own plan and to-do list are not side effects that need an accepted plan, and
+            // a blocked seat must always be able to report why (incidents are journaled and deduped).
+            let outcome = if tool_name == PlanSetTool::NAME
+                || tool_name == TodoUpdateTool::NAME
+                || contract.id.as_str() == "incident.raise"
+            {
                 authorize_plan_management(
                     environment,
                     &invocation,
@@ -572,6 +584,29 @@ impl HostToolOperations {
         let authorized = match outcome {
             AuthorizationOutcome::Authorized(proof) => *proof,
             AuthorizationOutcome::Rejected(rejection) => {
+                if matches!(&rejection, AuthorizationRejection::NeedsPlan { .. })
+                    && context.binding.parent.is_none()
+                {
+                    if let (Some(request), Some(run), Some(seat)) = (
+                        &self.root_plan_consent,
+                        context.scope.run.as_ref(),
+                        context.scope.seat.as_ref(),
+                    ) {
+                        if run.as_str() == format!("run:live:{}", context.session) {
+                            let plan = self.lock_ledger()?.plan(run)?;
+                            if let Some(plan) = plan {
+                                request(
+                                    run,
+                                    context.session,
+                                    seat.as_str(),
+                                    plan.revision,
+                                    &plan.objective,
+                                )
+                                .map_err(|detail| HostToolOperationError::Composition { detail })?;
+                            }
+                        }
+                    }
+                }
                 if let (Some(grants), Some(_)) = (&self.task_grants, &invocation.approval_id) {
                     let mut ledger = self.lock_ledger()?;
                     grants
@@ -581,15 +616,23 @@ impl HostToolOperations {
                 return Err(HostToolOperationError::Rejected(rejection));
             }
         };
+        // Admit against the session's own generation, the one its listing and
+        // authorization used, not the contracts odind started with.
+        let material = self.generation_material(context.binding)?;
+        let catalog = GenerationCatalog {
+            material: &material,
+            base: self.authority.catalog(),
+        };
         let decision: OperationDecision = self
             .authority
-            .invoke_authorized(
+            .invoke_authorized_with_catalog(
                 authorized,
                 &InvokeRequest {
                     capsule_id: context.binding.capsule_id.clone(),
                     correlation_id: correlation_id.clone(),
                     requested_ceiling: NO_NARROWING,
                 },
+                &catalog,
             )
             .map_err(|rejection| self.adapter_failure(contract, &correlation_id, rejection))?;
         match (decision.state, decision.replay) {
@@ -1140,15 +1183,23 @@ fn mint_approval_request(
 ///   is a claim about the same bytes and is never corrected — one that
 ///   disagrees with the observed source is a typed argument rejection.
 ///
+/// A seat ask is first shaped by [`shape_seat_ask`].
+///
 /// Every other argument passes through untouched, and a payload this seam
 /// cannot digest (a non-object, or a missing or non-string `source`) is
 /// left for the canonical input schema to reject.
 pub(super) fn normalize_capability_arguments(
     contract: &CapabilityContract,
+    scope: Option<&Scope>,
     narrowing: &Value,
     mut arguments: Value,
 ) -> Result<Value, HostToolOperationError> {
     let tool = contract.tool_name.as_ref();
+    if contract.delegate_to.is_some() {
+        if let Some(fields) = arguments.as_object_mut() {
+            shape_seat_ask(fields, scope, narrowing);
+        }
+    }
     if let (Some(fields), Some(properties)) = (
         arguments.as_object_mut(),
         narrowing.get("properties").and_then(Value::as_object),
@@ -1167,6 +1218,13 @@ pub(super) fn normalize_capability_arguments(
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
+            // A field with one declared value has nothing to choose: "all" means that one.
+            if let [only] = values.as_slice() {
+                if fields.get(field).and_then(Value::as_str) == Some("all") {
+                    fields.insert(field.clone(), Value::String(only.clone()));
+                    continue;
+                }
+            }
             let Some(Value::String(given)) = fields.get(field) else {
                 continue;
             };
@@ -1226,6 +1284,78 @@ pub(super) fn normalize_capability_arguments(
     Ok(arguments)
 }
 
+/// Accepts the shapes models actually send to a seat ask: `message` for
+/// `question`, options as plain strings, no `subject` (the question's first
+/// line), and no `project` (the asking session's own, or the target's only
+/// bound one). A project the target does not take is not guessed: the
+/// handler names the bound projects. An escalation's surface has no
+/// `project`, so a supplied one is dropped (it concerns the asker's own).
+fn shape_seat_ask(
+    fields: &mut serde_json::Map<String, Value>,
+    scope: Option<&Scope>,
+    narrowing: &Value,
+) {
+    let clip = |text: &str, chars: usize| -> String { text.trim().chars().take(chars).collect() };
+    if !fields.contains_key("question") {
+        if let Some(message) = fields.remove("message") {
+            fields.insert("question".to_owned(), message);
+        }
+    }
+    if let Some(Value::Array(options)) = fields.get_mut("options") {
+        for option in options.iter_mut() {
+            if let Value::String(text) = option {
+                *option = serde_json::json!({
+                    "label": clip(text, 128),
+                    "action_ref": clip(text, 256),
+                });
+            }
+        }
+    }
+    let subject_missing = match fields.get("subject") {
+        None | Some(Value::Null) => true,
+        Some(Value::String(subject)) => subject.trim().is_empty(),
+        Some(_) => false,
+    };
+    if subject_missing {
+        let first_line = fields
+            .get("question")
+            .and_then(Value::as_str)
+            .and_then(|question| {
+                question
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+            });
+        if let Some(line) = first_line {
+            // 50 characters stay within the handler's 200-byte subject bound.
+            fields.insert("subject".to_owned(), Value::String(clip(line, 50)));
+        }
+    }
+    let project = narrowing.pointer("/properties/project");
+    if narrowing.get("properties").is_some() && project.is_none() {
+        fields.remove("project");
+        return;
+    }
+    if fields.get("project").is_some_and(|value| !value.is_null()) {
+        return;
+    }
+    let bound: Vec<&str> = project
+        .and_then(|project| project.get("enum"))
+        .and_then(Value::as_array)
+        .map(|values| values.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let own = scope
+        .and_then(|scope| scope.project.as_ref())
+        .map(|project| project.as_str())
+        .filter(|own| bound.is_empty() || bound.contains(own));
+    if let Some(project) = own.or(match bound.as_slice() {
+        [only] => Some(*only),
+        _ => None,
+    }) {
+        fields.insert("project".to_owned(), Value::String(project.to_owned()));
+    }
+}
+
 /// Selects the ledger-safe logical target for one host-bound dispatch.
 ///
 /// Capability-bound bridge calls are run work: a targetless scope cannot be
@@ -1243,7 +1373,7 @@ pub(super) fn invocation_target(scope: &Scope) -> Result<InvocationTarget, HostT
     })
 }
 
-/// Adapter permits carry no host scope: their backend receives only declared argv and validated input.
+/// Derive the host-owned binding appropriate for the executor.
 fn host_executor_binding(
     contract: &odin_kernel::CapabilityContract,
     scope: &Scope,
@@ -1356,18 +1486,6 @@ fn unix_ms(now_ms: u64) -> Result<OffsetDateTime, HostToolOperationError> {
         })
 }
 
-/// Asking a conversation seat is an escalation, not a nested worker delegation.
-pub(super) fn delegates_beyond_depth(
-    contract: &CapabilityContract,
-    escalation_targets: &std::collections::BTreeSet<odin_domain::SeatId>,
-) -> bool {
-    contract.id.as_str() == crate::host_tools::delegation::TASK_CREATE_CAPABILITY
-        || contract
-            .delegate_to
-            .as_ref()
-            .is_some_and(|target| !escalation_targets.contains(target))
-}
-
 #[cfg(test)]
 mod adapter_binding_tests {
     use super::*;
@@ -1395,4 +1513,5 @@ mod adapter_binding_tests {
             "an adapter permit carries no executor binding"
         );
     }
+
 }

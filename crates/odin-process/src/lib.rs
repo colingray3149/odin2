@@ -6,6 +6,7 @@ mod argv;
 mod environment;
 mod error;
 mod identity;
+mod oneshot;
 mod output;
 mod runner;
 mod systemd;
@@ -18,6 +19,7 @@ pub use environment::{AllowlistedEnvironment, EnvironmentBuilder};
 pub use error::{ProcessError, ProcessErrorCode};
 pub use identity::{IdentitySnapshot, ProcessIdentity, ScanCriteria, SurvivorScanner};
 pub use odin_types::WorkerId;
+pub use oneshot::{run_bounded, ChildBounds, ChildOutput};
 pub use output::CapturedOutput;
 pub use runner::{
     CancellationToken, CommandSpec, ExitDisposition, ProcessControl, ProcessLaunch,

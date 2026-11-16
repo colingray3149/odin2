@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/knowledge.new.input.json",
+  "title": "knowledge.new input",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "person",
+        "org",
+        "project",
+        "course",
+        "topic",
+        "event",
+        "doc"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "slug": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "term": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "date": {
+      "type": "string",
+      "maxLength": 10
+    },
+    "email": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 100
+      },
+      "maxItems": 20
+    },
+    "parent": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "seats": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 40
+      },
+      "maxItems": 10
+    }
+  },
+  "required": [
+    "kind",
+    "name"
+  ]
+}

@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 tracing.workspace = true
 odin-atlas.workspace = true
-odin-confined-fs.workspace = true
 odin-domain.workspace = true
 odin-huginn.workspace = true
 odin-kernel.workspace = true

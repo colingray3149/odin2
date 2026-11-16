@@ -1,6 +1,7 @@
 //! The `odin` subcommands: one module per subcommand, wired into the
 //! parser in `main.rs`.
 
+pub(crate) mod acp;
 pub(crate) mod approval;
 pub(crate) mod atlas;
 pub(crate) mod authority;
@@ -9,6 +10,7 @@ pub(crate) mod context;
 pub(crate) mod host_file;
 pub(crate) mod huginn;
 pub(crate) mod models;
+pub(crate) mod offload;
 pub(crate) mod output;
 pub(crate) mod registry;
 pub(crate) mod session;

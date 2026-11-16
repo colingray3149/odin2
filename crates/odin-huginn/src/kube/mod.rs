@@ -128,6 +128,14 @@ impl SurfaceArtifacts {
             .map(|entry| entry.bytes.as_slice())
     }
 
+    /// The bytes of the stored artifact with `digest`, if any.
+    pub fn bytes_by_digest(&self, digest: &Digest) -> Option<&[u8]> {
+        self.entries
+            .values()
+            .find(|entry| &entry.reference.content_digest == digest)
+            .map(|entry| entry.bytes.as_slice())
+    }
+
     /// Returns the removed artifact's bytes to the budget; reports whether it was stored.
     pub fn remove(&mut self, artifact_id: &ArtifactId) -> bool {
         match self.entries.remove(artifact_id) {

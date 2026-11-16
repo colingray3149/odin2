@@ -12,6 +12,16 @@ use serde_json::{Map, Value};
 /// Validators ignore the keyword; the narrowing schema keeps it.
 pub const RESOLVED_IDS: &str = "x-odin-resolve-ids";
 
+/// Names models swap for one another. The schema's own spelling wins, the first one it declares.
+pub const SYNONYMS: [&[&str]; 6] = [
+    &["artifact", "artifactId"],
+    &["query", "q", "text", "pattern"],
+    &["name", "title", "file_name"],
+    &["question", "prompt"],
+    &["after", "since"],
+    &["before", "until"],
+];
+
 /// Root keywords no validator reads and the model does not need beside the
 /// tool description. Property descriptions stay: some are a field's only hint.
 const ROOT_ANNOTATIONS: [&str; 4] = ["$schema", "$id", "title", "description"];

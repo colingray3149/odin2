@@ -17,5 +17,8 @@ strengths = "Long-context coding and careful multi-step reasoning at frontier de
 # True names a lane seats may run.
 seats = true
 
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"
+
 [thinking]
 levels = ["low", "high", "max"]

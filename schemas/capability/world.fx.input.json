@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/world.fx.input.json",
+  "title": "world.fx input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "from": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 3,
+      "description": "ISO code; default USD."
+    },
+    "to": {
+      "type": "string",
+      "minLength": 3,
+      "description": "ISO code, or several comma-separated."
+    },
+    "amount": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Default 1."
+    }
+  },
+  "required": [
+    "to"
+  ]
+}

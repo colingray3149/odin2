@@ -3,14 +3,14 @@ brain_scope = [
     "atlas.code",
     "atlas.codemap",
     "state.repos",
-    "memory.scribe",
-    "memory.project.rig",
 ]
 profile_namespace = "memory.owner"
 categories = ["builder"]
 description = "Documentation helper that writes and tidies READMEs and docs."
 enabled = true
 kind = "seat"
+# Launch choices (provider/model); the first is the default: docs run on the agent lane.
+models = ["gateway/zai-glm", "gateway/glm-flash", "gateway/kimi-k31", "gateway/astra"]
 project_scope = [
     "rig",
 ]
@@ -28,14 +28,14 @@ tool_refs = [
   "capsule.eval.run",
   "capsule.file.edit",
   "seat.ask.sinmara",
-  "memory.remember",
-  "brain.search",
-  "brain.read",
+  "knowledge.search",
+  "knowledge.read",
+  "knowledge.add",
+  "knowledge.status",
   "registry.read",
   "incident.raise",
   "artifact.write",
   "artifact.read",
-  "memory.forget",
   "kube.workload.summarize",
   "codemap.get_architecture",
   "codemap.list_projects",
@@ -48,6 +48,7 @@ tool_refs = [
   "codemap.index_status",
   "codemap.check_index_coverage",
   "models.read",
+  "simulation.read",
 ]
 
 guidance = """
@@ -55,18 +56,18 @@ You are Scribe, the owner's documentation helper: you write and tidy READMEs and
 
 You answer the seat that asked in a few lines: what you changed, what the checks showed, the branch, and what's left.
 
-How you think: read the code and the current docs, then write for someone who wants to use the thing — short, accurate, current, every claim checked against the code. Build and test, request review where the project wants it, then propose the branch. A decision that isn't yours goes to Sinmara as a question with options.
+How you think: read the code and the current docs, then write for someone who wants to use the thing — short, accurate, current, every claim checked against the code. Test it, request review where the project wants it, then propose the branch. A decision that isn't yours goes to Sinmara as a question with options.
 
 Your fixed toolsets take op plus the fields named for that operation. Rare operations take args; op help with operation returns the exact member schema as a result. MCP tools and skills are native capabilities behind these same operations.
 
-Your tools: file edits and evaluation in your capsule; builds, flake checks and tests; review requests; branch proposal; the brain, the registry and your memory; artifacts; pod summaries; incidents.
+Your tools: file edits and evaluation in your capsule; tests and diagnostics; review requests; branch proposal; the knowledge tools (search and read; add for project notes), the registry and your own page (read brain/agents/scribe.md once at the start of a session: standing prompts and lessons; record a lesson or decision with knowledge.add as=note about your project); artifacts; pod summaries; incidents.
 
-The harness: your capsule is your own clone and builds run in the Nix sandbox; Odin runs every call under your grants."""
+The harness: your capsule is your own clone and evaluation and tests run in the Nix sandbox; Odin runs every call under your grants."""
+read_project_scope = []
 
 [context]
 max_bundle_tokens = 24576
 profile = "medium"
-review_lane = "glm-flash"
 
 [knowledge]
 atlas_sources = [
@@ -74,8 +75,6 @@ atlas_sources = [
     "atlas.code",
     "atlas.codemap",
     "state.repos",
-    "memory.scribe",
-    "memory.project.rig",
 ]
 denied_tags = []
 required_tags = []

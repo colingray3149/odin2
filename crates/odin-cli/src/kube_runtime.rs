@@ -54,17 +54,90 @@
 use thiserror::Error;
 
 mod admission;
+mod create_many;
 mod evidence;
 mod execution;
 mod extension;
 #[cfg(test)]
 #[path = "kube_runtime/tests/fake_api.rs"]
-mod fake_api;
+pub(crate) mod fake_api;
 mod launch;
+mod launch_queue;
 mod models_config;
 mod scoped_registration;
+pub(crate) mod stage;
+mod steer;
 
 pub use admission::KubeCommandCoordinator;
+pub use launch_queue::{LaunchQueue, QueuedLaunch, VramProbe};
+
+/// Metered lane usage and effective caps, shared by snapshot reads and the view publisher.
+pub(crate) fn budget_rows(
+    snapshot: &odin_registry::Snapshot,
+    huginn_root: &std::path::Path,
+    now_ms: u64,
+) -> Result<Vec<serde_json::Value>, String> {
+    use odin_registry::{ComputeUsage, LaneBudgetKind, ObjectConfig, RaisedLaneBudgets};
+
+    let usage = ComputeUsage::load(huginn_root)?;
+    let raised = RaisedLaneBudgets::load(huginn_root)?;
+    Ok(snapshot
+        .objects
+        .iter()
+        .filter_map(|object| {
+            let ObjectConfig::Lane(lane) = &object.config else {
+                return None;
+            };
+            let used = usage.used(&object.id, lane.limits.window_days(), now_ms);
+            let dimension = |kind: LaneBudgetKind| {
+                let declared = kind.declared(&lane.limits);
+                let cap = raised
+                    .as_ref()
+                    .and_then(|r| r.effective(&object.id, declared, kind))
+                    .or(declared);
+                serde_json::json!({"used": used.in_limit_units(kind), "cap": cap})
+            };
+            Some(serde_json::json!({
+                "lane": object.id,
+                "windowDays": lane.limits.window_days(),
+                "coreHours": dimension(LaneBudgetKind::CoreHours),
+                "gpuHours": dimension(LaneBudgetKind::GpuHours),
+                "computeUsd": dimension(LaneBudgetKind::ComputeUsd),
+            }))
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod budget_view_tests {
+    #[test]
+    fn lane_rows_show_metered_hours_and_declared_caps() {
+        let root = tempfile::tempdir().unwrap();
+        let lane = odin_registry::schema::parse_object_toml(
+            odin_registry::RegistryKind::Lane, "sweep", "lanes/sweep/lane.toml",
+            "schema = 'odin.registry.v1'\nkind = 'lane'\nenabled = true\ndescription = 'test'\nproject = 'odin'\ndefault_seat = 'kubert'\nrequires_independent_review = false\n[limits]\ncore_hours = 10\ngpu_hours = 8\ncompute_usd = 20\nbudget_window_days = 7\n",
+        ).unwrap();
+        let snapshot = odin_registry::Snapshot::build(1, vec![lane]).unwrap();
+        odin_registry::ComputeUsage::update(root.path(), |usage| {
+            usage.charge_interval(&["sweep".to_owned()], 0, 3_600_000, 2.0, 1.0, 0.5);
+        })
+        .unwrap();
+        let rows = super::budget_rows(&snapshot, root.path(), 3_600_000).unwrap();
+        assert_eq!(rows[0]["lane"], "sweep");
+        assert_eq!(
+            rows[0]["coreHours"],
+            serde_json::json!({"used": 2.0, "cap": 10})
+        );
+        assert_eq!(
+            rows[0]["gpuHours"],
+            serde_json::json!({"used": 1.0, "cap": 8})
+        );
+        assert_eq!(
+            rows[0]["computeUsd"],
+            serde_json::json!({"used": 0.5, "cap": 20})
+        );
+    }
+}
 
 /// The trusted-host launch inputs of one admitted workload profile,
 /// resolved by the daemon through the SHARED pinned-snapshot handle —
@@ -85,6 +158,9 @@ pub struct WorkloadLaunchInputs {
     /// Maps the route's credential handle to a Secret key and carrier environment
     /// variable. Changing the gateway endpoint does not change this mapping.
     pub credential: odin_kube::workload::WorkloadCredentialEnv,
+    /// The run limits this launch resolved: the profile's declared values with
+    /// the launch's overrides. Empty from resolution; the create dispatch fills it.
+    pub limits: odin_domain::huginn::WorkloadLimits,
     /// The explicitly selected target node's declared gateway endpoint,
     /// parsed once by the owning node-declaration seam: the staged model
     /// config carries its URI as `baseUrl` and the egress pin derives the
@@ -95,10 +171,36 @@ pub struct WorkloadLaunchInputs {
     /// Empty from resolution; the create dispatch fills it once each named
     /// artifact is proven in the ledger.
     pub staged_inputs: Vec<odin_domain::huginn::WorkloadInputBinding>,
+    /// The launch prompt text, staged as the last input. The create fills it
+    /// from the caller; the pod's opening message quotes its head.
+    pub opening_prompt: Option<String>,
+    /// What the run is about; recon runs on them when the pod is up. The create fills it.
+    pub seeds: Vec<String>,
     /// Declared egress hosts the launch left out because they did not
     /// resolve, with the cause. Empty from resolution; the create fills it
     /// from the Job's egress resolution so the pod's brief names them.
     pub unresolved_hosts: std::collections::BTreeMap<String, String>,
+}
+
+/// The launch prompt's share of a pod's opening message, in characters. A
+/// longer prompt is cut here and the rest is read from its staged input.
+pub(crate) const OPENING_PROMPT_CHARS: usize = 16_000;
+
+/// The opening message of an admitted agent pod carrying its launch prompt:
+/// the prompt verbatim up to [`OPENING_PROMPT_CHARS`], then a pointer to the
+/// staged input that holds all of it.
+pub(crate) fn opening_prompt_text(prompt: &str, staged_path: &str) -> String {
+    let body = match prompt.char_indices().nth(OPENING_PROMPT_CHARS) {
+        None => prompt.to_owned(),
+        Some((cut, _)) => format!(
+            "{}\n[continued in {staged_path}: read it with :raw]",
+            &prompt[..cut]
+        ),
+    };
+    format!(
+        "Workload session admitted. Your task brief from the launcher follows; the profile \
+         brief is in your session guidance.\n\n{body}"
+    )
 }
 
 /// The resolution verdict for one `kube.workload.create` profile id:
@@ -130,7 +232,9 @@ pub struct ScriptLaunchInputs {
 /// declared endpoint and the lane's Secret binding.
 #[derive(Clone, Debug)]
 pub struct ScriptGateway {
-    pub lane: String,
+    pub lane: Option<String>,
+    /// The project's `[agents]` role → lane pairs; nonempty means the project's own key.
+    pub roles: std::collections::BTreeMap<String, String>,
     pub endpoint: odin_registry::schema::NodeGatewayEndpoint,
     pub credential: odin_kube::workload::WorkloadCredentialEnv,
 }

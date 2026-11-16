@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/knowledge.where.input.json",
+  "title": "knowledge.where input",
+  "properties": {
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "host": {
+      "type": "string",
+      "enum": [
+        "mini",
+        "pc",
+        "laptop"
+      ]
+    }
+  },
+  "required": [
+    "query"
+  ]
+}

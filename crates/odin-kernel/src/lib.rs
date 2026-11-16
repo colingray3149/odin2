@@ -11,6 +11,7 @@ pub mod operation;
 pub mod policy;
 pub mod provider;
 pub mod recovery;
+pub mod schema;
 pub mod stop;
 pub mod stop_transport;
 pub mod token;
@@ -18,7 +19,7 @@ pub mod worker_broker;
 
 pub use approval::{
     Approval, ApprovalCommand, ApprovalDecision, ApprovalGate, ApprovalRedirect, ApprovalScope,
-    ConsumeOutcome, DecisionOutcome, DenialEvidence, ExpireOutcome, ExpirySweep, NewApproval,
+    ConsumeOutcome, DecisionOutcome, DenialEvidence, NewApproval,
 };
 pub use authority_transition::{
     AuthorityAuditKind, AuthorityAuditRecord, AuthorityDispatchReceipt, AuthorityDispatchRequest,

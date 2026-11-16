@@ -20,6 +20,7 @@ odin-domain.workspace = true
 odin-kernel.workspace = true
 odin-ledger.workspace = true
 odin-omp.workspace = true
+odin-process = { version = "0.0.0", path = "../odin-process" }
 odin-registry.workspace = true
 odin-workflows.workspace = true
 odin-types.workspace = true

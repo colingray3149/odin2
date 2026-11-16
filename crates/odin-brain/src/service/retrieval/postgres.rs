@@ -176,12 +176,18 @@ impl BrainService {
         let mut candidates: Vec<ScoredCandidate> =
             pooled.into_iter().map(|(_, candidate)| candidate).collect();
         let served = candidates.len();
-        let rerank_ms = self.rerank(&plan.query().text, plan.query().min_score, &mut candidates);
+        let (rerank_ms, rerank_skipped) =
+            self.rerank(&plan.query().text, plan.query().min_score, &mut candidates);
+        // A lexical-only posture already says less was served; a skipped rerank only
+        // downgrades a full one.
+        if let (RetrievalPosture::Full, Some(reason)) = (&posture, rerank_skipped) {
+            posture = RetrievalPosture::FusedOnly { reason };
+        }
         let plan = match posture {
             RetrievalPosture::LexicalOnly { .. } => {
                 RetrievalPlan::new(plan.query().clone(), RetrievalMode::Lexical)
             }
-            RetrievalPosture::Full => plan,
+            RetrievalPosture::Full | RetrievalPosture::FusedOnly { .. } => plan,
         };
         let hits = rank(&plan, candidates)?;
         tracing::debug!(
@@ -201,15 +207,16 @@ impl BrainService {
     /// ones take the fused scores the head held, best first and strictly
     /// falling, in the reranker's order, so `top_k` cuts as before and the
     /// order survives ranking. Without a reranker, or when it fails (named in
-    /// the log), the fused order stands. Returns the milliseconds it took.
+    /// the log), the fused order stands. Returns the milliseconds it took and why the
+    /// rerank was skipped, when it failed.
     fn rerank(
         &self,
         query: &str,
         min_score: RelevanceScore,
         candidates: &mut Vec<ScoredCandidate>,
-    ) -> u128 {
+    ) -> (u128, Option<String>) {
         let Some(reranker) = &self.config.rerank else {
-            return 0;
+            return (0, None);
         };
         let started = std::time::Instant::now();
         // Ranking keeps one chunk per text; a later twin would otherwise
@@ -220,12 +227,13 @@ impl BrainService {
         candidates.retain(|candidate| seen.insert(candidate.chunk.digest));
         let best = candidates.len().min(reranker.candidates);
         if best < 2 {
-            return 0;
+            return (0, None);
         }
         let texts: Vec<&str> = candidates[..best]
             .iter()
             .map(|candidate| candidate.chunk.text.as_str())
             .collect();
+        let mut skipped = None;
         match reranker.order(query, &texts) {
             Ok(order) => {
                 let chunks: Vec<_> = order
@@ -242,9 +250,12 @@ impl BrainService {
                     }
                 }
             }
-            Err(error) => tracing::warn!(%error, "brain-rerank skipped; the fused order serves"),
+            Err(error) => {
+                tracing::warn!(%error, "brain-rerank skipped; the fused order serves");
+                skipped = Some(error.to_string());
+            }
         }
-        started.elapsed().as_millis()
+        (started.elapsed().as_millis(), skipped)
     }
 
     /// One warm round over the PostgreSQL store: embeds up to `budget`
@@ -541,6 +552,8 @@ mod tests {
                     max_parallel_runs: 4,
                     max_sessions: 4,
                     max_background_jobs: 4,
+                    max_batch_launches: 256,
+                    max_batch_inputs: 16,
                     inline_seconds: 4,
                     budget: Some(BudgetPolicyToml {
                         usd_micros: 30_000_000,

@@ -5,7 +5,7 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Stores a workspace file or text as an artifact, or shares an artifactId, with named seats or projects; returns its digest. Your own seat and project always have it. Worth it to hand a pod or another seat material: save it here and pass the artifact as the pod's input. Up to 32 MiB, from inside the workspace."
+description = "Stores a workspace file or text as an artifact, or shares an artifactId, with named seats or projects; returns its digest. Your own seat and project always have it. Worth it to hand a pod or another seat material: save it here and pass the artifact as the pod's input. Workspace files up to 32 MiB; text up to 1 MiB. A pod's /export is delivered only when its run settles, so pass its text to hand it over now."
 handler = { id = "artifact_write" }
 input_schema = "schemas/capability/artifact.write.input.json"
 output_schema = "schemas/capability/artifact.write.output.json"

@@ -151,6 +151,9 @@ pub struct WorkloadRun {
     pub ended_at: Option<String>,
     /// Pending operator approvals targeting this run, sorted by approval id.
     pub blockers: Vec<PendingBlocker>,
+    /// The live session carrying this run has ended or failed: nothing is
+    /// running it, whatever the run row still says.
+    pub session_stopped: bool,
 }
 
 /// One atomic read of every task-authority input.

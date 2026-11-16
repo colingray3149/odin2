@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/simulation.read.input.json",
+  "title": "simulation.read input",
+  "description": "No mission reads every mission. A mission is its run id, label (profile) or workload name; exports lists that one mission's export files so far.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "mission": { "type": "string", "minLength": 1, "maxLength": 253 },
+    "exports": { "type": "boolean" }
+  }
+}

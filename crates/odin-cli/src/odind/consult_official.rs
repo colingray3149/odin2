@@ -11,14 +11,12 @@
 //! when a different profile is active — switching accounts is the owner's act,
 //! never the daemon's.
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use super::claude_host_transport::read_stderr_tail;
 use odin_hermes::runtime::consult::{
     OfficialConsultModel, OfficialConsultOutcome, OfficialConsultRoute,
 };
@@ -35,7 +33,6 @@ use serde_json::{json, Value};
 /// thinking default. Opus 5.5 consults at high.
 const DEFAULT_EFFORT: &str = "high";
 const DEFAULT_CONSULT_TIMEOUT: Duration = Duration::from_secs(300);
-const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const CLAUDE_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 const EMPTY_MCP: &[u8] = b"{\"mcpServers\":{}}";
@@ -231,7 +228,6 @@ impl DaemonConsultRoute {
         let run = self.run_dir("claude")?;
         let outcome = (|| -> Result<OfficialConsultOutcome, String> {
             let prompt = Self::user_prompt(question, material);
-            private_file(&run.join("prompt"), prompt.as_bytes())?;
             private_file(&run.join("mcp.json"), EMPTY_MCP)?;
             let settings = json!({
                 "permissions": {"deny": ["Read", "Edit", "Write", "Bash", "WebFetch", "WebSearch"]},
@@ -251,12 +247,9 @@ impl DaemonConsultRoute {
                 .env_clear()
                 .env("HOME", &home)
                 .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-                .env("CLAUDE_CONFIG_DIR", &config_dir)
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
+                .env("CLAUDE_CONFIG_DIR", &config_dir);
             let started = Instant::now();
-            let value = run_bounded(command, Some(run.join("prompt")), timeout, "claude")?;
+            let value = run_bounded(command, Some(prompt), timeout, "claude")?;
             if value["is_error"] == true {
                 return Err(format!(
                     "the {} consult failed: {}",
@@ -346,10 +339,7 @@ impl DaemonConsultRoute {
                 .current_dir(&run)
                 .env_clear()
                 .env("HOME", std::env::var_os("HOME").unwrap_or_default())
-                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default());
             let started = Instant::now();
             let value = run_bounded(command, None, timeout, "agy")?;
             if value["status"] == "ERROR" {
@@ -432,82 +422,48 @@ fn private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
-/// The longest answer a consulted client may print, and how much of its
-/// stderr a failure keeps.
+/// The longest answer a consulted client may print, how much of its stderr
+/// a failure keeps, and how much stderr is read at all.
 const ANSWER_LIMIT: usize = 4 << 20;
 const STDERR_TAIL: usize = 300;
+const STDERR_LIMIT: usize = 64 << 10;
 
-/// Runs one official client to completion, feeding it the prompt file when
+/// Runs one official client to completion, feeding it the prompt when
 /// given, inside the declared timeout. Stdin is otherwise null so an
-/// authentication wait fails fast instead of hanging. Both pipes drain on
-/// their own threads, so a client that prints nothing until the end, or a
-/// lot of stderr, can neither outlive the timeout nor stall on a full pipe.
+/// authentication wait fails fast instead of hanging.
 fn run_bounded(
     mut command: Command,
-    prompt: Option<PathBuf>,
+    prompt: Option<String>,
     timeout: Duration,
     client: &str,
 ) -> Result<Value, String> {
-    let mut child = command
-        .stdin(match &prompt {
-            Some(path) => Stdio::from(
-                std::fs::File::open(path).map_err(|error| format!("{} prompt: {error}", client))?,
-            ),
-            None => Stdio::null(),
-        })
-        .spawn()
-        .map_err(|error| format!("could not run {client}: {error}"))?;
-    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(format!("{client} was started without its output pipes"));
-    };
-    let too_long = Arc::new(AtomicBool::new(false));
-    let flag = Arc::clone(&too_long);
-    let answer = std::thread::spawn(move || {
-        let mut kept = Vec::new();
-        let _ = stdout.take(ANSWER_LIMIT as u64 + 1).read_to_end(&mut kept);
-        flag.store(kept.len() > ANSWER_LIMIT, Ordering::SeqCst);
-        kept
-    });
-    let errors = std::thread::spawn(move || read_stderr_tail(stderr, STDERR_TAIL));
-    let started = Instant::now();
-    let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("{client}: {error}"))?
-        {
-            break status;
-        }
-        if too_long.load(Ordering::SeqCst) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!(
-                "{client} exceeded the {ANSWER_LIMIT} byte answer bound"
-            ));
-        }
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("{client} exceeded the declared timeout"));
-        }
-        std::thread::sleep(PROCESS_POLL_INTERVAL);
-    };
-    let answer = answer.join().unwrap_or_default();
-    let stderr_tail = errors.join().ok().and_then(Result::ok).unwrap_or_default();
+    let output = odin_process::run_bounded(
+        &mut command,
+        prompt.map(String::into_bytes),
+        odin_process::ChildBounds {
+            timeout,
+            max_stdout_bytes: ANSWER_LIMIT,
+            max_stderr_bytes: STDERR_LIMIT,
+        },
+    )
+    .map_err(|error| format!("could not run {client}: {error}"))?;
+    let status = output
+        .status
+        .ok_or_else(|| format!("{client} exceeded the declared timeout"))?;
     if !status.success() {
-        let tail = String::from_utf8_lossy(&stderr_tail);
+        let stderr = output.stderr.as_bytes();
+        let tail = String::from_utf8_lossy(&stderr[stderr.len().saturating_sub(STDERR_TAIL)..]);
         return Err(match tail.trim() {
             "" => format!("{client} exited {status}"),
             tail => format!("{client} exited {status}: {tail}"),
         });
     }
-    if answer.len() > ANSWER_LIMIT {
+    if output.stdout.truncated() {
         return Err(format!(
             "{client} exceeded the {ANSWER_LIMIT} byte answer bound"
         ));
     }
-    serde_json::from_slice(&answer)
+    serde_json::from_slice(output.stdout.as_bytes())
         .map_err(|error| format!("{client} answered without JSON: {error}"))
 }
 

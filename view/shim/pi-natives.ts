@@ -2,8 +2,9 @@
 // The text functions follow OMP 2a2c6dc `crates/pi-natives/src/text.rs` (ANSI-aware wrap, truncate, slice, and
 // overlay segments; widths from `Bun.stringWidth` with the same options as omp/utils.ts `visibleWidth`). OSC 66
 // text-sizing spans are treated as zero-width escapes; the view never emits them.
-// Keys use OMP's pure-JS parser. Highlighting, sixel, fuzzy find and macOS appearance are inert.
+// Keys use OMP's pure-JS parser. Highlighting, fuzzy find and macOS appearance are inert.
 import * as jsKeys from "../omp/key-parser";
+import { PNG } from "pngjs";
 
 export enum Ellipsis {
 	Unicode = 0,
@@ -552,23 +553,61 @@ export function supportsLanguage(_lang: string): boolean {
 
 export async function warmHighlighter(): Promise<void> {}
 
-export function encodeSixel(
-	_data: Uint8Array,
-	_width: number,
-	_height: number,
-	_backgroundRgb: number,
-): string {
-	throw new Error("encodeSixel: the odin view does not render images");
+/** Decode PNG, composite against the terminal background, and encode a bounded 256-color SIXEL raster. */
+export function encodeSixel(data: Uint8Array, width: number, height: number, backgroundRgb: number): string {
+	if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || width * height > 16_777_216) {
+		throw new Error("invalid SIXEL dimensions");
+	}
+	const bytes = Buffer.from(data);
+	if (bytes.length < 24 || bytes.readUInt32BE(16) * bytes.readUInt32BE(20) > 16_777_216) {
+		throw new Error("invalid PNG dimensions");
+	}
+	const image = PNG.sync.read(bytes);
+	const pixels = new Uint8Array(width * height);
+	const bg = [(backgroundRgb >> 16) & 255, (backgroundRgb >> 8) & 255, backgroundRgb & 255];
+	const used = new Set<number>();
+	for (let y = 0; y < height; y++) {
+		const sy = Math.floor(y * image.height / height);
+		for (let x = 0; x < width; x++) {
+			const sx = Math.floor(x * image.width / width);
+			const offset = (sy * image.width + sx) * 4;
+			const alpha = image.data[offset + 3]!;
+			const channel = (i: number) => Math.round((image.data[offset + i]! * alpha + bg[i]! * (255 - alpha)) / 255);
+			const color = (channel(0) & 0xe0) | ((channel(1) & 0xe0) >> 3) | (channel(2) >> 6);
+			pixels[y * width + x] = color;
+			used.add(color);
+		}
+	}
+	const out = [`\x1bPq"1;1;${width};${height}`];
+	for (const color of used) {
+		const r = Math.round(((color >> 5) & 7) * 100 / 7);
+		const g = Math.round(((color >> 2) & 7) * 100 / 7);
+		const b = Math.round((color & 3) * 100 / 3);
+		out.push(`#${color};2;${r};${g};${b}`);
+	}
+	for (let y = 0; y < height; y += 6) {
+		if (y) out.push("-");
+		let first = true;
+		for (const color of used) {
+			let line = "";
+			for (let x = 0; x < width; x++) {
+				let bits = 0;
+				for (let dy = 0; dy < 6 && y + dy < height; dy++) {
+					if (pixels[(y + dy) * width + x] === color) bits |= 1 << dy;
+				}
+				line += String.fromCharCode(63 + bits);
+			}
+			if (!first) out.push("$");
+			out.push(`#${color}`, line);
+			first = false;
+		}
+	}
+	out.push("\x1b\\");
+	return out.join("");
 }
 
-/** Same contract as `encodeSixel`; the view has no native blocking pool, so this rejects immediately. */
-export function encodeSixelAsync(
-	_data: Uint8Array,
-	_width: number,
-	_height: number,
-	_backgroundRgb: number,
-): Promise<string> {
-	return Promise.reject(new Error("encodeSixelAsync: the odin view does not render images"));
+export async function encodeSixelAsync(data: Uint8Array, width: number, height: number, backgroundRgb: number): Promise<string> {
+	return encodeSixel(data, width, height, backgroundRgb);
 }
 
 export function detectMacOSAppearance(): "dark" | "light" | null {

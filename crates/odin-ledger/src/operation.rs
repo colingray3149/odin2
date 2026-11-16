@@ -28,5 +28,5 @@ pub use stop::{
     capsule_wide_stop_may_settle, capsule_wide_stop_may_settle_excluding, record_stop, settle_stop,
     stop_intents_for_operation, stop_row, StopRecordOutcome, StopRow, StopSettleOutcome,
 };
-pub use transition::transition_operation;
+pub use transition::{commit_recovered_operation, transition_operation};
 pub use usage::{bump_usage, usage, UsageRow};

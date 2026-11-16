@@ -6,7 +6,7 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Launches one Job from a published workload profile; name the profile and, for a research report, the company. An optional label (up to 60 printable characters) names the run in views. targetNode picks a starting node among the profile's allowed_nodes (for an agent pod, its serving node), and is usually left out. Returns once the pod is admitted; an agent pod's final answer reaches the owner's conversation when it finishes, so the turn can end right after launch. The report copy waits until the PDF, its review and both destination copies are done."
+description = "Launches one pod from a workload profile: its profile, prompt, seeds (the handles, emails, names or sites it starts from) and company (the company or person it is about, which names its folder). An optional label (up to 60 printable characters) names the run in views. continueFrom names a finished run of the same profile whose state this run takes over, on that run's node (how a job runs past one lifetime). targetNode picks a starting node among the profile's allowed_nodes (for an agent pod, its serving node), and is usually left out. Returns once the pod is admitted, or with status queued when no node has room: it then starts by itself when a running pod ends, and the launching session is told how it went. An agent pod's final answer reaches the owner's conversation when it finishes, so the turn can end right after launch. The report copy waits until the PDF, its review and both destination copies are done."
 handler = { id = "odin_kube.workload.create" }
 input_schema = "schemas/capability/kube.workload.create.input.json"
 output_schema = "schemas/capability/kube.workload.create.output.json"
@@ -22,4 +22,6 @@ evidence_extractor = { id = "odin_kube.workload.create_evidence" }
 tests = [
   "odin-cli::bin/odind kube_runtime::launch::profile_launch_tests::one_session_launches_one_profile_once_per_input",
   "odin-kube reconciler::create::launch_shape_tests::a_profile_reservation_is_requested_and_fits_placement",
+  "odin-kube reconciler::create::launch_shape_tests::continue_from_reuses_the_finished_runs_claim_on_its_node",
+  "odin-kube reconciler::create::launch_shape_tests::continue_from_refuses_a_live_unknown_or_foreign_run",
 ]

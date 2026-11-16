@@ -30,6 +30,8 @@ mod navigation;
 pub(crate) mod publication;
 #[path = "coding_route/review.rs"]
 mod review;
+#[path = "coding_route/science_review.rs"]
+pub(crate) mod science_review;
 #[path = "coding_route/sphere.rs"]
 mod sphere;
 
@@ -679,6 +681,16 @@ impl CodingRoute for DaemonCodingRoute {
             Duration::from_secs(OPERATION_SECONDS),
         );
         blocking(|| self.record_verdict_blocking(&runner, scope, &diff_digest, approve, &notes))
+    }
+
+    fn record_science_verdict(
+        &self,
+        scope: &Scope,
+        proposal: String,
+        approve: bool,
+        notes: String,
+    ) -> Result<Value, String> {
+        blocking(|| self.record_science_verdict_on(scope, &proposal, approve, &notes))
     }
 
     fn propose_reviewed(

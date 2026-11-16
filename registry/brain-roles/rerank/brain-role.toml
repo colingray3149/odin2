@@ -1,0 +1,12 @@
+schema = "odin.registry.v1"
+kind = "brain-role"
+enabled = true
+description = "Cross-encoder reorder of the best fused candidates: bge-reranker-v2-m3 Q8_0, loopback."
+role = "rerank"
+engine = "local"
+model = "bge-reranker-v2-m3"
+file = "bge-reranker-v2-m3-Q8_0.gguf"
+[params]
+candidates = 16
+deep_candidates = 32
+truncate_tokens = 256

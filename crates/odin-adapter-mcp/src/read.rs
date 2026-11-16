@@ -12,8 +12,17 @@ use crate::{nonblocking, note, ready, BridgeError, READ_CHUNK};
 
 const EXIT_POLL: Duration = Duration::from_millis(20);
 
-/// Request the whole page before selecting a character window.
-pub const PAGE_CHARS: usize = 2_000_000;
+/// The most of a page the browser is asked for, so its answer stays within the line bound.
+const PAGE_CHARS: usize = 2_000_000;
+
+/// The head of a page a bot check is looked for in; a read always asks for at least this much.
+const SCAN_CHARS: usize = 16_384;
+
+/// How the browser ends a page it cut short: `<head>\n...(truncated, <n> more chars)`.
+const TRUNCATED: (&str, &str) = ("\n...(truncated, ", " more chars)");
+
+/// The line a page read with the plain reader leads with.
+const ALTERNATE_NOTE: &str = "Read with the alternate plain-HTTP engine.";
 
 const DEFAULT_WINDOW_CHARS: usize = 4_000;
 
@@ -117,6 +126,17 @@ pub fn no_archive(stop: &StoppedRead) -> String {
     )
 }
 
+/// Put the plain reader's note in front of its text.
+pub(crate) fn with_alternate_note(mut page: PageRead) -> PageRead {
+    page.text = format!("{ALTERNATE_NOTE}\n\n{}", page.text);
+    page
+}
+
+/// Whether the plain reader's page, with its note, fits in `chars`.
+pub(crate) fn fits_with_note(page: &PageRead, chars: usize) -> bool {
+    ALTERNATE_NOTE.len() + 2 + page.text.chars().count() <= chars
+}
+
 /// Keep fallback order explicit and testable without contacting public services.
 pub(crate) fn public_fallback(
     original: &str,
@@ -124,12 +144,8 @@ pub(crate) fn public_fallback(
     alternate: impl FnOnce() -> Option<PageRead>,
     archive: impl FnOnce(&str) -> Option<PageRead>,
 ) -> Result<PageRead, BridgeError> {
-    if let Some(mut page) = alternate() {
-        page.text = format!(
-            "Read with the alternate plain-HTTP engine.\n\n{}",
-            page.text
-        );
-        return Ok(page);
+    if let Some(page) = alternate() {
+        return Ok(with_alternate_note(page));
     }
     if let Some(mut page) = archive(&archive_url(original)) {
         if let Some(date) = archive_date(&page.url) {
@@ -213,7 +229,7 @@ pub fn document_verdict(log: &str, text: &str) -> DocumentVerdict {
 fn challenge_text(text: &str) -> bool {
     let said = text
         .chars()
-        .take(16_384)
+        .take(SCAN_CHARS)
         .collect::<String>()
         .to_ascii_lowercase();
     CHALLENGE_MARKERS.iter().any(|marker| said.contains(marker))
@@ -230,21 +246,59 @@ pub fn stop_cause(stopped: &StoppedRead) -> String {
         stopped.cause
     )
 }
-/// Return the next offset when more text remains so callers can continue reading.
-pub fn window(text: &str, input: &Value, field: &str) -> Result<Value, BridgeError> {
+/// The offset and size of the window `input` asks for.
+fn window_of(input: &Value, field: &str) -> (usize, usize) {
     let number = |name: &str| {
         input
             .get(name)
             .and_then(Value::as_u64)
             .map(|value| usize::try_from(value).unwrap_or(usize::MAX))
     };
-    let offset = number("offset").unwrap_or(0);
-    let size = number(field).unwrap_or(DEFAULT_WINDOW_CHARS).max(1);
-    let total = text.chars().count();
-    if offset >= total && offset > 0 {
-        return Err(BridgeError::OffsetPastEnd { offset, total });
+    (
+        number("offset").unwrap_or(0),
+        number(field).unwrap_or(DEFAULT_WINDOW_CHARS).max(1),
+    )
+}
+
+/// The characters a read asks the browser for: through the end of the window, and never less
+/// than the head a bot check is looked for in.
+pub(crate) fn asked_chars(input: &Value, field: &str) -> usize {
+    let (offset, size) = window_of(input, field);
+    offset.saturating_add(size).clamp(SCAN_CHARS, PAGE_CHARS)
+}
+
+/// The size of the first window when `input` starts at the top of the page, else `None`.
+pub(crate) fn first_window(input: &Value, field: &str) -> Option<usize> {
+    let (offset, size) = window_of(input, field);
+    (offset == 0).then_some(size)
+}
+
+/// The text without the browser's truncation mark, and the characters the mark says were left
+/// out. Only a text at least as long as the read asked for was cut short.
+fn unread(text: &str, asked: usize) -> (&str, usize) {
+    let Some((head, mark)) = text.rsplit_once(TRUNCATED.0) else {
+        return (text, 0);
+    };
+    match mark.strip_suffix(TRUNCATED.1).map(str::parse) {
+        Some(Ok(count)) if head.chars().count() >= asked => (head, count),
+        _ => (text, 0),
     }
-    let end = offset.saturating_add(size).min(total);
+}
+
+/// Return the next offset when more text remains so callers can continue reading. A page the
+/// browser cut short counts the characters it left out in its total.
+pub fn window(text: &str, input: &Value, field: &str) -> Result<Value, BridgeError> {
+    let (offset, size) = window_of(input, field);
+    let (text, unread) = unread(text, asked_chars(input, field));
+    let read = text.chars().count();
+    if offset >= read && offset > 0 {
+        return Err(BridgeError::OffsetPastEnd {
+            offset,
+            total: read,
+        });
+    }
+    let total = read + unread;
+    let end = offset.saturating_add(size).min(read);
     let mut served: String = text.chars().skip(offset).take(end - offset).collect();
     if end < total {
         served.push_str(&format!(

@@ -350,10 +350,13 @@ fn derive_runtime_tree(
         let patch_path = patch_path
             .to_str()
             .ok_or_else(|| SnapshotError::Invalid("runtime delta path is not UTF-8".to_owned()))?;
+        // The synced parent can contain unpublished changes that are absent from
+        // the effective tree. Merge against the delta's recorded base so an
+        // already-satisfied change succeeds while genuine conflicts are rejected.
         run_git(
             worktree,
             "apply runtime delta",
-            &["apply", "--cached", "--binary", patch_path],
+            &["apply", "--cached", "--3way", "--binary", patch_path],
             Some(&index),
         )?;
     }
@@ -655,7 +658,7 @@ fn committed_registry_objects(
                 findings.push(RegistryFinding::fail(
                     "registry-kind-type",
                     PathBuf::from("registry").join(kind.directory()),
-                    "required registry kind must be a regular directory, not a symlink or special file",
+                    "registry kind must be a regular directory, not a symlink or special file",
                 ));
             }
             continue;
@@ -732,7 +735,7 @@ fn committed_registry_objects(
         }
     }
     for kind in RegistryKind::ALL {
-        if !kind_dirs.contains(&kind) {
+        if !kind.is_optional() && !kind_dirs.contains(&kind) {
             findings.push(RegistryFinding::fail(
                 "registry-kind-missing",
                 PathBuf::from("registry").join(kind.directory()),

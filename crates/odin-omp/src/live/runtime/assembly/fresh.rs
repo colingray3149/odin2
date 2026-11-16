@@ -122,7 +122,7 @@ impl ProductionBridgeRuntimeFactory {
     pub(super) fn core_memory(&self, manifest: &SessionManifest) -> Option<String> {
         let brain = self.brains.get(&manifest.seat_id)?;
         let started = std::time::Instant::now();
-        match brain.core_memory(Some(&manifest.project_id)) {
+        match brain.core_memory(&manifest.seat_id, Some(&manifest.project_id)) {
             Ok(Some(core)) => {
                 let snapshot = odin_domain::Digest::hash(core.text.as_bytes());
                 tracing::debug!(

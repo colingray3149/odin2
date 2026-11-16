@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "files"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Copies the complete original of one attachment the owner sent in his DM, by intake id, into a writable declared root as a new file name (a dataset into cfd-incoming). One plain name, no folders; an existing file is refused, never overwritten. Worth it when a sent file is data for a pipeline that reads it by path."
+handler = { id = "intake_copy" }
+input_schema = "schemas/capability/intake.copy.input.json"
+output_schema = "schemas/capability/intake.copy.output.json"
+effect_class = "R1"
+seat_tags = ["coordinator"]
+timeout_seconds = 120
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_intake_copy_evidence" }
+tests = [
+  "odin-hermes::it runtime::shared_files::intake_copy_puts_a_staged_original_into_a_root_by_name_and_refuses_bad_names_and_unstaged_intakes",
+  "odin-cli::bin/odind host_files::tests::a_copy_lands_once_in_a_writable_root_here_and_is_refused_otherwise",
+]

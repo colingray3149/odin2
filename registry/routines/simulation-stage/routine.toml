@@ -1,0 +1,12 @@
+schema = "odin.registry.v1"
+kind = "routine"
+enabled = true
+description = "Tell the owner in one line when a simulation mission fails, aborts, pauses, fails a render or goes stale, with its latest frame."
+seat = "sinmara"
+
+[trigger]
+event = "simulation_stage"
+
+[action]
+kind = "brief"
+text = "A simulation mission changed stage; the detail below names it, its stage and last sample. Tell the owner in one plain line what happened to which mission. If it has a frame, show it with simulation_frame and send it in the same message with discord_file_send. Do not act on the mission yourself."

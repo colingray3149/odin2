@@ -52,6 +52,8 @@ enum Command {
     /// AVAILABLE catalog, model cards and the live gateway.
     #[command(alias = "quota")]
     Models(ModelsArgs),
+    /// Establish a pinned interactive SSH login for an offload target.
+    Offload(commands::offload::OffloadArgs),
     /// Publish the committed registry.
     Registry(RegistryArgs),
     /// Check registry edits and stage them for review.
@@ -68,6 +70,8 @@ enum Command {
     Context(ContextArgs),
     /// Every active seat live, and one input line to Sinmara (`/model` changes her model).
     View(commands::view::ViewArgs),
+    /// Sinmara over the Agent Client Protocol (stdio, or a WebSocket with --listen) for ACP clients such as Agmente.
+    Acp(commands::acp::AcpArgs),
     /// List, search or read one declared file root on this host (run by the
     /// authority over SSH for a seat's file share).
     #[command(hide = true)]
@@ -102,6 +106,7 @@ fn main() -> ExitCode {
         Some(Command::View(arguments)) => {
             commands::view::run(arguments).map(|()| RunStatus::Success)
         }
+        Some(Command::Acp(arguments)) => commands::acp::run(arguments).map(|()| RunStatus::Success),
         command => run(Cli { command }, &mut io::stdout().lock()),
     };
     match result {
@@ -147,6 +152,7 @@ fn run(cli: Cli, output: &mut impl Write) -> Result<RunStatus, String> {
             providers(arguments, &registry_root, output)?;
             Ok(RunStatus::Success)
         }
+        Some(Command::Offload(arguments)) => commands::offload::offload_command(arguments, output),
         Some(Command::Registry(arguments)) => registry_command(arguments, output),
         Some(Command::Author(arguments)) => author_command(arguments, output),
         Some(Command::Authority(arguments)) => authority_command(arguments, output),
@@ -184,6 +190,7 @@ fn run(cli: Cli, output: &mut impl Write) -> Result<RunStatus, String> {
             Ok(RunStatus::Success)
         }
         Some(Command::View(_)) => Err("odin view runs outside the shared stdout lock".to_owned()),
+        Some(Command::Acp(_)) => Err("odin acp runs outside the shared stdout lock".to_owned()),
         Some(Command::Session(arguments)) => {
             match arguments.into_invocation()? {
                 SessionInvocation::Open(request) => session::start(request, output)?,

@@ -39,6 +39,8 @@ pub(crate) struct ViewArgs {
 
 mod context;
 mod features;
+mod knowledge;
+mod missions;
 
 pub(super) type Client = RemoteClient<EndpointTransport, FileCredentialStore>;
 type Connection = odin_huginn::client::LiveConnection<
@@ -55,6 +57,8 @@ const SEATS_EVERY: Duration = Duration::from_secs(2);
 /// The slow tick: the Status snapshot (incidents, today's spend, CI), approvals, pods and this device's
 /// Claude sessions. Spend and CI are the authority's cached objects, so a tick makes no gateway or gh read.
 const SLOW_EVERY: Duration = Duration::from_secs(60);
+/// The default Missions tab poll while it is open, before authority status arrives.
+const MISSIONS_EVERY: Duration = Duration::from_secs(5);
 const RETRY_EVERY: Duration = Duration::from_secs(2);
 /// How many recent events a newly watched session replays; halved while
 /// Huginn refuses the replay as too large.
@@ -220,8 +224,14 @@ struct Bridge {
     pods: String,
     local: String,
     ci: String,
+    /// The `plans` line, last sent.
+    plans: String,
+    budgets: String,
     /// The Capabilities object, last sent; a poll repeats it only when it changes.
     features: String,
+    /// The Brain object, last sent.
+    knowledge: String,
+    missions: missions::Missions,
     /// How far each live local transcript has been scanned for compaction.
     transcripts: BTreeMap<PathBuf, TranscriptScan>,
     say_retry: SayRetry,
@@ -271,7 +281,11 @@ async fn serve(client: Arc<Client>, endpoint: String, state_root: PathBuf) -> Re
         pods: String::new(),
         local: String::new(),
         ci: String::new(),
+        plans: String::new(),
+        budgets: String::new(),
         features: String::new(),
+        knowledge: String::new(),
+        missions: missions::Missions::default(),
         transcripts: BTreeMap::new(),
         say_retry: SayRetry::default(),
     };
@@ -280,6 +294,7 @@ async fn serve(client: Arc<Client>, endpoint: String, state_root: PathBuf) -> Re
     let start = tokio::time::Instant::now();
     let mut seats = tokio::time::interval_at(start + SEATS_EVERY, SEATS_EVERY);
     let mut slow = tokio::time::interval_at(start + SLOW_EVERY, SLOW_EVERY);
+    let mut next_missions = start + MISSIONS_EVERY;
     for tick in [&mut seats, &mut slow] {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     }
@@ -306,6 +321,13 @@ async fn serve(client: Arc<Client>, endpoint: String, state_root: PathBuf) -> Re
         }
         tokio::select! {
             _ = seats.tick() => bridge.poll_seats().await,
+            _ = tokio::time::sleep_until(next_missions) => {
+                bridge.poll_missions().await;
+                let cadence = bridge.missions.poll_seconds
+                    .map(Duration::from_secs)
+                    .unwrap_or(MISSIONS_EVERY);
+                next_missions = tokio::time::Instant::now() + cadence;
+            },
             _ = slow.tick() => {
                 updated(started.as_ref());
                 bridge.poll_models().await;
@@ -548,10 +570,26 @@ impl Bridge {
         if let Some(line) = features::features_line(&objects) {
             emit_once(&mut self.features, &line);
         }
+        if let Some(line) = knowledge::knowledge_line(&objects) {
+            emit_once(&mut self.knowledge, &line);
+        }
         if let Some(line) = spend_line(&objects) {
             emit(&line);
         }
+        let lanes = status_value(&objects, "compute-budgets")
+            .and_then(|value| value.get("lanes"))
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        emit_once(
+            &mut self.budgets,
+            &json!({ "t": "budgets", "lanes": lanes }),
+        );
         emit_once(&mut self.ci, &ci_line(&objects));
+        let plans = status_value(&objects, "plans")
+            .and_then(|value| value.get("plans"))
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        emit_once(&mut self.plans, &json!({ "t": "plans", "rows": plans }));
     }
 
     /// Odin's pods for the overview: every live one, then the ones that
@@ -659,6 +697,10 @@ impl Bridge {
             "models" => self.models().await,
             "context" => self.context(text("session")),
             "features" => self.refresh_features().await,
+            "missions" => self.missions_view(&command).await,
+            verb @ ("render" | "pause" | "resume") => {
+                self.mission_command(&id, verb, &command).await
+            }
             other => tracing::warn!("view sent an unknown command {other:?}"),
         }
     }
@@ -713,6 +755,7 @@ impl Bridge {
             command_id: command_id.clone(),
             text: text.to_owned(),
             terminal: true,
+            images: Vec::new(),
         });
         match self.request(request, REQUEST_BOUND).await {
             Ok(live::HuginnResponse::Conversation(view)) => {

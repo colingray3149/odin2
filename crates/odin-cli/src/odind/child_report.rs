@@ -9,8 +9,8 @@ use crate::kube::KubeRuntimeCell;
 use odin_domain::huginn::{LiveSessionId, OmpLivePlane};
 
 pub(super) const CHILD_REPORT_TICK: std::time::Duration = std::time::Duration::from_secs(15);
-/// Settles in a row with the same pending cause before the launching seat is told (five minutes).
-const STUCK_SETTLES: u32 = 20;
+/// How long a pod's report may stay pending before the launching seat is told it is stuck.
+const STUCK_AFTER: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 /// Every this many child-report ticks (about a minute) the gateway's
 /// per-session accounting is read for gateway fallbacks.
 const FALLBACK_OBSERVE_TICKS: u64 = 4;
@@ -63,6 +63,52 @@ fn pod_report_text(pod: &odin_omp::host_tools::delegation::SettledPod, files: &s
              nothing took its work over, so its pod was released. {cause}\n{said}\n{files}\
              Tell the owner plainly what came of it and offer to run it again."
         )
+    }
+}
+
+/// A pod whose report settled as partial work: it did not finish, so the wake never says it did.
+/// `files` lists what the pod saved, and the note names what is undone.
+fn pod_partial_text(pod: &odin_omp::host_tools::delegation::SettledPod, files: &str) -> String {
+    let said = if pod.answer.is_empty() {
+        "It said nothing before it ended.".to_owned()
+    } else {
+        format!("Its last answer:\n{}", pod.answer)
+    };
+    format!(
+        "A pod you launched ended without a finished report, so what it delivered is partial \
+         work. {said}\n{files}Tell the owner what was delivered and what is still undone, \
+         plainly and with no ids."
+    )
+}
+
+/// When each pod's report began to be pending, and whether it was reported stuck. A follow-up
+/// turn does not restart the clock: only the report leaving Pending does.
+#[derive(Default)]
+struct StuckReports(std::collections::HashMap<String, (tokio::time::Instant, bool)>);
+
+impl StuckReports {
+    /// Notes that `operation` is pending at `now`. True once: the first time it has been pending
+    /// for [`STUCK_AFTER`].
+    fn pending(&mut self, operation: &str, now: tokio::time::Instant) -> bool {
+        let (since, reported) = self.0.entry(operation.to_owned()).or_insert((now, false));
+        if !*reported && now.duration_since(*since) >= STUCK_AFTER {
+            *reported = true;
+            return true;
+        }
+        false
+    }
+
+    /// Forgets the operations no longer pending; returns those that had been reported stuck.
+    fn retain(&mut self, pending: &[String]) -> Vec<String> {
+        let mut cleared = Vec::new();
+        self.0.retain(|operation, (_, reported)| {
+            let keep = pending.contains(operation);
+            if !keep && *reported {
+                cleared.push(operation.clone());
+            }
+            keep
+        });
+        cleared
     }
 }
 
@@ -125,7 +171,7 @@ async fn queue_pod_wake(
 ) -> Result<bool, String> {
     let ask = pod_ask(connected, pod);
     let Some(items) = unmet else {
-        runtime.ask_delivered(&ask.subject)?;
+        runtime.ask_delivered(&ask.job)?;
         return runtime.wake_once(wake_id, text);
     };
     // The pump sees a stuck report again each tick; only the first needs the journal read.
@@ -221,6 +267,35 @@ fn settled_child_report(settled: &odin_omp::host_tools::delegation::SettledChild
     )
 }
 
+/// The scan returns every settled child on every pass, so watchers are told
+/// each answer once, and a child's "finished a turn" reports reach them at
+/// most once per [`CHILD_REPORT_GAP`]. A turn settled inside the gap is not
+/// lost: the scan keeps returning the child's latest answer, which goes out
+/// when the gap ends. Failures are not paced.
+#[derive(Default)]
+struct ChildReportPace {
+    last: std::collections::HashMap<LiveSessionId, (String, std::time::Instant)>,
+}
+
+const CHILD_REPORT_GAP: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+impl ChildReportPace {
+    fn due(&self, child: &odin_omp::host_tools::delegation::SettledChild) -> bool {
+        match self.last.get(&child.child) {
+            None => true,
+            Some((key, _)) if *key == child.key => false,
+            Some((_, at)) => child.failed || at.elapsed() >= CHILD_REPORT_GAP,
+        }
+    }
+
+    fn sent(&mut self, child: &odin_omp::host_tools::delegation::SettledChild) {
+        let window = std::time::Duration::from_millis(CHILD_REPORT_WINDOW_MS);
+        self.last.retain(|_, (_, at)| at.elapsed() < window);
+        self.last
+            .insert(child.child, (child.key.clone(), std::time::Instant::now()));
+    }
+}
+
 /// One line of per-lane stall rates: `lane: stalls over workers (stalled)`.
 fn lane_stall_line(
     rates: &std::collections::BTreeMap<String, odin_omp::host_tools::delegation::LaneStallRate>,
@@ -277,9 +352,8 @@ pub(super) fn arm_child_report_pump(
         let mut tick: u64 = 0;
         // Retry durable pending releases until the carrier is stopped or gone.
         let mut pending: Vec<(LiveSessionId, String)> = Vec::new();
-        // Each pod's last pending note and how many settles in a row repeated it.
-        let mut repeated: std::collections::HashMap<String, (String, u32)> =
-            std::collections::HashMap::new();
+        let mut stuck = StuckReports::default();
+        let mut reported = ChildReportPace::default();
         let mut backlog_taken = false;
         loop {
             // A settled child is reported the moment its result is durable;
@@ -394,10 +468,10 @@ pub(super) fn arm_child_report_pump(
                     tracing::error!("delegated child report scan failed: {error}");
                 }
                 let pods = match scan.settled_workloads() {
-                    Ok(pods) => pods,
+                    Ok(pods) => Some(pods),
                     Err(error) => {
                         tracing::error!("settled workload scan failed: {error}");
-                        Vec::new()
+                        None
                     }
                 };
                 Ok((
@@ -417,6 +491,7 @@ pub(super) fn arm_child_report_pump(
                             wake_declared(
                                 &runtime,
                                 "stall",
+                                None,
                                 &format!("stall:{child}:resumed"),
                                 &format!(
                                     "Task {child} stalled and was resumed by recovery; inspect its progress and steer it if needed."
@@ -428,6 +503,7 @@ pub(super) fn arm_child_report_pump(
                             wake_declared(
                                 &runtime,
                                 "stall",
+                                None,
                                 &format!("stall:{}:{}", switch.child, switch.to),
                                 &format!(
                                     "Task {} moved from {} to {} after {}; it is still running.",
@@ -443,6 +519,7 @@ pub(super) fn arm_child_report_pump(
                             wake_declared(
                                 &runtime,
                                 "stall",
+                                None,
                                 &format!("stalled-{}", out.child),
                                 &format!(
                                     "Work you are watching (task {}) stalled {} times and was stopped.",
@@ -453,13 +530,20 @@ pub(super) fn arm_child_report_pump(
                             .await;
                         }
                         for child in &settled.0 {
-                            wake_declared(
+                            if !reported.due(child) {
+                                continue;
+                            }
+                            if wake_declared(
                                 &runtime,
                                 "child_report",
+                                None,
                                 &odin_hermes::runtime::child_turn_wake_id(child.child, &child.key),
                                 &settled_child_report(child),
                             )
-                            .await;
+                            .await
+                            {
+                                reported.sent(child);
+                            }
                         }
                         settled
                     }
@@ -473,6 +557,8 @@ pub(super) fn arm_child_report_pump(
                         continue;
                     }
                 };
+            let pods_read = pods.is_some();
+            let pods = pods.unwrap_or_default();
             // Releases wait until the cell is connected. Seeding or draining
             // before that logs a false "cluster is not reachable" per row.
             let connected = match kube.as_ref() {
@@ -732,7 +818,15 @@ pub(super) fn arm_child_report_pump(
             // after the report, the model's review of that exact render, and
             // durable laptop and Drive copies are done — or after its pod
             // was lost and the saved report was shared as artifacts instead.
-            for pod in pods {
+            let mut pending_ops = Vec::new();
+            for mut pod in pods {
+                // A failure the session journal names no cause for is often the container's
+                // own end (an OOM kill): its pod status names it while the Job is kept.
+                if let (true, None, Some(control)) =
+                    (pod.failed, pod.failure.as_ref(), connected.as_deref())
+                {
+                    pod.failure = container_failure(control, &pod.operation).await;
+                }
                 let settlement = match (kube.as_ref(), connected.as_ref()) {
                     (Some(cell), Some(control)) => {
                         crate::report_settle::settle_pod_report(
@@ -772,6 +866,25 @@ pub(super) fn arm_child_report_pump(
                                 )]
                             }),
                             "delivered",
+                            true,
+                        )
+                        .await;
+                    }
+                    crate::report_settle::ReportSettlement::Partial { note, files, unmet } => {
+                        PodFinish {
+                            runtime: &runtime,
+                            owner: &owner,
+                            kube: kube.as_ref(),
+                            connected: connected.as_deref(),
+                            pending: &mut pending,
+                        }
+                        .finish(
+                            &pod,
+                            &format!("pod-{}-{}", pod.session, pod.key),
+                            &pod_partial_text(&pod, &format!("{note}\n{files}")),
+                            Some(unmet),
+                            "partial",
+                            true,
                         )
                         .await;
                     }
@@ -795,26 +908,114 @@ pub(super) fn arm_child_report_pump(
                             ),
                             Some(vec![note]),
                             "salvaged",
+                            false,
+                        )
+                        .await;
+                    }
+                    crate::report_settle::ReportSettlement::Cancelled { note } => {
+                        // The run was withdrawn on purpose. Close it as
+                        // cancelled with no output, and let the ask about its
+                        // subject follow the live run that serves it now, so
+                        // the replacement's delivery closes the ask instead of
+                        // a dead job waking the seat forever.
+                        let ask = pod_ask(connected.as_deref(), &pod);
+                        let replacement = replacement_run(connected.as_deref(), &ask).await;
+                        let rekeyed = match &replacement {
+                            Replacement::ServedBy(run) => runtime
+                                .rekey_ask(&ask.job, run.as_str())
+                                .map_err(|error| {
+                                    tracing::error!(
+                                        "cancelled pod ask not rekeyed session={} {error}",
+                                        pod.session
+                                    )
+                                })
+                                .unwrap_or(false),
+                            Replacement::None | Replacement::Ambiguous => false,
+                        };
+                        let (text, unmet) = if rekeyed {
+                            (
+                                format!(
+                                    "A pod you launched was cancelled by authority before its \
+                                     report. {note}\nThe ask about \"{}\" is now served by its \
+                                     replacement run, which still owes the report. Tell the \
+                                     owner what was cancelled and that the replacement carries \
+                                     it. No ids.",
+                                    ask.subject
+                                ),
+                                None,
+                            )
+                        } else if replacement == Replacement::Ambiguous {
+                            (
+                                format!(
+                                    "A pod you launched was cancelled by authority before its \
+                                     report. {note}\nSeveral live runs now serve the ask's \
+                                     subject \"{}\", and nothing declares which one carries this \
+                                     ask, so its key was not moved onto a guess. Do not \
+                                     relaunch: the live runs already serve the subject. Tell \
+                                     the owner what was cancelled, and when one of the runs \
+                                     delivers, say which ask it answers; the ask stays open \
+                                     until its result is delivered or the owner drops it. No ids.",
+                                    ask.subject
+                                ),
+                                Some(vec![
+                                    "cancelled by authority before its report; no output"
+                                        .to_owned(),
+                                ]),
+                            )
+                        } else {
+                            (
+                                format!(
+                                    "A pod you launched was cancelled by authority before its \
+                                     report. {note}\nIts preserved answer (partial work):\n{}\n\
+                                     Tell the owner in one plain sentence what was left undone, \
+                                     and relaunch it if they still want it. No ids.",
+                                    pod.answer
+                                ),
+                                Some(vec![
+                                    "cancelled by authority before its report; no output"
+                                        .to_owned(),
+                                ]),
+                            )
+                        };
+                        tracing::info!(
+                            "pod cancelled settlement session={} operation={} replacement={} \
+                             ask_rekeyed={rekeyed}",
+                            pod.session,
+                            pod.operation,
+                            match &replacement {
+                                Replacement::ServedBy(run) => run.as_str(),
+                                Replacement::Ambiguous => "<ambiguous: several live runs>",
+                                Replacement::None => "<none>",
+                            },
+                        );
+                        PodFinish {
+                            runtime: &runtime,
+                            owner: &owner,
+                            kube: kube.as_ref(),
+                            connected: connected.as_deref(),
+                            pending: &mut pending,
+                        }
+                        .finish(
+                            &pod,
+                            &format!("pod-cancelled-{}", pod.session),
+                            &text,
+                            unmet,
+                            "cancelled",
+                            false,
                         )
                         .await;
                     }
                     crate::report_settle::ReportSettlement::Pending { note, follow_up } => {
-                        let (last, count) = repeated
-                            .entry(pod.operation.clone())
-                            .or_insert_with(|| (String::new(), 0));
-                        if follow_up.is_some() || *last != note {
-                            (*last, *count) = (note.clone(), 0);
-                        }
-                        *count += 1;
-                        // The same cause, settle after settle, will not clear on its own: the
-                        // launching seat hears it once instead of the log repeating it.
-                        if *count == STUCK_SETTLES {
+                        pending_ops.push(pod.operation.clone());
+                        // A report that stays pending, whatever its notes and follow-up turns say,
+                        // will not clear on its own: the launching seat hears it once, and the
+                        // incident desk holds one card for it until it settles.
+                        if stuck.pending(&pod.operation, tokio::time::Instant::now()) {
                             let text = format!(
-                                "A pod you launched cannot settle its report; the same cause \
-                                 repeated for {} minutes: {note}\nTell the owner plainly what \
-                                 is stuck. The pod stays up until its report is settled or it \
-                                 is cancelled.",
-                                (every * STUCK_SETTLES).as_secs() / 60
+                                "A pod you launched has not settled its report for {} minutes: \
+                                 {note}\nTell the owner plainly what is stuck. The pod stays up \
+                                 until its report is settled or it is cancelled.",
+                                STUCK_AFTER.as_secs() / 60
                             );
                             // One wake for what launched the pods, however many of them
                             // cannot settle for the same reason.
@@ -831,6 +1032,19 @@ pub(super) fn arm_child_report_pump(
                             ) {
                                 tracing::error!("stuck report not queued: {error}");
                             }
+                            let desk = Arc::clone(&desk);
+                            let incident = crate::incidents::RaisedIncident {
+                                source: format!("delegation:{seat}"),
+                                severity: odin_huginn::incidents::IncidentSeverityView::Info,
+                                summary: format!(
+                                    "pod report stuck for {} minutes",
+                                    STUCK_AFTER.as_secs() / 60
+                                ),
+                                detail: note.clone(),
+                                affected: vec![pod.session.to_string(), pod.operation.clone()],
+                                signature: pod_run_signature(&pod.operation),
+                            };
+                            let _ = tokio::task::spawn_blocking(move || desk.raise(incident)).await;
                             tracing::error!(
                                 "report settlement stuck session={} operation={} {note}",
                                 pod.session, pod.operation
@@ -860,7 +1074,8 @@ pub(super) fn arm_child_report_pump(
                         let text = format!(
                             "A pod you launched has not delivered its report. {note}\n\
                              Tell the owner plainly what is missing. The pod stays up until the \
-                             report, its review and both copies are done."
+                             report, its review and both copies are done, or until this has held \
+                             for three review cycles, when it ends as partial work."
                         );
                         if let Err(error) = queue_pod_wake(
                             &runtime,
@@ -881,11 +1096,29 @@ pub(super) fn arm_child_report_pump(
                     }
                 }
             }
+            // A pod that settled or ended is no longer pending: its stuck card resolves.
+            if pods_read {
+                for operation in stuck.retain(&pending_ops) {
+                    let desk = Arc::clone(&desk);
+                    let _ = tokio::task::spawn_blocking(move || {
+                        desk.clear(
+                            &pod_run_signature(&operation),
+                            "the pod's report settled or the pod ended",
+                        )
+                    })
+                    .await;
+                }
+            }
             if let Some(cell) = kube.as_ref().filter(|_| connected.is_some()) {
                 drain_pending_pod_releases(cell, &mut pending).await;
             }
         }
     });
+}
+
+/// The incident desk's signature for a pod run whose report is stuck.
+fn pod_run_signature(operation: &str) -> String {
+    format!("pod-run:{operation}")
 }
 
 /// What ending one reported pod needs: the seat's wake route, the owner
@@ -903,8 +1136,11 @@ impl PodFinish<'_> {
     /// Wake the launching seat that a pod run's report landed — delivered,
     /// or salvaged as artifacts after its carrier was lost — then end the
     /// workload session and release its carrier Job. A wake that cannot be
-    /// queued leaves everything in place for the next pass; an
-    /// unconfirmed release stays queued.
+    /// queued leaves everything in place for the next pass only when the
+    /// result rides it (`wake_gates_end`: delivered or partial); a terminal
+    /// settlement (salvaged, cancelled) is over, so its session ends and its
+    /// carrier is released whatever the wake did — the open ask carries the
+    /// follow-through. An unconfirmed release stays queued.
     async fn finish(
         self,
         pod: &odin_omp::host_tools::delegation::SettledPod,
@@ -912,6 +1148,7 @@ impl PodFinish<'_> {
         text: &str,
         unmet: Option<Vec<String>>,
         outcome: &str,
+        wake_gates_end: bool,
     ) {
         let Self {
             runtime,
@@ -940,7 +1177,9 @@ impl PodFinish<'_> {
         }
         if let Err(error) = queue_pod_wake(runtime, connected, pod, wake_id, text, unmet).await {
             tracing::error!("pod report not queued: {error}");
-            return;
+            if wake_gates_end {
+                return;
+            }
         }
         tracing::info!(
             "pod report queued session={} operation={} answer_chars={} failed={} outcome={outcome}",
@@ -1018,6 +1257,35 @@ async fn owed_ended_operations(
         }
     }
     Ok(owed)
+}
+
+/// The failure a pod's container stop names (its reason as the code, e.g. `OOMKilled`), when its
+/// session journal names none. A pod status that cannot be read is logged and leaves it unnamed.
+async fn container_failure(
+    control: &odin_huginn::kube::KubeControl,
+    operation: &str,
+) -> Option<odin_omp::host_tools::delegation::SessionFailure> {
+    let reconciler = control.reconciler();
+    let read = match reconciler.operation_launch(operation) {
+        Ok(Some((run, _))) => reconciler.workload_termination(&run).await,
+        Ok(None) => return None,
+        Err(error) => Err(error),
+    };
+    match read {
+        Ok(stopped) => {
+            stopped.map(
+                |(code, message)| odin_omp::host_tools::delegation::SessionFailure {
+                    event: 0,
+                    code,
+                    message,
+                },
+            )
+        }
+        Err(error) => {
+            tracing::error!("pod container status unread operation={operation}: {error}");
+            None
+        }
+    }
 }
 
 /// Stop the parked carrier so a finished session's Job can complete.
@@ -1139,30 +1407,71 @@ async fn drain_pending_pod_releases(
     *pending = kept;
 }
 
+#[path = "child_report/replacement.rs"]
+mod replacement;
+#[cfg(test)]
+use replacement::{replacement_among, ReplacementRun};
+use replacement::{replacement_run, Replacement};
+
 #[cfg(test)]
 #[path = "tests/child_report.rs"]
 mod tests;
 
-/// Prompts every enabled seat whose `[live] watches` names `watch`.
+/// Prompts every enabled seat whose `[live] watches` names `watch`, for
+/// every project or for `project`.
 /// The conversation seat is woken by its own path; this is the declared
 /// extra subscriber. The event id routes the wake: a `push:<project>` id
 /// reaches that project's sessions, and an id that names a live session
 /// reaches its parent when that parent is live. No owner text, so the wake
 /// does not retire the seat. A refused wake is logged and left for the next
 /// pass; the watcher's own delivery mark is not consumed here.
+/// `true` when a watching session took the wake, or no seat watches `watch`;
+/// `false` leaves the event for the caller's next pass.
 pub(crate) async fn wake_declared(
     runtime: &odin_hermes::runtime::HermesRuntime,
     watch: &str,
+    project: Option<&str>,
     id: &str,
     text: &str,
-) {
+) -> bool {
+    wake_declared_except(runtime, watch, project, id, text, None).await
+}
+fn exclude_delivered_seat(
+    seats: impl IntoIterator<Item = odin_domain::SeatId>,
+    excluded: Option<&odin_domain::SeatId>,
+) -> Vec<odin_domain::SeatId> {
+    seats
+        .into_iter()
+        .filter(|seat| Some(seat) != excluded)
+        .collect()
+}
+
+/// As `wake_declared`, excluding a seat already delivered the same event.
+pub(crate) async fn wake_declared_except(
+    runtime: &odin_hermes::runtime::HermesRuntime,
+    watch: &str,
+    project: Option<&str>,
+    id: &str,
+    text: &str,
+    excluded: Option<&odin_domain::SeatId>,
+) -> bool {
+    let seats = exclude_delivered_seat(runtime.seats_watching(watch, project), excluded);
+    if seats.is_empty() {
+        return true;
+    }
     let Some(live) = odin_omp::live::service::OmpLiveService::installed() else {
-        return;
+        return false;
     };
-    let route = odin_omp::live::service::WakeRoute::from_event_id(id);
-    for seat in runtime.seats_watching(watch) {
-        if let Err(error) = live.wake_seat(&seat, id, text, route.as_ref()).await {
-            tracing::error!("declared {watch} wake for {seat} failed: {error}");
+    let route = project
+        .and_then(|project| odin_domain::ProjectId::new(project).ok())
+        .map(odin_omp::live::service::WakeRoute::Project)
+        .or_else(|| odin_omp::live::service::WakeRoute::from_event_id(id));
+    let mut delivered = false;
+    for seat in seats {
+        match live.wake_seat(&seat, id, text, route.as_ref()).await {
+            Ok(taken) => delivered |= taken,
+            Err(error) => tracing::error!("declared {watch} wake for {seat} failed: {error}"),
         }
     }
+    delivered
 }

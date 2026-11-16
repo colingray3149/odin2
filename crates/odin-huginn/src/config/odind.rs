@@ -208,10 +208,11 @@ pub struct OdindBrainEmbeddingConfig {
     pub endpoint: String,
 }
 
-/// One other lane's declared window: a bare token count, counted as UTF-8
-/// bytes (about four times a model tokenizer's count, so only a large window
-/// guards honestly), or the count with the lane's own tokenizer — a small
-/// local window (kubert-mini's 32768 on Qwen3) needs its real tokenizer.
+/// One other lane's declared window: a bare token count, counted with its
+/// model card's declared counter (exact bytes when the card declares none,
+/// about four times a model tokenizer's count), or the count with the lane's
+/// own tokenizer — a small local window (kubert-mini's 32768 on Qwen3) needs
+/// its real tokenizer.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum OdindLaneWindow {
@@ -255,7 +256,8 @@ pub struct OdindServingModelConfig {
     pub context_window_tokens: NonZeroU32,
     /// Optional declared brain context tokenizer identity. Absent keeps the
     /// conservative exact-byte default (`odin.tokenizer.utf8-bytes.v1`);
-    /// `odin.tokenizer.qwen3.v1` selects the pinned Qwen3-family counter.
+    /// `odin.tokenizer.qwen3.v1` selects the pinned Qwen3-family counter and
+    /// `odin.tokenizer.estimate.v1` one token per four bytes.
     /// The value is never inferred from the model name, and any other value
     /// fails the projection instead of downgrading to an approximation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -415,6 +417,10 @@ pub struct OdindVpnTransport {
     /// Absent refuses hostname pins rather than using host DNS.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolver: Option<PathBuf>,
+    /// The VPN namespace's address the authority forwards the endpoint to. A pod on the
+    /// authority reaches the cluster's policy engine already forwarded, so its egress admits it too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forwarded: Option<std::net::IpAddr>,
 }
 
 /// Secret name and key for a gateway credential handle; values never enter configuration.
@@ -497,6 +503,9 @@ pub struct OdindResearchConfig {
     pub exit_socket: PathBuf,
     pub state: PathBuf,
     pub adapters: Vec<String>,
+    /// The egress pool's SOCKS URLs: more exits, up at once, that recon picks per request.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pool: Vec<String>,
 }
 
 /// Bounded governed OMP child-session delegation settings. The child model is
@@ -910,6 +919,11 @@ pub struct OdindExecutablesConfig {
     /// `[exec] stdin` fetches a page run it; absent, they are unavailable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_save: Option<PathBuf>,
+    /// The authority's recon sandbox: `<it> <evidence dir>` runs odin-recon on its stdin with
+    /// the pod tools at /bin, that dir at /export, through the research exit. osint.recon from
+    /// a seat (no pod) runs it; absent, recon runs only in pods.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recon: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -1202,8 +1216,6 @@ impl OdindConfig {
     /// A seat's declared `models` become its launch options in that order: a pair the
     /// composition already launches keeps its options, any other runs in the seat's first container.
     /// A gateway lane the catalog does not allow seats to run refuses the load, naming the lane.
-    /// A `claude-code` card attaches the bwrapped Claude Code harness on `claude-seat` when that
-    /// environment admits the seat; a gateway card stays on the pinned OMP.
     fn adopt_seat_models(
         &mut self,
         objects: &[odin_registry::RegistryObject],
@@ -1250,7 +1262,6 @@ impl OdindConfig {
                 harness: None,
                 ..first.clone()
             };
-            let claude_harness = claude_seat_harness(objects, &binding.seat);
             let mut options = Vec::new();
             for choice in declared {
                 let composed = binding
@@ -1262,16 +1273,11 @@ impl OdindConfig {
                     .cloned()
                     .collect::<Vec<_>>();
                 if composed.is_empty() {
-                    let mut option = odin_domain::huginn::LiveLaunchOption {
+                    options.push(odin_domain::huginn::LiveLaunchOption {
                         provider: choice.provider.clone(),
                         model: choice.model.clone(),
                         ..template.clone()
-                    };
-                    if option.harness.is_none() {
-                        option.harness =
-                            harness_for_choice(objects, choice, claude_harness.clone());
-                    }
-                    options.push(option);
+                    });
                 } else {
                     options.extend(composed);
                 }
@@ -1417,61 +1423,6 @@ fn control_nodes(objects: &[odin_registry::RegistryObject]) -> Vec<odin_domain::
                 .flatten()
         })
         .collect()
-}
-
-/// The environment that admits a seat to the bwrapped Claude Code harness.
-const CLAUDE_SEAT_ENVIRONMENT: &str = "claude-seat";
-
-/// The bwrapped Claude Code harness a `claude-code` card selects, when `claude-seat` admits the seat.
-fn claude_seat_harness(
-    objects: &[odin_registry::RegistryObject],
-    seat: &odin_domain::SeatId,
-) -> Option<odin_domain::huginn::HarnessBinding> {
-    let admits = objects.iter().any(|object| {
-        matches!(
-            &object.config,
-            odin_registry::ObjectConfig::Environment(environment)
-                if object.id == CLAUDE_SEAT_ENVIRONMENT
-                    && environment.enabled
-                    && environment.seats.iter().any(|admitted| admitted == seat)
-        )
-    });
-    let declared = objects.iter().any(|object| {
-        matches!(
-            &object.config,
-            odin_registry::ObjectConfig::Harness(harness)
-                if object.id == odin_registry::CLAUDE_CODE_HARNESS && harness.enabled
-        )
-    });
-    if admits && declared {
-        Some(odin_domain::huginn::HarnessBinding {
-            harness: odin_registry::CLAUDE_CODE_HARNESS.to_owned(),
-            environment: CLAUDE_SEAT_ENVIRONMENT.to_owned(),
-            account: None,
-        })
-    } else {
-        None
-    }
-}
-
-/// The harness a newly adopted launch runs under. Gateway cards stay on the pinned OMP.
-/// A seat-open `claude-code` card runs the bwrapped Claude Code harness.
-fn harness_for_choice(
-    objects: &[odin_registry::RegistryObject],
-    choice: &odin_registry::SeatModelToml,
-    claude: Option<odin_domain::huginn::HarnessBinding>,
-) -> Option<odin_domain::huginn::HarnessBinding> {
-    let card_id = choice.to_string();
-    let route = objects.iter().find_map(|object| match &object.config {
-        odin_registry::ObjectConfig::Model(card) if card.enabled && card.id == card_id => {
-            Some(card.route.as_str())
-        }
-        _ => None,
-    });
-    match route {
-        Some(odin_registry::CLAUDE_ROUTE) => claude,
-        _ => None,
-    }
 }
 
 #[cfg(test)]

@@ -210,7 +210,7 @@ impl JobReconciler {
                     && observed
                         .workload
                         .finished_at
-                        .is_some_and(|at| now - at >= FINISHED_RUN_GRACE)
+                        .is_some_and(|at| now - at >= self.finished_grace(&run))
                 {
                     let name = job.metadata.name.as_deref().unwrap_or_default();
                     delete_uid(
@@ -241,6 +241,23 @@ impl JobReconciler {
                 if let Some(label) = run_label_of(&policy.metadata) {
                     marked.insert(label);
                 }
+            } else if stray_policy(&policy.metadata, &live, now) {
+                // A launch that failed before its Job existed never gets the finished mark;
+                // its egress policy guards nothing, so it goes once it is a day old.
+                let label = run_label_of(&policy.metadata).unwrap_or_default();
+                if label_adoption_in_flight(&pending, &label) {
+                    continue;
+                }
+                let name = policy.metadata.name.clone().unwrap_or_default();
+                delete_uid(
+                    self.client.network_policies(),
+                    &name,
+                    policy.metadata.uid.clone(),
+                    DeleteParams::default(),
+                    self.client.config.request_timeout,
+                )
+                .await?;
+                tracing::info!("kube stray egress policy={name} run-label={label} deleted");
             }
         }
         for map in self.list_labelled_maps().await? {
@@ -527,7 +544,7 @@ fn run_label_matches(metadata: &ObjectMeta, run: &RunId) -> bool {
         .is_some_and(|value| value == &bounded_label_value(run.as_str()))
 }
 
-fn job_finished(job: &Job) -> bool {
+pub(super) fn job_finished(job: &Job) -> bool {
     job.status
         .as_ref()
         .and_then(|status| status.conditions.as_ref())
@@ -547,9 +564,34 @@ fn run_label_of(metadata: &ObjectMeta) -> Option<String> {
         .cloned()
 }
 
+impl JobReconciler {
+    /// The run's declared keep time, or the platform default; a run keeps what it launched with.
+    fn finished_grace(&self, run: &RunId) -> time::Duration {
+        self.stored_launch(run)
+            .ok()
+            .flatten()
+            .and_then(|launch| launch.workload?.keep_finished_seconds)
+            .map_or(FINISHED_RUN_GRACE, |seconds| {
+                time::Duration::seconds(i64::from(seconds))
+            })
+    }
+}
+
 fn run_of_label(label: &str) -> Option<RunId> {
     let run = RunId::new(label).ok()?;
     (bounded_label_value(run.as_str()) == label).then_some(run)
+}
+
+/// An unmarked run-labelled policy with no Job carrying its label, older than a day.
+fn stray_policy(metadata: &ObjectMeta, live: &BTreeSet<String>, now: OffsetDateTime) -> bool {
+    let Some(label) = run_label_of(metadata) else {
+        return false;
+    };
+    let created = metadata
+        .creation_timestamp
+        .as_ref()
+        .and_then(|time| OffsetDateTime::from_unix_timestamp(time.0.as_second()).ok());
+    !live.contains(&label) && created.is_some_and(|at| now - at >= FINISHED_RUN_GRACE)
 }
 
 fn finished_mark(metadata: &ObjectMeta) -> bool {
@@ -700,6 +742,35 @@ mod tests {
 
     fn hours_ago(now: OffsetDateTime, hours: i64) -> Option<OffsetDateTime> {
         Some(now - time::Duration::hours(hours))
+    }
+
+    #[test]
+    fn a_day_old_unmarked_policy_without_a_job_is_stray() {
+        let now = OffsetDateTime::now_utc();
+        let meta = |label: &str, age: time::Duration| ObjectMeta {
+            labels: Some([(JOB_LABEL_RUN_ID.to_owned(), label.to_owned())].into()),
+            creation_timestamp: Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                k8s_openapi::jiff::Timestamp::from_second((now - age).unix_timestamp()).unwrap(),
+            )),
+            ..ObjectMeta::default()
+        };
+        let live: BTreeSet<String> = ["running".to_owned()].into();
+        assert!(stray_policy(
+            &meta("gone", time::Duration::days(13)),
+            &live,
+            now
+        ));
+        assert!(!stray_policy(
+            &meta("gone", time::Duration::hours(2)),
+            &live,
+            now
+        ));
+        assert!(!stray_policy(
+            &meta("running", time::Duration::days(13)),
+            &live,
+            now
+        ));
+        assert!(!stray_policy(&ObjectMeta::default(), &live, now));
     }
 
     #[test]

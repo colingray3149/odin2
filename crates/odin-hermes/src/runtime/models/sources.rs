@@ -1,10 +1,8 @@
 //! Host-local usage readers. Credentials stay with their owning CLI/host; only readings cross SSH.
 //! Provider amounts are authoritative; ccusage is a local list-price estimate, never an invoice.
 use std::collections::BTreeMap;
-use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,7 +10,7 @@ use serde_json::Value;
 use super::{Book, HOLD_AT, RETURN_AT};
 
 const USAGE_COMMAND_TIMEOUT: Duration = Duration::from_secs(8);
-const USAGE_COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const USAGE_OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 const ACCOUNT_USAGE_TIMEOUT: Duration = Duration::from_secs(6);
 /// Where each provider publishes an account's quota or balance; a source's `url` replaces it.
 const ZAI_QUOTA: &str = "https://api.z.ai/api/monitor/usage/quota/limit";
@@ -255,52 +253,25 @@ fn command_json(argv: &[String]) -> Result<Value, String> {
     let (program, args) = argv
         .split_first()
         .ok_or("usage command is not configured")?;
-    let mut output = tempfile::tempfile().map_err(|e| format!("usage output file: {e}"))?;
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .stdout(
-            output
-                .try_clone()
-                .map_err(|e| format!("usage output file: {e}"))?,
-        )
-        .process_group(0);
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("usage command could not start: {e}"))?;
-    let deadline = Instant::now() + USAGE_COMMAND_TIMEOUT;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(USAGE_COMMAND_POLL_INTERVAL)
-            }
-            other => {
-                let _ = rustix::process::kill_process_group(
-                    rustix::process::Pid::from_child(&child),
-                    rustix::process::Signal::KILL,
-                );
-                let _ = child.kill();
-                let _ = child.wait();
-                break Err(match other {
-                    Err(e) => format!("usage command wait failed: {e}"),
-                    _ => "usage command timed out".to_owned(),
-                });
-            }
-        }
-    }?;
+    let output = odin_process::run_bounded(
+        Command::new(program).args(args),
+        None,
+        odin_process::ChildBounds {
+            timeout: USAGE_COMMAND_TIMEOUT,
+            max_stdout_bytes: USAGE_OUTPUT_LIMIT,
+            max_stderr_bytes: 0,
+        },
+    )
+    .map_err(|e| format!("usage command could not start: {e}"))?;
+    let status = output.status.ok_or("usage command timed out")?;
     if !status.success() {
         return Err(format!("usage command exited {status}"));
     }
-    if output.metadata().map_err(|e| e.to_string())?.len() > 8 * 1024 * 1024 {
+    if output.stdout.truncated() {
         return Err("usage output exceeds 8 MiB".to_owned());
     }
-    output.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
-    let mut bytes = Vec::new();
-    output.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-    serde_json::from_slice(&bytes).map_err(|e| format!("usage command returned invalid JSON: {e}"))
+    serde_json::from_slice(output.stdout.as_bytes())
+        .map_err(|e| format!("usage command returned invalid JSON: {e}"))
 }
 
 fn number(value: &Value, key: &str) -> Option<f64> {

@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "knowledge"
+expose = "on_demand"
+op = "pause"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Pauses a brain part. A part of _system/parts.toml, through kb-control: until is a time or +90m, +2h, +1d; why shows on the Brain page."
+handler = { id = "knowledge_pause" }
+input_schema = "schemas/capability/knowledge.pause.input.json"
+output_schema = "schemas/capability/knowledge.pause.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_knowledge_pause_evidence" }
+tests = [
+  "odin-hermes runtime::knowledge::tests::each_declared_knowledge_tool_forwards_its_arguments_and_the_seat",
+]

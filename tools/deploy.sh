@@ -10,11 +10,14 @@ set -euo pipefail
 T=$1
 # ssh waits and poll budgets, in seconds.
 CONNECT=15 PROBE_CONNECT=8 SWITCH_CONNECT=20 KEEPALIVE=30 KEEPALIVE_MISSES=20
-BUSY_POLL=10 BUSY_POLLS=90 WRITER_POLL=5 WRITER_POLLS=60 HUGINN_POLL=2 HUGINN_POLLS=15
+BUSY_POLL=10 BUSY_POLLS=90 WRITER_POLL=5 WRITER_POLLS=60 HUGINN_POLL=2 HUGINN_POLLS=15 RETRY_PAUSE=10
 # One owner line says hello to Sinmara after the switch and waits this long for her committed reply.
 CONVERSATION_SAY="Deploy check: reply with the single word ready."
 CONVERSATION_WAIT=180
 die() { echo "deploy: $*" >&2; exit 1; }
+# GitHub refuses or drops some git calls during its own incidents ("Permission denied (publickey)" with a good key):
+# each network git call gets three tries.
+retry() { local n; for n in 1 2 3; do "$@" && return; [ "$n" = 3 ] || sleep "$RETRY_PAUSE"; done; return 1; }
 cd "$(dirname "$(readlink -f "$0")")/.."
 # shellcheck disable=SC2016 # ${...} in the single-quoted expression is Nix interpolation, not the shell's
 declared() { # the odin project's deploy declaration, one value per line: host, checkout, targets, control target
@@ -27,11 +30,14 @@ declared() { # the odin project's deploy declaration, one value per line: host, 
 SELF=$(hostname)
 [ "$SELF" = "$HOST" ] || die "run this on $HOST (registry/projects/odin deploy.host), not $SELF"
 [ -n "$AUTH" ] && [ "${AUTH#* }" = "$AUTH" ] || die "deploy.targets must hold exactly one control host, not '${AUTH}'"
+[[ " ${ODIN_DEPLOY_SKIP:-} " != *" $AUTH "* ]] || die "ODIN_DEPLOY_SKIP cannot skip the control host $AUTH"
 # One deploy at a time. tools/ship.sh hands down the lock it took as fd 9; locking it again is a no-op.
 { true >&9; } 2>/dev/null || exec 9>"$HOME/.local/state/odin/deploy.lock"
 flock -n 9 || die "another deploy is running (it holds ~/.local/state/odin/deploy.lock)"
 # The dotfiles checkout this deploy pins and builds; another clean clone of main serves while ~/dotfiles holds work in progress.
 DOT=${ODIN_DEPLOY_DOTFILES:-$HOME/dotfiles}
+# Hosts this deploy builds but does not switch (space-separated), e.g. a laptop in use; never the control host.
+SKIP=${ODIN_DEPLOY_SKIP:-}
 PWFILE=$HOME/.config/odin-coord/sudo-password
 [ -f "$PWFILE" ] && [ ! -L "$PWFILE" ] || { echo "deploy: sudo credential missing" >&2; exit 1; }
 IFS= read -r PW <"$PWFILE" || [ -n "${PW:-}" ] || { echo "deploy: sudo credential unreadable" >&2; exit 1; }
@@ -40,14 +46,14 @@ REPO=$PWD
 cd "$DOT"
 [ -z "$(git status --porcelain)" ] || { echo "deploy: $DOT is dirty" >&2; exit 1; }
 [ "$(git rev-parse --abbrev-ref HEAD)" = main ] || { echo "deploy: $DOT is not on main" >&2; exit 1; }
-git pull --rebase
+retry git pull --rebase
 url=$(jq -r .nodes.odin.locked.url flake.lock)
-tip=$(git ls-remote "${url#git+}" refs/heads/main | awk 'NR==1 {print $1}')
+tip=$(retry git ls-remote "${url#git+}" refs/heads/main | awk 'NR==1 {print $1}')
 # Registry declarations and this orchestration script may follow T without changing the gated closure; the
 # authority applies the same rule when it picks the commit to publish.
 DECLARATIONS=(. ':!registry' ':!tools/deploy.sh')
 [ "$tip" = "$T" ] || {
-  git -C "$REPO" fetch -q origin main
+  retry git -C "$REPO" fetch -q origin main
   if ! { git -C "$REPO" merge-base --is-ancestor "$T" "$tip" && git -C "$REPO" diff --quiet "$T" "$tip" -- "${DECLARATIONS[@]}"; }; then
     echo "deploy: origin/main is ${tip:-missing}, not $T (and not only registry/deploy-script commits on top of it)" >&2
     exit 1
@@ -104,13 +110,22 @@ for i in "${!targets[@]}"; do
   [ "$i" = 0 ] || link=$roots/system-$i
   OUT[${targets[$i]}]=$(readlink -f "$link")
 done
-git push
-DOT_REV=$(git rev-parse HEAD)
 # ssh-ng is the copy transport the fleet actually switches from; a plain ssh:// store does not.
 # The control host must take the deploy; any other remote target is skipped while unreachable.
 REMOTE=() SKIPPED=() COPY_PIDS=() COPY_HOSTS=()
+# This host may be skipped too (pc while it is in use); it is built, not switched.
+if [ -n "${OUT[$SELF]:-}" ] && [[ " $SKIP " == *" $SELF "* ]]; then
+  echo "deploy: $SELF skipped (ODIN_DEPLOY_SKIP)" >&2
+  unset 'OUT[$SELF]'
+  SKIPPED+=("$SELF")
+fi
 for h in $TARGETS; do
   [ "$h" = "$SELF" ] && continue
+  if [[ " $SKIP " == *" $h "* ]]; then
+    echo "deploy: $h skipped (ODIN_DEPLOY_SKIP)" >&2
+    SKIPPED+=("$h")
+    continue
+  fi
   if [ "$h" != "$AUTH" ] && ! ssh -o BatchMode=yes -o ConnectTimeout="$PROBE_CONNECT" -- "$h" true; then
     echo "deploy: $h unreachable, skipping" >&2
     SKIPPED+=("$h")
@@ -235,7 +250,7 @@ set -euo pipefail
 checkout=$HOME/$1 T=$2 bin=$3 config=$4 renderer=$5 facts=$6
 shift 6
 cd "$checkout"
-git fetch -q origin
+for n in 1 2 3; do git fetch -q origin && break; [ "$n" = 3 ] && exit 1; sleep 10; done
 ahead=$(git log --format='  %h %s' origin/main..HEAD)
 [ -z "$ahead" ] || { printf 'deploy: %s has commits not on origin/main; push or drop them first:\n%s\n' "$checkout" "$ahead" >&2; exit 1; }
 pub=$T tip=$(git rev-parse origin/main)
@@ -280,22 +295,27 @@ echo "deploy: candidate checked: $PUB publishes at revision $REV"
 # A registry-only commit on top of $T may name tests the gate run of $T never saw: every test a published capability
 # names must have passed in that run.
 caps=$(mktemp -d) || die "cannot create a scratch directory"
-git -C "$REPO" fetch -q origin main
+retry git -C "$REPO" fetch -q origin main
 { git -C "$REPO" archive "$PUB" registry | tar -x -C "$caps"; } || { rm -rf "$caps"; die "cannot read the registry at $PUB"; }
 python3 "$REPO/tools/gate-results.py" capabilities "$gate_json" "$caps/registry" ||
   { rm -rf "$caps"; die "a capability names a test the gate run of $T did not pass; every host is on its old generation"; }
 rm -rf "$caps"
+# The pin reaches origin only once the candidate has passed its checks on the control host.
+retry git push
+DOT_REV=$(git rev-parse HEAD)
 # Keep writers running through builds and candidate checks. Pause only for
 # the publication/control-host switch, and restore timers on every exit.
 backup=$(on_auth 'systemctl is-active odin-backup.service' || true)
 [ "$backup" = inactive ] || die "odin-backup.service on $AUTH is ${backup:-unreachable}"
-writer_timers=(
-  brain-archive-refresh.timer brain-commit.timer brain-google-pull.timer brain-grow.timer
-  brain-inventory.timer brain-load.timer brain-reduce.timer media-mirror.timer
-)
+# The brain writers the candidate declares (odin.node.brainWriters), the same list odin-backup.sh stops.
+writers=$(nix eval --raw ".#nixosConfigurations.$AUTH.config.odin.node.brainWriters" --apply 'toString') ||
+  die "cannot evaluate the declared brain writers"
+writer_timers=()
+for w in $writers; do writer_timers+=("$w.timer"); done
 writer_state=$(on_auth bash -s -- "${writer_timers[@]}" <<'SH'
 set -euo pipefail
 for timer in "$@"; do
+  [ "$(systemctl --user show --property=LoadState --value "$timer")" != not-found ] || continue   # declared by this candidate, not installed yet
   state=$(systemctl --user show --property=ActiveState --value "$timer") ||
     { echo "deploy: cannot read $timer" >&2; exit 1; }
   case "$state" in
@@ -338,6 +358,7 @@ set -euo pipefail
 poll=$1 polls=$2
 shift 2
 for timer in "$@"; do
+  [ "$(systemctl --user show --property=LoadState --value "$timer")" != not-found ] || continue   # declared by this candidate, not installed yet
   systemctl --user stop "$timer" ||
     { echo "deploy: cannot stop $timer" >&2; exit 1; }
 done
@@ -357,9 +378,6 @@ done
 SH
 # Publish before the switch, from a detached worktree at PUB, with odind stopped, so odind starts once, on the new
 # binary over the matching snapshot. The revision comes from the publish's own output, taken under the store lock.
-on_auth 'cat > ~/.local/state/odin/tested.json.tmp && mv ~/.local/state/odin/tested.json.tmp ~/.local/state/odin/tested.json' <"$work_results" ||
-  die "cannot record the gate results on $AUTH; every host is on its old generation"
-rm -f "$work_results"
 published=$(on_auth bash -s -- "$CHECKOUT" "$PUB" "$REV" "$BIN" "$PUBLISH_CONFIG" <<'SH'
 set -euo pipefail
 checkout=$HOME/$1 pub=$2 rev=$3 bin=$4 publish_config=$5
@@ -375,6 +393,10 @@ jq -er '"\(.outcome) \(.receipt.revision)"' "$work/out.json"
 SH
 ) || die "registry publish failed on $AUTH; every host is on its old generation"
 echo "deploy: registry $published"
+# tested.json describes what is live, so it is written only once the publish has happened.
+on_auth 'cat > ~/.local/state/odin/tested.json.tmp && mv ~/.local/state/odin/tested.json.tmp ~/.local/state/odin/tested.json' <"$work_results" ||
+  echo "deploy: warning: the registry is published but $AUTH's tested.json was not updated" >&2
+rm -f "$work_results"
 # From here on, roll forward only.
 start_odind() { on_auth 'systemctl --user reset-failed odind; systemctl --user start odind'; }
 for h in "${REMOTE[@]}"; do remember_failed "$h"; done
@@ -383,8 +405,12 @@ switch_remote "$AUTH" "${OUT[$AUTH]}" || { start_odind; die "switching $AUTH fai
 start_odind || die "cannot start odind on $AUTH"
 restore_brain_writers || die "cannot restore brain timers on $AUTH"
 trap - EXIT
-for h in "${REMOTE[@]}"; do [ "$h" = "$AUTH" ] || switch_remote "$h" "${OUT[$h]}"; done
-[ -z "${OUT[$SELF]:-}" ] || switch_local "${OUT[$SELF]}"
+# The control host is switched; every other host rolls forward on its own, and one that fails is named at the end.
+UNSWITCHED=()
+for h in "${REMOTE[@]}"; do
+  [ "$h" = "$AUTH" ] || switch_remote "$h" "${OUT[$h]}" || UNSWITCHED+=("$h")
+done
+[ -z "${OUT[$SELF]:-}" ] || switch_local "${OUT[$SELF]}" || UNSWITCHED+=("$SELF")
 # odind restarts with the switch; Huginn answers 502 until it is back.
 odind=$(on_auth 'systemctl --user is-active odind') || die "cannot read odind on $AUTH"
 [ "$odind" = active ] || die "odind is $odind on $AUTH"
@@ -398,3 +424,4 @@ for h in "${REMOTE[@]}"; do sync_remote_sources "$h"; done
 for h in "${REMOTE[@]}"; do clear "$h" "$h"; done
 [ -z "${OUT[$SELF]:-}" ] || clear "" "$SELF"
 echo "deploy: pin=$T switched=${REMOTE[*]}${OUT[$SELF]:+ $SELF} skipped=${SKIPPED[*]:-none} odind=active huginn=ok conversation=open"
+[ "${#UNSWITCHED[@]}" -eq 0 ] || die "switching ${UNSWITCHED[*]} failed after the publish; roll forward"

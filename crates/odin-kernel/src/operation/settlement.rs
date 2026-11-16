@@ -37,6 +37,127 @@ impl RowObservation {
 }
 
 impl OperationAuthority {
+    /// Recover an uncertain CFD effect from its original journal binding and receipt.
+    /// This never invokes the mutating executor entry point.
+    pub fn recover_cfd(
+        &self,
+        correlation_id: &CorrelationId,
+    ) -> AuthorityResult<OperationDecision> {
+        let (row, fence) = {
+            let mut ledger = self.lock_store()?;
+            let Some(mut fence) = ledger.try_operation_fence(correlation_id.as_str())? else {
+                return Err(OperationRejection::Executor(
+                    super::model::ExecutorFault::Uncertain {
+                        detail: "operation is already being dispatched or reconciled".to_owned(),
+                    },
+                ));
+            };
+            let row = ledger.with_tx(|tx| {
+                let row = store::operation_row(tx, correlation_id.as_str())?.ok_or_else(|| {
+                    LedgerError::NotFound {
+                        kind: "operation",
+                        id: correlation_id.to_string(),
+                    }
+                })?;
+                if row.effect_state != EffectState::InDoubt {
+                    return Err(LedgerError::Conflict(
+                        "CFD recovery requires an in-doubt operation".to_owned(),
+                    ));
+                }
+                fence.claim(tx)?;
+                Ok(row)
+            })?;
+            (row, fence)
+        };
+        let binding = RecordedBinding::parse(&row).ok_or_else(|| {
+            OperationRejection::Executor(super::model::ExecutorFault::Rejected {
+                detail: "invalid recorded operation binding".to_owned(),
+            })
+        })?;
+        let request: serde_json::Value = serde_json::from_str(&row.request_json).map_err(|_| {
+            OperationRejection::Executor(super::model::ExecutorFault::Rejected {
+                detail: "invalid recorded operation request".to_owned(),
+            })
+        })?;
+        let valid_request = (|| {
+            let arguments = request.get("arguments")?;
+            let arguments_digest = request.get("arguments_digest")?.as_str()?;
+            if Payload::from_arguments(arguments).digest.to_string() != arguments_digest
+                || request.get("executor_binding") != binding.executor_binding.as_ref() {
+                return None;
+            }
+            let ceiling = request.get("requested_ceiling")?;
+            let charged = super::model::charged_invocation();
+            let mut material = serde_json::json!({
+                "capsule_id": row.capsule_id, "correlation_id": row.correlation_id,
+                "charged": {"requests": charged.requests, "stops": charged.stops, "spend": charged.spend},
+                "requested_ceiling": ceiling,
+                "seat": row.seat_id, "token": row.token_id, "session": row.session_id,
+                "policy_digest": row.policy_digest, "arguments_digest": arguments_digest,
+            });
+            if let Some(executor_binding) = &binding.executor_binding {
+                material.as_object_mut()?.insert("executor_binding".to_owned(), executor_binding.clone());
+            }
+            Some(Digest::hash(material.to_string().as_bytes()).to_string() == row.request_digest)
+        })().unwrap_or(false);
+        if !valid_request {
+            return Err(OperationRejection::Executor(
+                super::model::ExecutorFault::Rejected {
+                    detail: "recorded operation request digest mismatch".to_owned(),
+                },
+            ));
+        }
+        if binding.executor_id != self.executor.id() || row.executor_id != self.executor.id() {
+            return Err(OperationRejection::Executor(
+                super::model::ExecutorFault::Rejected {
+                    detail: "recorded executor does not match recovery executor".to_owned(),
+                },
+            ));
+        }
+        let evidence = self
+            .executor
+            .recover_cfd(&row)
+            .map_err(OperationRejection::Executor)?;
+        let now = utc(self.now_ms())?;
+        let mut ledger = self.lock_store()?;
+        ledger.with_tx(|tx| {
+            fence.check(tx)?;
+            let live = store::operation_row(tx, correlation_id.as_str())?.ok_or_else(|| {
+                LedgerError::NotFound {
+                    kind: "operation",
+                    id: correlation_id.to_string(),
+                }
+            })?;
+            if live.effect_state != EffectState::InDoubt
+                || live.binding_digest != row.binding_digest
+                || live.request_digest != row.request_digest
+                || live.request_json != row.request_json
+                || live.prepared_binding != row.prepared_binding
+                || live.evidence_digest != row.evidence_digest
+                || live.recovery_evidence_digest != row.recovery_evidence_digest
+            {
+                return Err(LedgerError::Conflict(
+                    "operation changed during CFD recovery".to_owned(),
+                ));
+            }
+            store::commit_recovered_operation(
+                tx,
+                correlation_id.as_str(),
+                &evidence.to_string(),
+                now,
+            )?;
+            Ok(())
+        })?;
+        let (correlation_id, operation_id, capsule_id) = Self::parse_row_ids(&row)?;
+        Ok(OperationDecision {
+            correlation_id,
+            operation_id,
+            capsule_id,
+            state: EffectState::Committed,
+            replay: false,
+        })
+    }
+
     pub fn reconcile(
         &self,
         fresh: FreshAuthority,
@@ -104,7 +225,22 @@ impl OperationAuthority {
             }
             store::nonterminal_rows(ledger.connection(), Some(capsule_id.as_str()))?
         };
-        let observations = self.observe_rows(&rows)?;
+        let mut fences = BTreeMap::new();
+        {
+            let mut ledger = self.lock_store()?;
+            for row in &rows {
+                if let Some(mut fence) = ledger.try_operation_fence(&row.correlation_id)? {
+                    ledger.with_tx(|tx| fence.claim(tx))?;
+                    fences.insert(row.correlation_id.clone(), fence);
+                }
+            }
+        }
+        let guarded_rows: Vec<_> = rows
+            .iter()
+            .filter(|row| fences.contains_key(&row.correlation_id))
+            .cloned()
+            .collect();
+        let observations = self.observe_rows(&guarded_rows)?;
         // Revalidate after observation because another close or stop may have changed the lease.
         let mut ledger = self.lock_store()?;
         self.check_authority(authority, now_ms)?;
@@ -143,12 +279,17 @@ impl OperationAuthority {
             }
         }
         for row in &fresh_rows {
+            let Some(fence) = fences.get(&row.correlation_id) else {
+                unresolved += 1;
+                continue;
+            };
             let resolved = self.settle_row(
                 row,
                 observations.get(&row.correlation_id),
                 mode,
                 now_ms,
                 &mut ledger,
+                fence,
             )?;
             match resolved {
                 Some(_) => drained += 1,
@@ -429,6 +570,20 @@ impl OperationAuthority {
             state,
             replay,
         };
+        if matches!(
+            row.effect_state,
+            EffectState::Committed | EffectState::Aborted
+        ) {
+            return Ok(decision(row.effect_state, true));
+        }
+        let fence = {
+            let mut ledger = self.lock_store()?;
+            let Some(mut fence) = ledger.try_operation_fence(&row.correlation_id)? else {
+                return Ok(decision(row.effect_state, true));
+            };
+            ledger.with_tx(|tx| fence.claim(tx))?;
+            fence
+        };
         match row.effect_state {
             EffectState::Committed | EffectState::Aborted => {
                 return Ok(decision(row.effect_state, true));
@@ -446,6 +601,7 @@ impl OperationAuthority {
                     return Ok(decision(EffectState::Prepared, true));
                 }
                 ledger.with_tx(|tx| {
+                    fence.check(tx)?;
                     store::transition_operation(
                         tx,
                         &row.correlation_id,
@@ -506,6 +662,7 @@ impl OperationAuthority {
         }
         // Preserve captured evidence; the predicted post-world hash is not an execution receipt.
         ledger.with_tx(|tx| {
+            fence.check(tx)?;
             store::transition_operation(tx, &row.correlation_id, row.effect_state, next, None, now)
         })?;
         Ok(decision(next, true))
@@ -580,11 +737,13 @@ impl OperationAuthority {
         mode: CloseMode,
         now_ms: u64,
         ledger: &mut MutexGuard<'_, Ledger>,
+        fence: &odin_ledger::OperationFence,
     ) -> AuthorityResult<Option<EffectState>> {
         let now = utc(now_ms)?;
         match row.effect_state {
             EffectState::Prepared => {
                 let outcome = ledger.with_tx(|tx| {
+                    fence.check(tx)?;
                     store::transition_operation(
                         tx,
                         &row.correlation_id,
@@ -620,6 +779,7 @@ impl OperationAuthority {
                 return Ok(None);
             }
             ledger.with_tx(|tx| {
+                fence.check(tx)?;
                 store::transition_operation(
                     tx,
                     &row.correlation_id,
@@ -643,6 +803,7 @@ impl OperationAuthority {
                 }
                 // Preserve captured evidence rather than replacing it with the observed world hash.
                 ledger.with_tx(|tx| {
+                    fence.check(tx)?;
                     store::transition_operation(
                         tx,
                         &row.correlation_id,
@@ -659,6 +820,7 @@ impl OperationAuthority {
                     && (matches!(observed, PreWorld::Digest(_)) || expected.is_some()) =>
             {
                 ledger.with_tx(|tx| {
+                    fence.check(tx)?;
                     store::transition_operation(
                         tx,
                         &row.correlation_id,

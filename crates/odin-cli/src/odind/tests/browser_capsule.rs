@@ -432,3 +432,56 @@ async fn browser_failure_keeps_huginn_and_hermes_actually_serving() {
 async fn clean_browser_terminal_keeps_huginn_and_hermes_actually_serving() {
     browser_terminal_keeps_huginn_and_hermes_serving(Ok(()), "clean browser terminal").await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn published_simulation_frame_preview_uses_device_bound_ticket() {
+    use odin_domain::huginn::{ContentSource, ContentTicketRequest};
+    use odin_huginn::client::{
+        RemoteClient, DeviceCredential as ClientCredential, EndpointTransport,
+        MemoryCredentialStore,
+    };
+    use std::num::NonZeroU64;
+
+    let fixture = gate_fixture().await;
+    let snapshot = fixture.pin.current();
+    let inputs = RuntimeInputs::parse(&fixture.config, &snapshot.objects).expect("runtime inputs");
+    let published = FsPublishedArtifactStore::open(
+        fixture.config.paths.state_root.join("huginn/published"),
+        inputs.render_session,
+        inputs.file_publish_lane,
+        inputs.render_publish_lane,
+    )
+    .expect("published store");
+    let bytes = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/></svg>"#.to_vec();
+    let frame = published
+        .publish_simulation_frame("mission.svg", "image/svg+xml", bytes.clone())
+        .await
+        .expect("publish simulation frame");
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("free port");
+    let address = probe.local_addr().expect("address");
+    drop(probe);
+    let (serve, bearer) = arm_real_huginn_service(&fixture, address).await;
+    let server = tokio::spawn(serve);
+    assert_eq!(first_authenticated_bootstrap(address, &bearer).await.0, 200);
+    let client = RemoteClient::new(
+        EndpointTransport::new(format!("http://{address}").parse().unwrap()).unwrap(),
+        MemoryCredentialStore::new(ClientCredential::parse_base64url(&bearer).unwrap()),
+    );
+    let request = |max_bytes| ContentTicketRequest {
+        command_id: odin_cli::authority_provision::random_command_uuid().unwrap(),
+        source: ContentSource::Artifact(frame.artifact_id.clone()),
+        max_bytes: NonZeroU64::new(max_bytes).unwrap(),
+    };
+    assert_eq!(
+        client
+            .download_ticket(request(odin_registry::schema::MAX_FRAME_BYTES))
+            .await
+            .unwrap(),
+        bytes
+    );
+    assert!(
+        client.download_ticket(request(1)).await.is_err(),
+        "ticket issuer must enforce byte ceiling"
+    );
+    server.abort();
+}

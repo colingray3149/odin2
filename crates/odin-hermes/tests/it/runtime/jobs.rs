@@ -87,7 +87,7 @@ fn reports_due_together_wake_one_turn() {
             board
                 .start(
                     reserved,
-                    "brain_search",
+                    "knowledge_search",
                     &json!({ "query": query }),
                     Duration::from_secs(180),
                     Instant::now(),
@@ -216,7 +216,7 @@ fn wakes_that_would_only_wake_the_model_for_nothing_are_dropped() {
             .0
     };
     let launched = start("kube_workload_create");
-    let searched = start("brain_search");
+    let searched = start("knowledge_search");
     board.finish(
         &launched,
         Ok(r#"{"status":"accepted","runId":"run:1738000000000:pod"}"#.to_owned()),

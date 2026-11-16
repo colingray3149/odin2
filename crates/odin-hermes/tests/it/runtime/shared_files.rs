@@ -160,3 +160,102 @@ fn a_seat_lists_the_declared_folders_and_shares_one_file_with_its_text() {
         .to_string();
     assert!(unbound.contains("a bound seat is required"), "{unbound}");
 }
+
+/// The daemon's write, reduced to a folder: the name lands once, never twice.
+struct Incoming(PathBuf);
+
+impl HostFileRoute for Incoming {
+    fn roots(&self, _: &str) -> Vec<Value> {
+        vec![json!({ "root": "cfd-incoming", "host": "mini", "name": "CFD incoming" })]
+    }
+
+    fn list(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<&str>,
+        _: Option<&str>,
+    ) -> Result<(Vec<Value>, bool), String> {
+        unreachable!("a copy lists nothing")
+    }
+
+    fn read(&self, _: &str, _: &str, _: &str) -> Result<(String, String, std::fs::File), String> {
+        unreachable!("a copy reads no root")
+    }
+
+    fn save(
+        &self,
+        _: &str,
+        _: Option<&str>,
+        _: Option<&str>,
+        _: &str,
+        _: &mut std::fs::File,
+        _: Option<&odin_hermes::runtime::shared_files::RootSource>,
+    ) -> Result<Value, String> {
+        unreachable!("a copy is never numbered")
+    }
+
+    fn save_status(&self, _: &str, _: &str) -> Result<Value, String> {
+        unreachable!("a copy is never queued")
+    }
+
+    fn save_new(
+        &self,
+        _: &str,
+        root: &str,
+        name: &str,
+        source: &mut std::fs::File,
+    ) -> Result<Value, String> {
+        assert_eq!(root, "cfd-incoming");
+        let mut file = std::fs::File::create_new(self.0.join(name))
+            .map_err(|_| format!("{name} already exists"))?;
+        let size = std::io::copy(source, &mut file).unwrap();
+        Ok(json!({ "host": "mini", "root": root, "path": name, "sizeBytes": size }))
+    }
+}
+
+#[test]
+fn intake_copy_puts_a_staged_original_into_a_root_by_name_and_refuses_bad_names_and_unstaged_intakes(
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let staged = dir.path().join("state/intake/100");
+    std::fs::create_dir_all(&staged).unwrap();
+    std::fs::write(staged.join("1-run.tdms"), b"tdms bytes").unwrap();
+    let incoming = dir.path().join("incoming");
+    std::fs::create_dir(&incoming).unwrap();
+    let runtime = gate_runtime(dir.path());
+    runtime.set_host_file_route(Arc::new(Incoming(incoming.clone())));
+    let copy = |intake: &str, name: &str| {
+        tool_named(&runtime, "intake_copy")
+            .invoke(HostInvocation {
+                scope: Scope {
+                    seat: Some("sinmara".parse().unwrap()),
+                    ..Scope::default()
+                },
+                arguments: json!({ "intake": intake, "root": "cfd-incoming", "name": name }),
+            })
+            .map_err(|error| error.to_string())
+    };
+
+    let copied = copy("100/1", "shot-7.tdms").unwrap();
+    assert_eq!(copied["path"], "shot-7.tdms");
+    assert_eq!(
+        std::fs::read(incoming.join("shot-7.tdms")).unwrap(),
+        b"tdms bytes"
+    );
+
+    for name in ["a/b.tdms", "../up.tdms", "..", " "] {
+        let refused = copy("100/1", name).unwrap_err();
+        assert!(
+            refused.contains("one plain file name") || refused.contains("name is required"),
+            "{name}: {refused}"
+        );
+    }
+    let unstaged = copy("100/2", "other.tdms").unwrap_err();
+    assert!(
+        unstaged.contains("intake 100/2 holds no staged file"),
+        "{unstaged}"
+    );
+    let taken = copy("100/1", "shot-7.tdms").unwrap_err();
+    assert!(taken.contains("already exists"), "{taken}");
+}

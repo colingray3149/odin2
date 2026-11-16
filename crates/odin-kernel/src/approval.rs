@@ -5,8 +5,8 @@ pub use odin_ledger::approval::{
     requires_owner_preview, Approval, ApprovalDecision, ApprovalScope, DecisionIntake, NewApproval,
 };
 use odin_ledger::{
-    approval::{ConsumeApproval, DecideApproval, ExpireApproval},
-    decode_utc, Ledger, LedgerError,
+    approval::{ConsumeApproval, DecideApproval},
+    Ledger, LedgerError,
 };
 use time::OffsetDateTime;
 
@@ -74,19 +74,6 @@ pub enum DecisionOutcome {
     Approved(Approval),
     Denied(DenialEvidence),
     Redirect(ApprovalRedirect),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ExpireOutcome {
-    Expired(Approval),
-    NotDue(Approval),
-    Redirect(ApprovalRedirect),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExpirySweep {
-    pub expired: Vec<Approval>,
-    pub redirects: Vec<ApprovalRedirect>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -193,83 +180,6 @@ impl<'ledger> ApprovalGate<'ledger> {
             decided_at,
             intake,
         )
-    }
-
-    /// Expires one approval at the revision observed by the caller.
-    pub fn expire(
-        &mut self,
-        approval_id: &ApprovalId,
-        expected_revision: i64,
-        now: OffsetDateTime,
-    ) -> KernelResult<ExpireOutcome> {
-        match self
-            .ledger
-            .expire_approval(approval_id, now, expected_revision)
-        {
-            Ok(ExpireApproval::Expired(approval)) => Ok(ExpireOutcome::Expired(approval)),
-            Ok(ExpireApproval::NotDue(approval)) => Ok(ExpireOutcome::NotDue(approval)),
-            Ok(ExpireApproval::NotFound) => {
-                Ok(ExpireOutcome::Redirect(ApprovalRedirect::NotFound {
-                    approval_id: approval_id.clone(),
-                }))
-            }
-            Ok(ExpireApproval::Final(approval)) => {
-                Ok(ExpireOutcome::Redirect(redirect_for_status(approval)?))
-            }
-            Err(error) => match stale_redirect(approval_id, error) {
-                Ok(redirect) => Ok(ExpireOutcome::Redirect(redirect)),
-                Err(error) => Err(error),
-            },
-        }
-    }
-
-    pub fn sweep_expired(&mut self, now: OffsetDateTime) -> KernelResult<ExpirySweep> {
-        let due = {
-            let mut statement = self
-                .ledger
-                .connection()
-                .prepare(
-                    "SELECT approval_id, revision, expires_at
-                     FROM approvals
-                     WHERE status IN ('requested', 'approved')
-                     ORDER BY approval_id",
-                )
-                .map_err(LedgerError::from)?;
-            let rows = statement
-                .query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                })
-                .map_err(LedgerError::from)?;
-            let mut due = Vec::new();
-            for row in rows {
-                let (raw_id, revision, raw_expiry) = row.map_err(LedgerError::from)?;
-                if now >= decode_utc(&raw_expiry)? {
-                    let approval_id = ApprovalId::parse(&raw_id)
-                        .map_err(|error| invalid_record(error.to_string()))?;
-                    due.push((approval_id, revision));
-                }
-            }
-            due
-        };
-
-        let mut sweep = ExpirySweep {
-            expired: Vec::with_capacity(due.len()),
-            redirects: Vec::new(),
-        };
-        for (approval_id, revision) in due {
-            match self.expire(&approval_id, revision, now)? {
-                ExpireOutcome::Expired(approval) => sweep.expired.push(approval),
-                ExpireOutcome::NotDue(approval) => {
-                    sweep.redirects.push(redirect_for_status(approval)?);
-                }
-                ExpireOutcome::Redirect(redirect) => sweep.redirects.push(redirect),
-            }
-        }
-        Ok(sweep)
     }
 
     /// R3 requires approval; lower risk classes do not consume it.

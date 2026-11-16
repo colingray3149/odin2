@@ -11,6 +11,7 @@
 mod devices;
 mod hands;
 mod keys;
+mod live;
 mod niri;
 mod shot;
 mod structure;
@@ -54,31 +55,40 @@ pub struct Request {
     pub shot: Option<ShotOf>,
 }
 
+/// A window by its niri id, or by app or title ("discord", "palworld"), or
+/// "focused", so a step needs no lookup first.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum WindowRef {
+    Id(u64),
+    Name(String),
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "do", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Step {
     Focus {
-        window: u64,
+        window: WindowRef,
     },
     Workspace {
         index: u8,
         output: Option<String>,
     },
     Move {
-        window: u64,
+        window: WindowRef,
         workspace: Option<u8>,
         output: Option<String>,
     },
     Size {
-        window: u64,
+        window: WindowRef,
         width: Option<String>,
         height: Option<String>,
     },
     Fullscreen {
-        window: u64,
+        window: WindowRef,
     },
     Close {
-        window: u64,
+        window: WindowRef,
     },
     /// These windows top to bottom in one column, in this order.
     Column {
@@ -270,6 +280,11 @@ struct Desk {
     ask: Option<String>,
     last_shot: Option<Shot>,
     shots: u64,
+    /// The output before the last whole-computer switch, for a swap back.
+    previous_output: Option<String>,
+    /// `pactl subscribe`, and the audio state read at its change count.
+    pulse: live::Signal,
+    audio: live::Cached<Value>,
     headless: Option<devices::Headless>,
 }
 
@@ -299,8 +314,13 @@ pub fn serve(input: impl BufRead, output: impl Write) -> Result<(), String> {
         ask: None,
         last_shot: None,
         shots: 0,
+        previous_output: None,
         headless: None,
+        pulse: live::Signal::default(),
+        audio: live::Cached::default(),
     };
+    desk.niri.follow_events();
+    desk.follow_audio();
     desk.serve_lines(&private_file(&runtime_dir), input, output)
 }
 
@@ -620,7 +640,9 @@ impl Desk {
         if request.steps.is_empty() {
             return Ok(());
         }
-        if !self.watch.armed() {
+        // Only steps that drive input arm the mouse stop; IPC verbs (audio,
+        // windows, media, monitors, lights) leave the owner his mouse.
+        if !self.watch.armed() && request.steps.iter().any(watch::drives_input) {
             self.watch.arm();
             self.notify();
         }
@@ -686,6 +708,15 @@ impl Desk {
         let label = |desk: &Self, id: u64| -> Result<String, String> {
             Ok(desk.niri.desktop()?.window(id)?.label())
         };
+        // One niri read resolves a window reference to its id and label.
+        let named = |desk: &Self, window: &WindowRef| -> Result<(u64, String), String> {
+            let desktop = desk.niri.desktop()?;
+            let found = match window {
+                WindowRef::Id(id) => desktop.window(*id)?,
+                WindowRef::Name(name) => desktop.window_named(name)?,
+            };
+            Ok((found.id, found.label()))
+        };
         Ok(match step {
             Step::Display { on } => {
                 self.niri.action(display_action(*on))?;
@@ -695,10 +726,12 @@ impl Desk {
                 )
             }
             Step::Focus { window } => {
-                let name = label(self, *window)?;
+                let (window, name) = named(self, window)?;
                 self.niri
                     .action(json!({ "FocusWindow": { "id": window } }))?;
-                format!("focused {name}")
+                self.confirm(&format!("focused {name}"), |desktop| {
+                    desktop.window(window).is_ok_and(|shown| shown.is_focused)
+                })
             }
             Step::Workspace { index, output } => {
                 let output = output
@@ -721,7 +754,7 @@ impl Desk {
                 workspace,
                 output,
             } => {
-                let name = label(self, *window)?;
+                let (window, name) = named(self, window)?;
                 if workspace.is_none() && output.is_none() {
                     return Err(Failure::Error(
                         "move needs a workspace or an output".to_owned(),
@@ -755,7 +788,7 @@ impl Desk {
                 width,
                 height,
             } => {
-                let name = label(self, *window)?;
+                let (window, name) = named(self, window)?;
                 if let Some(width) = width {
                     let change = niri::size_change(width)?;
                     self.niri
@@ -773,7 +806,7 @@ impl Desk {
                 )
             }
             Step::Fullscreen { window } => {
-                let name = label(self, *window)?;
+                let (window, name) = named(self, window)?;
                 self.niri
                     .action(json!({ "FullscreenWindow": { "id": window } }))?;
                 format!("toggled fullscreen on {name}")
@@ -818,10 +851,12 @@ impl Desk {
                 format!("placed {} side by side", names.join(", "))
             }
             Step::Close { window } => {
-                let name = label(self, *window)?;
+                let (window, name) = named(self, window)?;
                 self.niri
                     .action(json!({ "CloseWindow": { "id": window } }))?;
-                format!("closed {name}")
+                self.confirm(&format!("closed {name}"), |desktop| {
+                    desktop.window(window).is_err()
+                })
             }
             Step::Launch { app } => {
                 let command = self.desktop_entry(app)?;
@@ -1006,64 +1041,6 @@ impl Desk {
             std::thread::sleep(STOP_CHECK_INTERVAL.min(until - Instant::now()));
         }
         Ok(())
-    }
-
-    /// Waits until a window matching `app` and/or `title` (substrings) is
-    /// open, or with `gone` until none is; at most 120 s.
-    fn wait_for(
-        &self,
-        app: &Option<String>,
-        title: &Option<String>,
-        gone: bool,
-        seconds: u32,
-    ) -> Result<String, Failure> {
-        if app.is_none() && title.is_none() {
-            return Err(Failure::Error("waitFor needs an app or a title".to_owned()));
-        }
-        let contains = |field: &Option<String>, wanted: &Option<String>| {
-            wanted.as_ref().is_none_or(|wanted| {
-                field
-                    .as_ref()
-                    .is_some_and(|field| field.to_lowercase().contains(&wanted.to_lowercase()))
-            })
-        };
-        let started = Instant::now();
-        let until = started + Duration::from_secs(u64::from(seconds.min(120)));
-        loop {
-            self.watch.check().map_err(Failure::Stopped)?;
-            let desktop = self.niri.desktop()?;
-            let found = desktop
-                .windows
-                .iter()
-                .find(|window| contains(&window.app_id, app) && contains(&window.title, title));
-            match (found, gone) {
-                (Some(window), false) => {
-                    return Ok(format!(
-                        "{} appeared after {} ms",
-                        window.label(),
-                        started.elapsed().as_millis()
-                    ))
-                }
-                (None, true) => {
-                    return Ok(format!(
-                        "it was gone after {} ms",
-                        started.elapsed().as_millis()
-                    ))
-                }
-                _ if Instant::now() >= until => {
-                    return Err(Failure::Error(format!(
-                        "after {} s {}",
-                        seconds.min(120),
-                        if gone {
-                            "the window is still open"
-                        } else {
-                            "no such window appeared"
-                        }
-                    )))
-                }
-                _ => std::thread::sleep(WINDOW_MATCH_POLL_INTERVAL),
-            }
-        }
     }
 
     /// Text beyond the US keys goes through the virtual-keyboard protocol.
@@ -1425,7 +1402,10 @@ mod fixture {
             ask: None,
             last_shot: None,
             shots: 0,
+            previous_output: None,
             headless: None,
+            pulse: crate::live::Signal::default(),
+            audio: crate::live::Cached::default(),
         }
     }
 }
@@ -1498,10 +1478,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         script(dir.path(), "loginctl", "echo no");
         script(dir.path(), "notifySend", "true");
+        script(dir.path(), "wtype", "cat >/dev/null");
         let mut desk = desk(dir.path());
         let step = |ask: &str| json!({"ask": ask, "steps": [{"do": "wait", "ms": 0}]});
+        let typing = json!({"ask": "a", "steps": [{"do": "type", "text": "x"}]});
         let private = private_file(dir.path());
+        // A wait alone does not arm the stop; typing does.
         assert_eq!(replies(&mut desk, &private, &[step("a")])[0]["ok"], true);
+        assert!(!desk.watch.armed());
+        assert_eq!(replies(&mut desk, &private, &[typing])[0]["ok"], true);
         desk.watch.stop(|| "the mouse moved".to_owned());
         let stopped = replies(&mut desk, &private, &[step("a")])[0].clone();
         assert_eq!(stopped["ok"], false);

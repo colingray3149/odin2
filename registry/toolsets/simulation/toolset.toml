@@ -1,0 +1,9 @@
+schema = "odin.registry.v1"
+kind = "toolset"
+enabled = true
+description = "What running pods show while they run: stage, counters, checkpoints, exports so far, and their latest frame."
+examples = [
+  'simulation {op: read}',
+  'simulation {op: read, mission, exports: true}',
+  'simulation {op: frame, mission}',
+]

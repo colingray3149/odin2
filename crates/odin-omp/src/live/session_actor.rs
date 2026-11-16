@@ -837,6 +837,11 @@ async fn run_actor(
                                 "ended by its delegator; its teardown was not proven: {error}"
                             ),
                         };
+                        tracing::info!(
+                            "odind: session ended session={} previous={:?} reason={reason}",
+                            snapshot.session_id,
+                            snapshot.state
+                        );
                         append_body(
                             &summary,
                             &ledger,

@@ -304,6 +304,7 @@ fn r3_first_dispatch_mints_durable_request_then_retry_consumes_once() {
     // -- The owner decides through the same ledger gate the CLI uses.
     {
         let mut ledger = fixture.ledger.lock().expect("ledger lock");
+        let decided_at = super::fixture::decided_within_deadline(&ledger, approval_id);
         let mut gate = ApprovalGate::new(&mut ledger);
         match gate
             .decide(
@@ -313,7 +314,7 @@ fn r3_first_dispatch_mints_durable_request_then_retry_consumes_once() {
                     evidence_ref: Some("operator:fixture".to_owned()),
                 },
                 "fixture-operator",
-                OffsetDateTime::now_utc(),
+                decided_at,
             )
             .expect("owner decision settles")
         {
@@ -804,6 +805,7 @@ fn r2_operator_contract_follows_the_r3_mint_consume_and_replay_law() {
     // -- The owner decides through the same ledger gate the CLI uses.
     {
         let mut ledger = fixture.ledger.lock().expect("ledger lock");
+        let decided_at = super::fixture::decided_within_deadline(&ledger, approval_id);
         let mut gate = ApprovalGate::new(&mut ledger);
         match gate
             .decide(
@@ -813,7 +815,7 @@ fn r2_operator_contract_follows_the_r3_mint_consume_and_replay_law() {
                     evidence_ref: Some("operator:fixture".to_owned()),
                 },
                 "fixture-operator",
-                OffsetDateTime::now_utc(),
+                decided_at,
             )
             .expect("owner decision settles")
         {

@@ -55,16 +55,17 @@ pub(super) async fn compose(
         .iter()
         .flat_map(|seat| seat.launch_options.iter())
         .any(|option| option.harness.is_some());
+    let objects = odin_registry::SnapshotStore::new(&config.paths.registry_snapshot)
+        .load_verified()
+        .map(|snapshot| snapshot.objects)
+        .map_err(|error| format!("registry snapshot for harness routes: {error}"));
     let (harness_routes, project_accounts) = if !names_a_harness {
         (Vec::new(), ProjectAccounts::new())
     } else {
-        let objects = odin_registry::SnapshotStore::new(&config.paths.registry_snapshot)
-            .load_verified()
-            .map(|snapshot| snapshot.objects)
-            .map_err(|error| format!("registry snapshot for harness routes: {error}"))?;
+        let objects = objects.as_ref().map_err(Clone::clone)?;
         (
-            crate::harness::harness_routes(&config.seats, &objects)?,
-            crate::harness::project_accounts(&objects),
+            crate::harness::harness_routes(&config.seats, objects)?,
+            crate::harness::project_accounts(objects),
         )
     };
     for route in &harness_routes {
@@ -143,11 +144,136 @@ pub(super) async fn compose(
         Some(server) => harness_launcher.with_kernel_mcp(server),
         None => harness_launcher,
     };
-    Ok((
+    // Without a snapshot no seat is known to declare loom (harness routes refuse above).
+    let launcher = loom_launcher(
+        config,
+        objects.as_deref().unwrap_or_default(),
         Arc::new(harness_launcher),
+        production_factory,
+        incident_desk,
+    )?;
+    Ok((
+        launcher,
         KernelMcpBridge {
             listeners: mcp_handles,
             dispatches,
         },
     ))
+}
+
+/// Seats declaring `[live.loom]` run their own sessions on loom; the rest
+/// (and every workload and pod review) keep the harness launcher.
+fn loom_launcher(
+    config: &OdindConfig,
+    objects: &[odin_registry::RegistryObject],
+    inner: Arc<dyn LiveSessionLauncher>,
+    production_factory: &Arc<ProductionBridgeRuntimeFactory>,
+    incident_desk: &Arc<IncidentDesk>,
+) -> Result<Arc<dyn LiveSessionLauncher>, String> {
+    use odin_omp::loom::{Gateway, LoomLane, LoomLauncher};
+    let mut seats = std::collections::BTreeMap::new();
+    let mut lanes = std::collections::BTreeMap::new();
+    let image_input = available_image_input(&config.paths.registry_root);
+    for object in objects {
+        match &object.config {
+            odin_registry::ObjectConfig::Seat(seat) if seat.enabled => {
+                if let Some(loom) = seat.live.as_ref().and_then(|live| live.loom.clone()) {
+                    let id = odin_domain::SeatId::new(object.id.as_str()).map_err(|error| {
+                        format!("invalid registry seat ID {:?}: {error}", object.id)
+                    })?;
+                    seats.insert(id, loom);
+                }
+            }
+            odin_registry::ObjectConfig::Model(card) if card.enabled => {
+                lanes.insert(
+                    card.id.clone(),
+                    LoomLane {
+                        effort: card
+                            .thinking
+                            .as_ref()
+                            .and_then(|thinking| thinking.default.clone())
+                            .filter(|_| card.reasoning_effort),
+                        replay_reasoning: card.replay_reasoning,
+                        image: card.image.unwrap_or_else(|| {
+                            card.served
+                                .as_deref()
+                                .is_some_and(|served| image_input.contains(served))
+                        }),
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+    if seats.is_empty() {
+        return Ok(inner);
+    }
+    let gateway = config
+        .hermes
+        .as_ref()
+        .and_then(|hermes| hermes.model_gateway.clone())
+        .ok_or_else(|| "hermes.model_gateway is not configured".to_owned())
+        .and_then(|url| {
+            std::env::var("LITELLM_MASTER_KEY")
+                .ok()
+                .filter(|key| !key.is_empty())
+                .map(|key| Gateway { url, key })
+                .ok_or_else(|| "LITELLM_MASTER_KEY is not set for odind on this host".to_owned())
+        });
+    if let Err(reason) = &gateway {
+        tracing::error!("loom seats cannot open: {reason}");
+    }
+    tracing::info!(
+        "loom seats={}",
+        seats
+            .keys()
+            .map(|seat| seat.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    Ok(Arc::new(
+        LoomLauncher::new(
+            inner,
+            production_factory.clone(),
+            seats,
+            gateway,
+            lanes,
+            config.paths.state_root.join("loom"),
+        )
+        .with_incidents(Arc::new(crate::harness::DeskIncidentSink(Arc::clone(
+            incident_desk,
+        )))),
+    ))
+}
+
+/// AVAILABLE selectors whose catalog entry takes image input; a card's own
+/// `image` overrides it. An unreadable catalog means no image input, logged.
+fn available_image_input(registry_root: &std::path::Path) -> std::collections::BTreeSet<String> {
+    let path = registry_root.join(odin_registry::MODELS_AVAILABLE);
+    let catalog = std::fs::read_to_string(&path)
+        .map_err(|error| error.to_string())
+        .and_then(|text| {
+            serde_json::from_str::<serde_json::Value>(&text).map_err(|error| error.to_string())
+        });
+    let catalog = match catalog {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            tracing::warn!(
+                "loom: {} unreadable, no card takes images: {error}",
+                path.display()
+            );
+            return std::collections::BTreeSet::new();
+        }
+    };
+    catalog["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|entry| {
+            entry["input"]
+                .as_array()
+                .is_some_and(|input| input.iter().any(|kind| kind == "image"))
+        })
+        .filter_map(|entry| entry["selector"].as_str().map(str::to_owned))
+        .collect()
 }

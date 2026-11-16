@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"required":["lease_id","dry_run"],"properties":{"lease_id":{"type":"string","minLength":1,"maxLength":128},"dry_run":{"type":"boolean"}}}

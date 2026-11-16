@@ -17,6 +17,7 @@ use odin_ledger::stop::{
 
 use crate::client::{KubeClient, KubeError};
 use crate::job::{bounded_label_value, JOB_LABEL_WORKER_ID, JOB_PROJECTION_ANNOTATION};
+use crate::journal::Journal;
 
 // Pace API observations while Kubernetes reaps the Job's pods.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -42,6 +43,7 @@ enum PatchOutcome {
 pub(crate) struct KubernetesJobBackend {
     client: KubeClient,
     runtime: tokio::runtime::Handle,
+    journal: Option<Journal>,
 }
 
 impl KubernetesJobBackend {
@@ -63,7 +65,16 @@ impl KubernetesJobBackend {
                 "Kubernetes job backend requires a multithreaded Tokio runtime; a current-thread runtime cannot host the blocking stop ladder",
             ));
         }
-        Ok(Self { client, runtime })
+        Ok(Self {
+            client,
+            runtime,
+            journal: None,
+        })
+    }
+
+    pub(crate) fn with_journal(mut self, journal: Journal) -> Self {
+        self.journal = Some(journal);
+        self
     }
 
     // Yield the current worker while the captured runtime drives API requests.
@@ -102,7 +113,13 @@ impl JobWorkerBackend for KubernetesJobBackend {
         worker_id: &WorkerId,
         identity: &JobWorkerIdentity,
     ) -> Result<JobReleaseEvidence, JobWorkerBackendFault> {
-        self.run(release_worker(&self.client, worker_id, identity))?
+        let journal = self
+            .journal
+            .as_ref()
+            .ok_or_else(|| JobWorkerBackendFault::Invalid {
+                reason: "Job release requires the durable launch journal".to_owned(),
+            })?;
+        self.run(release_worker(&self.client, journal, worker_id, identity))?
     }
 
     fn stop(
@@ -117,6 +134,7 @@ impl JobWorkerBackend for KubernetesJobBackend {
 
 async fn release_worker(
     client: &KubeClient,
+    journal: &Journal,
     worker_id: &WorkerId,
     identity: &JobWorkerIdentity,
 ) -> Result<JobReleaseEvidence, JobWorkerBackendFault> {
@@ -140,6 +158,31 @@ async fn release_worker(
         };
         verify_binding(&job, worker_id, identity)
             .map_err(|reason| JobWorkerBackendFault::Conflict { reason })?;
+        let encoded = job
+            .metadata
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.get(JOB_PROJECTION_ANNOTATION))
+            .ok_or_else(|| JobWorkerBackendFault::Invalid {
+                reason: "Job projection is missing".to_owned(),
+            })?;
+        let projection: KubeJobProjection =
+            serde_json::from_str(encoded).map_err(|error| JobWorkerBackendFault::Invalid {
+                reason: format!("invalid Job projection: {error}"),
+            })?;
+        let launch = journal
+            .load_launch(&projection.labels.run_id)
+            .map_err(|error| JobWorkerBackendFault::Unavailable {
+                reason: format!("Job launch lookup failed: {error}"),
+            })?
+            .ok_or_else(|| JobWorkerBackendFault::Invalid {
+                reason: "durable Job launch is missing".to_owned(),
+            })?;
+        if launch.labels != projection.labels || launch.job_name() != identity.job_name {
+            return Err(JobWorkerBackendFault::Conflict {
+                reason: "Job projection does not match its durable launch".to_owned(),
+            });
+        }
         match job_suspension(&job) {
             Some(false) => {
                 return Ok(JobReleaseEvidence {
@@ -175,7 +218,16 @@ async fn release_worker(
             .ok_or_else(|| JobWorkerBackendFault::Invalid {
                 reason: "Job release requires a resourceVersion".to_owned(),
             })?;
-        patch_suspend(&jobs, identity, resource_version, false, request)
+        let deadline = release_campaign_deadline(
+            launch.campaign_reservation.as_ref(),
+            launch.deadline_seconds,
+            job.spec
+                .as_ref()
+                .and_then(|spec| spec.active_deadline_seconds),
+            k8s_openapi::jiff::Timestamp::now().as_nanosecond(),
+        )
+        .map_err(|reason| JobWorkerBackendFault::Invalid { reason })?;
+        patch_suspend(&jobs, identity, resource_version, false, deadline, request)
             .await
             .map_err(|error| JobWorkerBackendFault::Unavailable {
                 reason: format!("Job release patch failed: {error}"),
@@ -243,7 +295,7 @@ async fn stop_worker(
                             && suspend_patches < MAX_SUSPEND_PATCHES
                         {
                             suspend_patches += 1;
-                            patch_suspend(&jobs, identity, &resource_version, true, request)
+                            patch_suspend(&jobs, identity, &resource_version, true, None, request)
                                 .await
                                 .map_err(|error| JobWorkerBackendFault::Unavailable {
                                     reason: format!("Job stop suspension failed: {error}"),
@@ -334,18 +386,57 @@ async fn observe_job(
     Ok(JobPresence::Exact(Box::new(job)))
 }
 
+// Kubernetes deadlines are whole seconds; round down remaining wall time so
+// the controller cannot gain the fractional second before an approved expiry.
+fn release_campaign_deadline(
+    reservation: Option<&crate::job::CampaignReservation>,
+    approved_deadline: Option<u32>,
+    existing: Option<i64>,
+    now_ns: i128,
+) -> Result<Option<i64>, String> {
+    let Some(reservation) = reservation else {
+        return Ok(None);
+    };
+    let remaining = (i128::from(reservation.expires_at_unix_seconds) * 1_000_000_000 - now_ns)
+        .div_euclid(1_000_000_000);
+    if remaining <= 0 {
+        return Err("campaign compute budget is exhausted".to_owned());
+    }
+    let approved =
+        i64::from(approved_deadline.ok_or_else(|| "campaign deadline is missing".to_owned())?);
+    let remaining = i64::try_from(remaining).unwrap_or(i64::MAX).min(approved);
+    let deadline = existing.map_or(remaining, |existing| existing.min(remaining));
+    if deadline <= 0 {
+        return Err("campaign compute budget is exhausted".to_owned());
+    }
+    Ok(Some(deadline))
+}
+
+fn suspension_patch(
+    resource_version: &str,
+    suspend: bool,
+    deadline: Option<i64>,
+) -> serde_json::Value {
+    let mut patch = serde_json::json!({
+        "metadata": { "resourceVersion": resource_version },
+        "spec": { "suspend": suspend },
+    });
+    if let Some(deadline) = deadline {
+        patch["spec"]["activeDeadlineSeconds"] = deadline.into();
+    }
+    patch
+}
+
 // resourceVersion rejects writes racing a Job controller update.
 async fn patch_suspend(
     jobs: &kube::Api<Job>,
     identity: &JobWorkerIdentity,
     resource_version: &str,
     suspend: bool,
+    deadline: Option<i64>,
     request: Duration,
 ) -> Result<PatchOutcome, KubeError> {
-    let patch = serde_json::json!({
-        "metadata": { "resourceVersion": resource_version },
-        "spec": { "suspend": suspend },
-    });
+    let patch = suspension_patch(resource_version, suspend, deadline);
     let outcome = tokio::time::timeout(
         request,
         jobs.patch(
@@ -506,4 +597,61 @@ fn verify_binding(
         return Err("Job projection annotation is bound to a different UID".to_owned());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod release_deadline_tests {
+    use super::{release_campaign_deadline, suspension_patch};
+    use crate::job::CampaignReservation;
+
+    fn reservation() -> CampaignReservation {
+        CampaignReservation {
+            approved_node: "node".to_owned(),
+            core_millis_seconds: 600_000,
+            expires_at_unix_seconds: 1000,
+        }
+    }
+
+    #[test]
+    fn create_and_resume_release_use_fresh_remaining_time_atomically() {
+        let reservation = reservation();
+        let initial =
+            release_campaign_deadline(Some(&reservation), Some(300), Some(300), 900_000_000_000)
+                .unwrap();
+        assert_eq!(initial, Some(100));
+        // Staging or a pause has consumed most of the approved wall time.
+        let fresh =
+            release_campaign_deadline(Some(&reservation), Some(300), initial, 990_500_000_000)
+                .unwrap();
+        assert_eq!(fresh, Some(9));
+        assert_eq!(
+            suspension_patch("42", false, fresh),
+            serde_json::json!({
+                "metadata": {"resourceVersion": "42"},
+                "spec": {"suspend": false, "activeDeadlineSeconds": 9}
+            })
+        );
+        assert_eq!(
+            release_campaign_deadline(Some(&reservation), Some(300), Some(5), 990_000_000_000)
+                .unwrap(),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn expired_or_subsecond_campaign_cannot_release() {
+        let reservation = reservation();
+        for now in [999_500_000_000, 1_000_000_000_000, 1_001_000_000_000] {
+            assert!(
+                release_campaign_deadline(Some(&reservation), Some(300), Some(300), now).is_err()
+            );
+        }
+        assert!(
+            release_campaign_deadline(Some(&reservation), None, None, 900_000_000_000).is_err()
+        );
+        assert_eq!(
+            release_campaign_deadline(None, None, None, 1_001_000_000_000).unwrap(),
+            None
+        );
+    }
 }

@@ -179,6 +179,15 @@ impl ConversationTaskStore {
         ledger.commands()
     }
 
+    /// The unsettled task rows whose id starts with `id_prefix`, id order.
+    pub fn unsettled_tasks(
+        &self,
+        id_prefix: &str,
+    ) -> Result<Vec<Command>, odin_ledger::LedgerError> {
+        let ledger = self.ledger.lock();
+        ledger.unsettled_commands(id_prefix)
+    }
+
     /// Claims a handled decision message without creating an intent so catch-up cannot admit it again.
     pub fn mark_message_handled(
         &self,

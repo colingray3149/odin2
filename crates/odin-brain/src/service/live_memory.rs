@@ -266,6 +266,9 @@ fn task_entries(
         if project.is_some_and(|project| project.as_str() != task.project) {
             continue;
         }
+        if task.created_at_ms == 0 {
+            continue;
+        }
         let seat = task.parent_seat.as_deref().unwrap_or("an unrecorded seat");
         // The recorded answer is the outcome history carries; an ended or
         // failed worker without one stays until it is recorded.
@@ -293,6 +296,12 @@ fn task_entries(
         if project.is_some_and(|project| run.project.as_deref() != Some(project.as_str())) {
             continue;
         }
+        // Only live runs: a closed run, one whose session has stopped, or
+        // one with no readable instant is history, which search still finds.
+        let at_ms = rfc3339_ms(&run.updated_at);
+        if run.ended_at.is_some() || run.session_stopped || at_ms == 0 {
+            continue;
+        }
         let owner = match (&run.seat, &run.project) {
             (Some(seat), Some(project)) => format!(" for {seat} on {project}"),
             (Some(seat), None) => format!(" for {seat}"),
@@ -306,8 +315,8 @@ fn task_entries(
         entries.push(LiveEntry {
             id: run.run_id.clone(),
             line: format!("run {}{owner}: {}{blockers}", run.run_id, run.state),
-            open: run.ended_at.is_none(),
-            at_ms: rfc3339_ms(&run.updated_at),
+            open: true,
+            at_ms,
         });
     }
     Ok(entries)

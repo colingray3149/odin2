@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/world.weather.input.json",
+  "title": "world.weather input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "place": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A city or place name; omitted is home."
+    },
+    "when": {
+      "type": "string",
+      "minLength": 1,
+      "description": "today (default), tomorrow, a weekday, weekend, week, or YYYY-MM-DD within 7 days."
+    }
+  }
+}

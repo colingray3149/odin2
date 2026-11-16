@@ -239,7 +239,11 @@ class Supervisor:
                 pass
 
     def drain(self, key):
-        chunk = os.read(key.fileobj.fileno(), 65536)
+        try:
+            chunk = os.read(key.fileobj.fileno(), 65536)
+        except BlockingIOError:
+            # A nested pump may consume readiness before this selected key runs.
+            return
         if not chunk:
             self.selector.unregister(key.fileobj)
             key.fileobj.close()

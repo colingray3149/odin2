@@ -1,0 +1,24 @@
+schema = "odin.registry.v1"
+seat_ops = { sinmara = { toolset = "odin", op = "plan_accept", expose = "on_demand" } }
+toolset = "odin"
+op = "plan_accept"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Accept a seat session's plan. Asks the owner, with a card of the session, plan revision and objective, to accept the plan of a seat session he opened himself, so its side effects can run; his yes records the acceptance only while the plan is still exactly that."
+handler = { id = "odin_plan_accept" }
+input_schema = "schemas/capability/odin.plan_accept.input.json"
+output_schema = "schemas/capability/odin.plan_accept.output.json"
+effect_class = "R3"
+seat_tags = ["coordinator"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "operator"
+approval_decider = "owner"
+preview = "card"
+evidence_extractor = { id = "odin_plan_accept_evidence" }
+tests = [
+  "odin-omp host_tools::plan_accept::tests::colins_yes_accepts_exactly_the_plan_the_card_named",
+]

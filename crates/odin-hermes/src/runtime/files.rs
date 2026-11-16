@@ -120,18 +120,12 @@ impl HermesRuntime {
                         &attachment.filename,
                     ) =>
                 {
-                    match stage_turn_image(&self.settings.state_dir, &intake) {
-                        Ok(()) => format!(
-                            "[{owner_name} attached {} (intake {intake}) — a photo: {}]",
-                            attachment.filename,
-                            super::images::turn_image_marker(&intake)
-                        ),
-                        Err(reason) => format!(
-                            "[{owner_name} attached {} — kept as intake {intake}, but it cannot be \
-                             shown to you: {reason}]",
-                            attachment.filename
-                        ),
-                    }
+                    photo_line(
+                        owner_name,
+                        &attachment.filename,
+                        &intake,
+                        stage_turn_image(&self.settings.state_dir, &intake),
+                    )
                 }
                 Ok(None) => format!(
                     "[{owner_name} attached {} — kept as intake {intake}, no readable text]",
@@ -198,6 +192,67 @@ impl HermesRuntime {
                 .map_err(|error| error.to_string())?;
         }
         Ok(text)
+    }
+}
+
+impl HermesRuntime {
+    /// Stages photos sent with a line from another surface (the phone over
+    /// ACP) as intake `<message>/<n>`, exactly like Discord photos, and
+    /// returns the lines the conversation sees in their place.
+    pub(super) fn stage_surface_images(
+        &self,
+        message_id: &str,
+        images: &[odin_domain::huginn::ConversationImage],
+    ) -> String {
+        use base64::Engine as _;
+        let state_dir = &self.settings.state_dir;
+        let dir = intake_dir(state_dir, message_id);
+        images
+            .iter()
+            .enumerate()
+            .map(|(index, image)| {
+                let index = index + 1;
+                let intake = format!("{message_id}/{index}");
+                let filename = format!("photo-{index}.{}", extension_of(&image.mime_type));
+                let staged = if image.mime_type.starts_with("image/") {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(&image.data)
+                        .map_err(|error| format!("its data is not base64: {error}"))
+                } else {
+                    Err(format!("it is {}, not an image", image.mime_type))
+                }
+                .and_then(|bytes| {
+                    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+                        return Err(too_large());
+                    }
+                    std::fs::create_dir_all(&dir)
+                        .and_then(|()| std::fs::write(staged_path(&dir, index, &filename), bytes))
+                        .map_err(|error| error.to_string())
+                })
+                .and_then(|()| stage_turn_image(state_dir, &intake));
+                photo_line(self.owner_name(), &filename, &intake, staged)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// The line a photo leaves in the owner's turn: its marker, or why it cannot be shown.
+fn photo_line(
+    owner_name: &str,
+    filename: &str,
+    intake: &str,
+    staged: Result<(), String>,
+) -> String {
+    match staged {
+        Ok(()) => format!(
+            "[{owner_name} attached {filename} (intake {intake}) — a photo: {}]",
+            super::images::turn_image_marker(intake)
+        ),
+        Err(reason) => format!(
+            "[{owner_name} attached {filename} — kept as intake {intake}, but it cannot be \
+             shown to you: {reason}]"
+        ),
     }
 }
 
@@ -385,10 +440,11 @@ impl HermesRuntime {
                             crate::discord::MAX_FILE_BYTES >> 20
                         ))
                     })?;
-                (
-                    artifact_display_name(file_name, &media_type).map_err(unavailable)?,
-                    bytes,
-                )
+                let name = artifact_display_name(file_name, &media_type).map_err(unavailable)?;
+                // A spilled tool result named like the file it describes is refused here.
+                odin_workflows::docs::check_send(&format!("artifact {artifact}"), &name, &bytes)
+                    .map_err(unavailable)?;
+                (name, bytes)
             }
             Some(_) => {
                 return Err(HostToolError::Arguments {
@@ -433,14 +489,35 @@ impl HermesRuntime {
         // The seat's reply is the one sentence saying what it is.
         let caption = link.clone().unwrap_or_default();
         let sent_name = original.clone();
+        // An office file also goes as a PDF in the same message: a phone opens
+        // that, where Word layouts often fail.
+        let pdf =
+            odin_workflows::docs::is_office(&original).then(|| self.office_pdf(&original, &bytes));
+        let mut files = vec![(original, bytes)];
+        let mut result = json!({ "sent": sent_name });
+        match pdf {
+            Some(Ok((name, pdf, pages))) => {
+                result["pdf"] = Value::String(name.clone());
+                result["pageCount"] = json!(pages);
+                files.push((name, pdf));
+            }
+            Some(Err(why)) => {
+                return Err(unavailable(format!(
+                    "{sent_name} was not sent with its required PDF: {why}; use docs.convert to diagnose or send the PDF separately"
+                )));
+            }
+            None => {}
+        }
         let sent = super::recovery::bridge_route(async move {
-            transport
-                .send_file(&channel, &caption, &original, &bytes)
-                .await
+            let files: Vec<(&str, &[u8])> = files
+                .iter()
+                .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+                .collect();
+            transport.send_files(&channel, &caption, &files).await
         })
         .map_err(|error| unavailable(error.to_string()))?
         .map_err(|error| unavailable(error.to_string()))?;
-        let mut result = json!({ "sent": sent_name, "messageId": sent.message_id });
+        result["messageId"] = Value::String(sent.message_id);
         if let Some(note) = note {
             result["note"] = Value::String(note);
         }
@@ -448,6 +525,49 @@ impl HermesRuntime {
             result["link"] = Value::String(link);
         }
         Ok(result)
+    }
+
+    /// The PDF that rides with an office file: its name, bytes and page count,
+    /// made by docs.convert's LibreOffice path. Err says why there is none.
+    fn office_pdf(&self, original: &str, bytes: &[u8]) -> Result<(String, Vec<u8>, u32), String> {
+        let ctx = self
+            .tool_context()
+            .map_err(|why| format!("no PDF was made: {why}"))?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let call = odin_workflows::Call {
+            key: format!("file-send-pdf-{stamp}"),
+            ..odin_workflows::Call::default()
+        };
+        // LibreOffice picks its reader by extension; the PDF is named after `original`.
+        let extension = original
+            .rsplit_once('.')
+            .map_or("", |(_, extension)| extension);
+        let made = (|| {
+            let job = ctx.scratch(&call).map_err(|failure| failure.cause)?;
+            let input = job.join(format!("document.{}", extension.to_ascii_lowercase()));
+            std::fs::write(&input, bytes)
+                .map_err(|error| format!("could not stage {original}: {error}"))?;
+            let (pdf, pages) = odin_workflows::docs::office_pdf(ctx, &input, &job.join("pdf"))
+                .map_err(|failure| failure.cause)?;
+            let pdf = std::fs::read(&pdf).map_err(|error| error.to_string())?;
+            Ok::<_, String>((pdf, pages))
+        })();
+        if let Err(error) = ctx.release(&call) {
+            tracing::warn!("hermes: {} scratch not removed: {error}", call.key);
+        }
+        let (pdf, pages) = made.map_err(|why| format!("no PDF was made: {why}"))?;
+        let limit = crate::discord::MAX_FILE_BYTES;
+        if bytes.len() + pdf.len() > limit {
+            return Err(format!(
+                "no PDF was sent: with it the message would be {} MB, over Discord's {} MB",
+                (bytes.len() + pdf.len()).div_ceil(1 << 20),
+                limit >> 20
+            ));
+        }
+        let stem = original.rsplit_once('.').map_or(original, |(stem, _)| stem);
+        Ok((format!("{stem}.pdf"), pdf, pages))
     }
 
     #[allow(clippy::needless_return)] // the public build strips the branch after this return
@@ -536,8 +656,11 @@ pub(super) fn file_send_tools(runtime: &Arc<HermesRuntime>, tools: &mut Vec<Arc<
              email_attachment, files_share or a seat, or artifact:… from a Huginn upload; \
              file_name is required: the report title or company plus the date), or a photo, \
              video or document from brain search (asset: its result id, alone). The file \
-             arrives on its own; your reply is what tells him what it is. Never paste the \
-             file's text instead."
+             arrives on its own; your reply is what tells him what it is. A Word, PowerPoint \
+             or spreadsheet file also goes as a PDF in the same message (pdf, pageCount); \
+             if a PDF cannot be made, nothing is sent. When versions exist, identify the version, \
+             date and page count in your reply, checking the source rather than guessing. \
+             Never paste the file's text instead."
                     .into(),
                 parameters: odin_omp::capability_parameters!("discord.file.send"),
                 hidden: false,

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://odin.local/schemas/capability/task.steer.input.json",
   "title": "task.steer input",
-  "description": "Redirect a delegated worker, or raise one declared lane-budget dimension. A raise changes its cap without steering. The caller must be its parent or ancestor, escalation target, or an active delegated sibling with the same parent and project.",
+  "description": "Redirect a delegated worker, raise one declared lane-budget dimension, or re-accept its plan. A raise changes its cap without steering. The caller must be its parent or ancestor, escalation target, or an active delegated sibling with the same parent and project.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -30,10 +30,16 @@
         }
       },
       "required": ["kind", "value"]
+    },
+    "reaccept": {
+      "type": "boolean",
+      "const": true,
+      "description": "Hand your own accepted plan down to the worker again when its plan acceptance was voided (it says it needs an accepted plan). Only the delegating session may."
     }
   },
   "anyOf": [
     { "required": ["childSession", "message"] },
-    { "required": ["childSession", "limits"] }
+    { "required": ["childSession", "limits"] },
+    { "required": ["childSession", "reaccept"] }
   ]
 }

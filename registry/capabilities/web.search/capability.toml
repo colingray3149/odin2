@@ -1,5 +1,6 @@
 schema = "odin.registry.v1"
-toolset = "research"
+toolset = "lookup"
+op = "web"
 kind = "capability"
 enabled = true
 implementation = "web-search"

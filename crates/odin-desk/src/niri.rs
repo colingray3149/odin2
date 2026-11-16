@@ -8,10 +8,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::Deserialize;
+
+use crate::live::{Cached, Signal};
 use serde_json::{json, Value};
 
 /// How long niri has to answer one request.
 const NIRI_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Without an event, a settling wait re-reads the desktop this often.
+const SETTLE_REREAD: Duration = Duration::from_millis(250);
 
 /// A rectangle in niri's logical desktop coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,6 +91,7 @@ pub(crate) struct Output {
 }
 
 /// Everything on screen at one moment.
+#[derive(Clone)]
 pub(crate) struct Desktop {
     pub outputs: Vec<Output>,
     pub workspaces: Vec<Workspace>,
@@ -144,6 +149,59 @@ impl Desktop {
             .iter()
             .find(|window| window.id == id)
             .ok_or_else(|| format!("there is no window {id} (it may have closed)"))
+    }
+
+    /// The one window `name` means: "focused", an exact app id, or an app id
+    /// or title containing it (case ignored). Several matches prefer the
+    /// focused one; otherwise the error lists them.
+    pub(crate) fn window_named(&self, name: &str) -> Result<&Window, String> {
+        let wanted = name.trim().to_lowercase();
+        if wanted == "focused" {
+            return self
+                .windows
+                .iter()
+                .find(|window| window.is_focused)
+                .ok_or_else(|| "no window is focused".to_owned());
+        }
+        let app = |window: &Window| window.app_id.as_deref().unwrap_or("").to_lowercase();
+        let title = |window: &Window| window.title.as_deref().unwrap_or("").to_lowercase();
+        let mut found: Vec<&Window> = self
+            .windows
+            .iter()
+            .filter(|window| app(window) == wanted)
+            .collect();
+        if found.is_empty() {
+            found = self
+                .windows
+                .iter()
+                .filter(|window| app(window).contains(&wanted) || title(window).contains(&wanted))
+                .collect();
+        }
+        match found.as_slice() {
+            [one] => Ok(one),
+            [] => Err(format!(
+                "no window matches {name:?}; open: {}",
+                self.windows
+                    .iter()
+                    .map(Window::label)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            )),
+            several => several
+                .iter()
+                .find(|window| window.is_focused)
+                .copied()
+                .ok_or_else(|| {
+                    format!(
+                        "{name:?} matches several windows; name one by id: {}",
+                        several
+                            .iter()
+                            .map(|window| window.label())
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    )
+                }),
+        }
     }
 
     /// Where a window is on the desktop, if it is on screen now.
@@ -211,11 +269,58 @@ impl Desktop {
 
 pub(crate) struct Niri {
     socket: PathBuf,
+    /// niri's event stream, once followed: the desktop read at one change
+    /// count is reused until the next event.
+    events: Signal,
+    desktop: Cached<Desktop>,
 }
 
 impl Niri {
     pub(crate) fn new(socket: PathBuf) -> Self {
-        Self { socket }
+        Self {
+            socket,
+            events: Signal::default(),
+            desktop: Cached::default(),
+        }
+    }
+
+    /// Follows niri's event stream on its own connection; without it every
+    /// read asks niri again.
+    pub(crate) fn follow_events(&mut self) {
+        let stream = UnixStream::connect(&self.socket).and_then(|mut stream| {
+            writeln!(stream, "\"EventStream\"")?;
+            Ok(stream)
+        });
+        match stream {
+            Ok(stream) => self.events = Signal::from_lines("niri", BufReader::new(stream)),
+            Err(error) => eprintln!("odin-desk: niri's event stream is unavailable: {error}"),
+        }
+    }
+
+    /// niri's change signal (dead without the event stream).
+    pub(crate) fn events(&self) -> &Signal {
+        &self.events
+    }
+
+    /// Waits for `seen` (a desktop) to change into one `done` accepts, up
+    /// to `timeout`; whether it did. Without the event stream it re-reads.
+    pub(crate) fn settle(&self, timeout: Duration, done: impl Fn(&Desktop) -> bool) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let seen = self.events.version();
+            if self.desktop().is_ok_and(|desktop| done(&desktop)) {
+                return true;
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            let left = (deadline - now).min(SETTLE_REREAD);
+            match seen {
+                Some(seen) => self.events.wait_past(seen, left),
+                None => std::thread::sleep(left),
+            }
+        }
     }
 
     fn request(&self, request: &Value) -> Result<Value, String> {
@@ -257,10 +362,15 @@ impl Niri {
     }
 
     pub(crate) fn action(&self, action: Value) -> Result<(), String> {
+        self.desktop.invalidate();
         self.request(&json!({ "Action": action })).map(drop)
     }
 
     pub(crate) fn desktop(&self) -> Result<Desktop, String> {
+        self.desktop.get(&self.events, || self.read_desktop())
+    }
+
+    fn read_desktop(&self) -> Result<Desktop, String> {
         #[derive(Deserialize)]
         struct Logical {
             x: i32,
@@ -390,6 +500,35 @@ mod tests {
         let requests = fake.join().unwrap();
         assert_eq!(requests[0], json!("Outputs"));
         assert_eq!(requests[3], json!({"Action": {"FocusWindow": {"id": 3}}}));
+    }
+
+    #[test]
+    fn a_window_is_found_by_app_or_title_and_ambiguity_prefers_the_focused_one() {
+        let window = |id: u64, title: &str, app: &str, focused: bool| -> Window {
+            serde_json::from_value(json!({"id": id, "title": title, "app_id": app,
+                "workspace_id": 1, "is_focused": focused,
+                "layout": {"pos_in_scrolling_layout": null, "window_size": [800, 600],
+                           "tile_pos_in_workspace_view": null, "window_offset_in_tile": [0.0, 0.0]}}))
+            .unwrap()
+        };
+        let desktop = Desktop {
+            outputs: Vec::new(),
+            workspaces: Vec::new(),
+            windows: vec![
+                window(4, "#general | Discord", "vesktop", false),
+                window(7, "Palworld", "steam_app_1623730", false),
+                window(9, "zellij", "konsole", true),
+                window(11, "htop", "konsole", false),
+            ],
+        };
+        let id = |name: &str| desktop.window_named(name).map(|window| window.id);
+        assert_eq!(id("Vesktop"), Ok(4), "exact app id, case ignored");
+        assert_eq!(id("discord"), Ok(4), "a word of the title");
+        assert_eq!(id("palworld"), Ok(7));
+        assert_eq!(id("focused"), Ok(9));
+        assert_eq!(id("konsole"), Ok(9), "several matches: the focused one");
+        let missing = desktop.window_named("firefox").unwrap_err();
+        assert!(missing.contains("Palworld"), "{missing}");
     }
 
     #[test]

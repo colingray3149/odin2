@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/knowledge.edit.input.json",
+  "title": "knowledge.edit input",
+  "properties": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "replace",
+        "patch"
+      ]
+    },
+    "content": {
+      "type": "string",
+      "maxLength": 400000
+    },
+    "old": {
+      "type": "string",
+      "maxLength": 100000
+    },
+    "new": {
+      "type": "string",
+      "maxLength": 100000
+    },
+    "expected_sha256": {
+      "type": "string",
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "path"
+  ]
+}

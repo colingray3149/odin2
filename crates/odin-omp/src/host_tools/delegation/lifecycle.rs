@@ -8,7 +8,7 @@ use odin_domain::SessionId;
 
 use super::contracts::{
     ChildLifecycleSnapshot, ChildStopCoordinator, ChildStopRecord, ProviderFaultKind,
-    ProviderFaultOrigin, ProviderTurnFault,
+    ProviderFaultOrigin, ProviderTurnFault, CONTEXT_REFUSAL_WINDOW_EXCEEDED,
 };
 use super::links::{DelegationLink, DelegationPhase, GatewayFallback, LaneRefusal, WorkerLane};
 use super::owner::GovernedTaskOwner;
@@ -696,6 +696,37 @@ impl GovernedTaskOwner {
                     pass,
                     &format!("its fresh incarnation could not be started: {error}"),
                 )
+            }
+        }
+    }
+
+    /// Rolls a failed pod whose turn ended on its authenticated window refusal
+    /// into a fresh incarnation that resumes from its notes. The bridge refuses
+    /// once the pod's declared rollover budget is spent; the pod then settles as
+    /// partial work after its grace. `true` when the pod was rolled over.
+    pub(super) fn roll_refused_pod(&self, session: LiveSessionId) -> bool {
+        let failure = match self.control.last_failure(session) {
+            Ok(Some(failure)) if failure.code == CONTEXT_REFUSAL_WINDOW_EXCEEDED => failure,
+            Ok(_) => return false,
+            Err(error) => {
+                tracing::error!("odin-omp: failed workload {session} cause unreadable: {error}");
+                return false;
+            }
+        };
+        match self.control.rollover(session, failure.event) {
+            Ok(epoch) => {
+                tracing::warn!(
+                    "odin-omp: pod {session} rolled over its window refusal event={} epoch={epoch}",
+                    failure.event
+                );
+                true
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "odin-omp: pod {session} window refusal not rolled over event={}: {error}",
+                    failure.event
+                );
+                false
             }
         }
     }

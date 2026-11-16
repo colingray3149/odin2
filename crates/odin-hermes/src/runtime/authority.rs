@@ -808,6 +808,10 @@ pub struct WorkloadDraftAnswers {
     pub recovery: Option<serde_json::Value>,
     /// Host capabilities the pod's agent may call.
     pub tools: Option<Vec<String>>,
+    /// The profile's declared run limits; the lifetime stays `deadline_seconds`.
+    pub limits: Option<odin_domain::huginn::WorkloadLimits>,
+    /// The worker's `{cpu, memory}` reservation, verbatim.
+    pub resources: Option<serde_json::Value>,
 }
 
 /// One conversational draft request: the new profile's registry id, the

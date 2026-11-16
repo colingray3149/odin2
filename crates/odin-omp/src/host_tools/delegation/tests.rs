@@ -1124,6 +1124,56 @@ fn an_idle_pod_with_an_answer_is_settled_and_ended() {
 }
 
 #[test]
+fn a_pod_refused_on_its_window_is_rolled_over_before_it_settles() {
+    let fixture = fixture_with(true, Ok(()), 2, true);
+    let past = GovernedTaskOwner::clock_ms() - FAILED_POD_GRACE_MS - 1_000;
+    let windowed = LiveSessionId::new(uuid::Uuid::from_u128(0xc1)).expect("session");
+    let provider = LiveSessionId::new(uuid::Uuid::from_u128(0xc2)).expect("session");
+    *fixture.control.resting_pods.lock().expect("pod lock") = vec![
+        (
+            windowed,
+            "op-w".to_owned(),
+            WorkloadRest::Failed { since_ms: past },
+        ),
+        (
+            provider,
+            "op-p".to_owned(),
+            WorkloadRest::Failed { since_ms: past },
+        ),
+    ];
+    {
+        let mut failures = fixture.control.failures.lock().expect("failure lock");
+        failures.insert(
+            windowed.to_string(),
+            SessionFailure {
+                event: 209,
+                code: "context_refusal.window_exceeded".to_owned(),
+                message: "the request is larger than the window".to_owned(),
+            },
+        );
+        failures.insert(
+            provider.to_string(),
+            SessionFailure {
+                event: 210,
+                code: "provider".to_owned(),
+                message: "upstream error".to_owned(),
+            },
+        );
+    }
+    let settled = fixture.owner.settled_workloads().expect("scan");
+    assert_eq!(
+        *fixture.control.rollover_calls.lock().expect("rollover"),
+        [(windowed.to_string(), 209)],
+        "only the window refusal rolls over"
+    );
+    assert_eq!(
+        settled.iter().map(|pod| pod.session).collect::<Vec<_>>(),
+        [provider],
+        "the rolled pod is not settled; the provider failure settles past its grace"
+    );
+}
+
+#[test]
 fn a_pod_failed_past_the_grace_settles_as_failed() {
     let fixture = fixture_with(true, Ok(()), 2, true);
     let now = GovernedTaskOwner::clock_ms();
@@ -3276,7 +3326,7 @@ fn a_parent_types_slash_commands_verbatim_and_stops_its_worker() {
 fn a_launch_choice_opens_the_child_on_that_option_only_for_this_delegation() {
     let fixture = fixture_with(true, Ok(()), 2, true);
     let terminal = super::WorkerLane {
-        provider: "codex-cli".to_owned(),
+        provider: "fixture-cli".to_owned(),
         model: "fixture-model".to_owned(),
     };
     let mut asked = request(&fixture);
@@ -3285,7 +3335,7 @@ fn a_launch_choice_opens_the_child_on_that_option_only_for_this_delegation() {
     let receipt = fixture.owner.create_task(asked).expect("cross-seat ask");
     assert_eq!(
         (receipt.provider.as_str(), receipt.model.as_str()),
-        ("codex-cli", "fixture-model")
+        ("fixture-cli", "fixture-model")
     );
     let mut same_seat = request(&fixture);
     same_seat.launch = Some(terminal);
@@ -3828,6 +3878,7 @@ fn a_successor_handoff_keeps_delegated_children_running() {
                         )])
                         .expect("message"),
                         owner_text: None,
+                        wake: false,
                     },
                 },
                 key: "lane-moved".to_owned(),
@@ -4009,6 +4060,17 @@ fn provider_faults_are_classified_by_status_then_message() {
     use super::ProviderFaultKind::{ContextOverflow, RejectedKey, Stall, UsageLimit};
     for (message, status, expected) in [
         ("stream stalled after 90s", None, Some(Stall)),
+        (
+            "litellm.APIError: prepayment credits depleted",
+            Some(402),
+            Some(UsageLimit),
+        ),
+        (
+            "402 litellm.APIError: prepayment credits depleted",
+            None,
+            Some(UsageLimit),
+        ),
+        ("prepayment service unavailable", Some(503), None),
         ("upstream busy", Some(429), Some(UsageLimit)),
         ("no", Some(401), Some(RejectedKey)),
         ("no", Some(403), Some(RejectedKey)),
@@ -4117,9 +4179,7 @@ kind = "lane"
 enabled = true
 description = "Wall budget fixture lane."
 project = "odin"
-family = "engine"
 default_seat = "architect"
-queue = "interactive"
 requires_independent_review = false
 
 [limits]

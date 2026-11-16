@@ -4,30 +4,12 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
-use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
+use std::num::NonZeroU32;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
-
-use odin_atlas::{Atlas, AtlasCounts, AtlasScope, ATLAS_SCHEMA, ATLAS_VERSION};
-use odin_brain::config::EffectiveBrainPolicy;
-use odin_brain::error::BrainResult;
-use odin_brain::retrieval::{LaneEmbeddingProvider, QueryEmbedder};
-use odin_brain::service::{BrainService, BrainServiceConfig, BrainSourceConfig};
-use odin_domain::huginn::ids::ModelName;
-use odin_domain::knowledge::ids::{EmbeddingModelId, TokenizerId};
-use odin_domain::knowledge::retrieval::ModelDescriptor;
-use odin_domain::knowledge::{AtlasId, EmbeddingBackend, RetrievalMode};
-use odin_ledger::live::NewLiveSession;
-use odin_registry::schema::{
-    AccountingWindowToml, BudgetPolicyToml, ProjectToml, RegistryKind, SeatContextToml,
-    SeatKnowledgeToml, SeatLimitsToml, SeatToml, SeatToolRedirectsToml, SeatToolsToml,
-    SliceContextToml, SliceKnowledgeToml, SliceRedirectsToml, SliceToml, SliceToolRedirectsToml,
-    SliceToolsToml, REGISTRY_SCHEMA,
-};
 
 use odin_domain::knowledge::{ResourceConstraint, ToolName, ToolSchema};
 use odin_domain::operation::Limits;
@@ -44,11 +26,8 @@ use odin_ledger::Ledger;
 use serde_json::{json, Value};
 use time::OffsetDateTime;
 
-use crate::bridge::BridgeBinding;
 use crate::host_tools::binding::BrowserCapabilityTool;
-use crate::host_tools::brain::{BrainToolsSlot, READ_EVIDENCE, SEARCH_EVIDENCE};
 use crate::host_tools::executor::HostToolExecutor;
-use crate::host_tools::operations::LiveSessionBindings;
 use crate::host_tools::operations::{
     admission_digest, correlation_for, generate_signing_key, seat_operation_policy,
     session_capsule_id, DeclaredOperationCatalog, HostAdapterStatus, HostToolOperationError,
@@ -63,8 +42,6 @@ use crate::host_tools::{
     HostTool, HostToolError, HostToolRegistry, InternalBindingKey, RpcHostToolDefinition,
     ToolLoadMode,
 };
-use crate::live::runtime::brain_tools::RuntimeBrainTools;
-use crate::uri::{ExecutionBinding, ScopedUriRouter};
 use odin_domain::SeatToken;
 pub(super) const NOW_MS: u64 = 10_000;
 pub(super) const TOKEN_EXPIRES_MS: u64 = 100_000;
@@ -108,23 +85,8 @@ pub(super) const SEAT_ASK_EXTRACTOR: &str = "fixture.extract.seat_ask";
 /// in production. The per-seat capability id stays declaration data.
 pub(super) const SEAT_ASK_INPUT_SCHEMA: &str = "schemas/capability/seat.ask.input.json";
 
-/// The governed knowledge surface: the real canonical contracts and the
-/// real tool/handler identities the production brain tools register, so
-/// the fixture dispatches through `crate::host_tools::brain::register`.
-pub(super) const BRAIN_SEARCH_CAPABILITY: &str = "brain.search";
-pub(super) const BRAIN_READ_CAPABILITY: &str = "brain.read";
-pub(super) const BRAIN_RECORDS_CAPABILITY: &str = "brain";
-pub(super) const BRAIN_SEARCH_TOOL: &str = "brain_search";
-pub(super) const BRAIN_READ_TOOL: &str = "brain_read";
-pub(super) const BRAIN_RECORDS_TOOL: &str = "brain";
-const BRAIN_SEARCH_INPUT_SCHEMA: &str = "fixture.brain.search.input.json";
-const BRAIN_READ_INPUT_SCHEMA: &str = "fixture.brain.read.input.json";
-const BRAIN_RECORDS_INPUT_SCHEMA: &str = "fixture.brain.records.input.json";
-/// The atlas source identity the fixture brain composes and the session
-/// may search — declared in slice, seat, and project, wired as a real
-/// source root, and the only source the policy serves.
-pub(super) const BRAIN_ATLAS_SOURCE: &str = "atlas:fixture-brain";
-const BRAIN_PROJECT: &str = "project.fixture";
+/// The project the fixture scope binds.
+const FIXTURE_PROJECT: &str = "project.fixture";
 /// The declared bound projects of the fixture Kubert seat — the same
 /// deployment fact production Hermes renders into the listed `project`
 /// enum from the daemon's configured lane bindings. Tests that declare a
@@ -157,6 +119,10 @@ pub(super) const SIDE_EFFECT_CAPABILITY: &str = "fixture.side_effect";
 pub(super) const SIDE_EFFECT_TOOL: &str = "fixture_side_effect";
 pub(super) const SIDE_EFFECT_HANDLER: &str = "fixture.handler.side_effect";
 pub(super) const SIDE_EFFECT_EXTRACTOR: &str = "fixture.extract.side_effect";
+pub(super) const INCIDENT_CAPABILITY: &str = "incident.raise";
+pub(super) const INCIDENT_TOOL: &str = "fixture_incident";
+pub(super) const INCIDENT_HANDLER: &str = "fixture.handler.incident";
+pub(super) const INCIDENT_EXTRACTOR: &str = "fixture.extract.incident";
 /// A binding digest in the `blake3:<64 hex>` grammar.
 pub(super) const ADMITTED_IDENTITY: &str =
     "blake3:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
@@ -207,28 +173,9 @@ enum FixtureKind {
     /// capability-aware gate must treat it exactly like R3, mint on first
     /// refusal, and consume the exact approval once.
     DraftR2Operator,
-    /// The real governed knowledge surface: `brain.search` and `brain.read`
-    /// contracts on the production tool/handler identities, with the real
-    /// `RuntimeBrainTools` backend bound into the brain tool slot over a
-    /// real brain service, scoped router, and live seeded session.
-    Brain,
     /// Production `odin_plan_set` plus one ordinary R1 side effect. Plan
     /// management must write with no accepted plan; the side effect must not.
     PlanWriter,
-}
-
-pub(super) struct BrainEmbedding {
-    pub(super) mode: RetrievalMode,
-    pub(super) embedder: Arc<QueryEmbedder>,
-}
-
-/// The lane seam runtime composition wires, over one fixed query embedder.
-struct FixtureLaneEmbedding(Arc<QueryEmbedder>);
-
-impl LaneEmbeddingProvider for FixtureLaneEmbedding {
-    fn bind_lane(self: Arc<Self>, _lane: &LaneId) -> BrainResult<Arc<QueryEmbedder>> {
-        Ok(Arc::clone(&self.0))
-    }
 }
 
 #[derive(Default)]
@@ -755,13 +702,6 @@ pub(super) struct Fixture {
     pub(super) token_root: PathBuf,
     /// The fixture's retained-publication source (shared with the stack).
     pub(super) material_source: Arc<FixtureMaterialSource>,
-    /// The brain tool slot the brain kind fills with the production
-    /// backend; `None` for every other kind.
-    pub(super) _brain_slot: Option<BrainToolsSlot>,
-    /// The live execution proof of the seeded session; `None` for every
-    /// non-brain kind.
-    pub(super) execution: Option<ExecutionBinding>,
-    _brain_sessions: Option<Arc<LiveSessionBindings>>,
     /// The journal file a durable fixture reopens; `None` for the in-memory
     /// ledger every other fixture uses.
     ledger_path: Option<PathBuf>,
@@ -783,7 +723,6 @@ impl Fixture {
             None,
             SEAT_ASK_BOUND_PROJECTS,
             true,
-            None,
         )
     }
 
@@ -801,7 +740,7 @@ impl Fixture {
 
     /// The listed project enum controls admission, as in Hermes's runtime projection.
     pub(super) fn for_seat_ask_declaring(bound_projects: &'static [&'static str]) -> Self {
-        Self::assemble_with_model_surfaces(FixtureKind::SeatAsk, None, bound_projects, false, None)
+        Self::assemble_with_model_surfaces(FixtureKind::SeatAsk, None, bound_projects, false)
     }
 
     pub(super) fn for_browser_consequential() -> Self {
@@ -818,20 +757,6 @@ impl Fixture {
 
     pub(super) fn for_plan_writer() -> Self {
         Self::assemble(FixtureKind::PlanWriter, None)
-    }
-
-    pub(super) fn for_brain() -> Self {
-        Self::assemble(FixtureKind::Brain, None)
-    }
-
-    pub(super) fn for_brain_embedding(embedding: BrainEmbedding) -> Self {
-        Self::assemble_with_model_surfaces(
-            FixtureKind::Brain,
-            None,
-            SEAT_ASK_BOUND_PROJECTS,
-            false,
-            Some(embedding),
-        )
     }
 
     pub(super) fn for_draft_r2_operator() -> Self {
@@ -892,6 +817,7 @@ impl Fixture {
     /// The owner's yes to a minted request, as a conversation decision records it.
     pub(super) fn approve(&self, approval_id: &odin_domain::ApprovalId, revision: i64) {
         let mut ledger = self.ledger.lock().expect("ledger lock");
+        let decided_at = decided_within_deadline(&ledger, approval_id);
         odin_kernel::ApprovalGate::new(&mut ledger)
             .decide(
                 approval_id,
@@ -900,7 +826,7 @@ impl Fixture {
                     evidence_ref: Some("operator:fixture".to_owned()),
                 },
                 "fixture-operator",
-                OffsetDateTime::now_utc(),
+                decided_at,
             )
             .expect("owner decision settles");
     }
@@ -948,20 +874,18 @@ impl Fixture {
     }
 
     fn assemble(kind: FixtureKind, status: Option<Arc<dyn HostAdapterStatus>>) -> Self {
-        Self::assemble_with_model_surfaces(kind, status, SEAT_ASK_BOUND_PROJECTS, false, None)
+        Self::assemble_with_model_surfaces(kind, status, SEAT_ASK_BOUND_PROJECTS, false)
     }
 
     /// The single assembly site. `seat_ask_bound_projects` is the declared
     /// bound-project set rendered into the listed seat-ask model surface;
     /// every other kind ignores it. `durable` journals to a file under the
-    /// fixture root instead of memory. `brain_embedding` binds the brain
-    /// kind's embedding leg; `None` keeps it lexical.
+    /// fixture root instead of memory.
     fn assemble_with_model_surfaces(
         kind: FixtureKind,
         status: Option<Arc<dyn HostAdapterStatus>>,
         seat_ask_bound_projects: &'static [&'static str],
         durable: bool,
-        brain_embedding: Option<BrainEmbedding>,
     ) -> Self {
         let scratch = tempfile::tempdir().expect("operation fixture");
         let root = scratch.path().to_path_buf();
@@ -991,9 +915,6 @@ impl Fixture {
                 BROWSER_CONSEQUENTIAL_INPUT_SCHEMA
             }
             FixtureKind::WorkloadPublish => WORKLOAD_PUBLISH_INPUT_SCHEMA,
-            // Brain carries one schema per operation; the catalog below
-            // registers both explicitly.
-            FixtureKind::Brain => BRAIN_SEARCH_INPUT_SCHEMA,
         };
         let contracts = match kind {
             FixtureKind::ReadExec => {
@@ -1109,37 +1030,6 @@ impl Fixture {
                 publish.input_schema_ref = input_schema_ref.to_owned();
                 BTreeMap::from([(publish.id.clone(), publish)])
             }
-            FixtureKind::Brain => {
-                let mut search = contract(
-                    BRAIN_SEARCH_CAPABILITY,
-                    BRAIN_SEARCH_TOOL,
-                    crate::host_tools::brain::SEARCH_HANDLER,
-                    SEARCH_EVIDENCE,
-                    EffectClass::R0,
-                );
-                search.input_schema_ref = BRAIN_SEARCH_INPUT_SCHEMA.to_owned();
-                let mut read = contract(
-                    BRAIN_READ_CAPABILITY,
-                    BRAIN_READ_TOOL,
-                    crate::host_tools::brain::READ_HANDLER,
-                    READ_EVIDENCE,
-                    EffectClass::R0,
-                );
-                read.input_schema_ref = BRAIN_READ_INPUT_SCHEMA.to_owned();
-                let mut records = contract(
-                    BRAIN_RECORDS_CAPABILITY,
-                    BRAIN_RECORDS_TOOL,
-                    crate::host_tools::brain::RECORDS_HANDLER,
-                    crate::host_tools::brain::RECORDS_EVIDENCE,
-                    EffectClass::R0,
-                );
-                records.input_schema_ref = BRAIN_RECORDS_INPUT_SCHEMA.to_owned();
-                BTreeMap::from([
-                    (search.id.clone(), search),
-                    (read.id.clone(), read),
-                    (records.id.clone(), records),
-                ])
-            }
             FixtureKind::PlanWriter => {
                 let mut plan = contract(
                     PLAN_CAPABILITY,
@@ -1156,9 +1046,17 @@ impl Fixture {
                     SIDE_EFFECT_EXTRACTOR,
                     EffectClass::R1,
                 );
+                let incident = contract(
+                    INCIDENT_CAPABILITY,
+                    INCIDENT_TOOL,
+                    INCIDENT_HANDLER,
+                    INCIDENT_EXTRACTOR,
+                    EffectClass::R1,
+                );
                 BTreeMap::from([
                     (plan.id.clone(), plan),
                     (side_effect.id.clone(), side_effect),
+                    (incident.id.clone(), incident),
                 ])
             }
         };
@@ -1287,9 +1185,6 @@ impl Fixture {
                 "../../../../../../schemas/capability/workload.publish.input.json"
             ))
             .expect("real canonical workload.publish input schema"),
-            // The brain catalog above carries the real per-operation
-            // schemas; this placeholder keeps the match exhaustive.
-            FixtureKind::Brain => json!({"type": "object", "additionalProperties": false}),
         })
         .expect("input schema");
         let output = ToolSchema::from_value(json!({
@@ -1297,35 +1192,8 @@ impl Fixture {
             "additionalProperties": true
         }))
         .expect("output schema");
-        // Brain validates against one strict schema per operation, exactly
-        // the shape the production tool deserializes; every other kind
-        // keeps the single generic fixture schema.
-        let schemas: Arc<dyn SchemaCatalog + Send + Sync> = if kind == FixtureKind::Brain {
-            Arc::new(
-                StaticSchemaCatalog::new([
-                    (
-                        BRAIN_SEARCH_INPUT_SCHEMA.to_owned(),
-                        brain_search_input_schema(),
-                    ),
-                    (
-                        BRAIN_READ_INPUT_SCHEMA.to_owned(),
-                        brain_read_input_schema(),
-                    ),
-                    (
-                        BRAIN_RECORDS_INPUT_SCHEMA.to_owned(),
-                        ToolSchema::from_value(
-                            serde_json::from_str(include_str!(
-                                "../../../../../../schemas/capability/brain.input.json"
-                            ))
-                            .expect("real brain records input schema"),
-                        )
-                        .expect("brain records schema"),
-                    ),
-                    (OUTPUT_SCHEMA.to_owned(), output),
-                ])
-                .expect("brain schema catalog"),
-            )
-        } else if kind == FixtureKind::PlanWriter {
+        // Every other kind keeps the single generic fixture schema.
+        let schemas: Arc<dyn SchemaCatalog + Send + Sync> = if kind == FixtureKind::PlanWriter {
             let plan_input = ToolSchema::from_value(
                 serde_json::from_str(include_str!(
                     "../../../../../../schemas/capability/odin.plan_set.input.json"
@@ -1389,9 +1257,6 @@ impl Fixture {
                 (FILE_EDIT_HANDLER, FixtureRole::FileCreate),
                 (FILE_EDIT_EXTRACTOR, FixtureRole::Extractor),
             ],
-            // The brain tools register their own handler and evidence
-            // bindings through `brain::register` below.
-            FixtureKind::Brain => &[],
             FixtureKind::SeatAsk => &[
                 (SEAT_ASK_HANDLER, FixtureRole::Eval),
                 (SEAT_ASK_EXTRACTOR, FixtureRole::Extractor),
@@ -1416,6 +1281,8 @@ impl Fixture {
                 (PLAN_EXTRACTOR, FixtureRole::Extractor),
                 (SIDE_EFFECT_HANDLER, FixtureRole::Handler),
                 (SIDE_EFFECT_EXTRACTOR, FixtureRole::Extractor),
+                (INCIDENT_HANDLER, FixtureRole::Handler),
+                (INCIDENT_EXTRACTOR, FixtureRole::Extractor),
             ],
         };
         for &(name, role) in handlers {
@@ -1501,17 +1368,8 @@ impl Fixture {
             | FixtureKind::FileEdit
             | FixtureKind::DraftR2
             | FixtureKind::DraftR2Operator
-            | FixtureKind::Brain
             | FixtureKind::PlanWriter => {}
         }
-        let brain_slot: Option<BrainToolsSlot> = if kind == FixtureKind::Brain {
-            let slot: BrainToolsSlot = Arc::new(OnceLock::new());
-            crate::host_tools::brain::register(&mut registry, Arc::clone(&slot), &contracts)
-                .expect("register production brain tools");
-            Some(slot)
-        } else {
-            None
-        };
         let registry = Arc::new(registry);
         let adapter_status: Arc<dyn HostAdapterStatus> = status.unwrap_or_else(|| {
             Arc::new(SupervisedAdapterStatus::new(
@@ -1534,29 +1392,11 @@ impl Fixture {
         });
         let scope = Scope {
             seat: Some(binding.policy.seat_id.clone()),
-            project: Some(ProjectId::new(BRAIN_PROJECT).expect("project id")),
+            project: Some(ProjectId::new(FIXTURE_PROJECT).expect("project id")),
             lane: Some(binding.policy.lane_id.clone()),
             run: Some(RunId::new("run.fixture").expect("run id")),
             session: Some(session.clone()),
             ..Scope::default()
-        };
-        // The governed knowledge world exists only behind the brain kind:
-        // the live session row whose columns equal the dispatch scope, the
-        // registered session binding the backend verifies against, the real
-        // brain service and scoped router, and the live execution proof.
-        let brain_world = if kind == FixtureKind::Brain {
-            Some(assemble_brain_world(BrainWorldInputs {
-                root: &root,
-                ledger: &ledger,
-                operations: &operations,
-                binding: &binding,
-                session: &session,
-                scope: &scope,
-                slot: brain_slot.as_ref().expect("brain slot"),
-                embedding: brain_embedding,
-            }))
-        } else {
-            None
         };
         Self {
             root,
@@ -1574,9 +1414,6 @@ impl Fixture {
             signing_key,
             token_root,
             material_source,
-            _brain_slot: brain_slot,
-            execution: brain_world.as_ref().map(|(execution, _)| execution.clone()),
-            _brain_sessions: brain_world.map(|(_, sessions)| sessions),
             ledger_path,
             kind,
             adapter_status,
@@ -1617,52 +1454,6 @@ impl Fixture {
             authority_provider,
         });
         self.ledger = ledger;
-    }
-
-    /// The live execution proof of the seeded session: session, run, lane,
-    /// and epoch 1 exactly as the host bridge would capture them.
-    pub(super) fn execution(&self) -> ExecutionBinding {
-        self.execution
-            .clone()
-            .expect("brain fixture execution proof")
-    }
-
-    /// A proof for the same bound dimensions at an arbitrary epoch — stale
-    /// by construction against the seeded live row at epoch 1.
-    pub(super) fn execution_at_epoch(&self, epoch: i64) -> ExecutionBinding {
-        let mut binding = BridgeBinding::new(
-            self.scope.clone(),
-            self.session.clone(),
-            self.scope.run.clone().expect("bound run"),
-            self.binding.policy.lane_id.clone(),
-            "fixture-owner",
-        );
-        binding.epoch = epoch;
-        ExecutionBinding::from_binding(&binding)
-    }
-
-    /// Dispatches with the caller-carried execution proof the bridge
-    /// produces; `None` dispatches proof-free like every ordinary tool.
-    pub(super) fn dispatch_execution(
-        &self,
-        tool_name: &str,
-        resource: Option<ResourceConstraint>,
-        arguments: Value,
-        request_id: &str,
-        execution: Option<&ExecutionBinding>,
-    ) -> Result<Value, HostToolOperationError> {
-        self.operations.dispatch_tool(
-            SessionOperationContext {
-                binding: &self.binding,
-                session: &self.session,
-                scope: &self.scope,
-                execution,
-            },
-            tool_name,
-            resource,
-            arguments,
-            request_id,
-        )
     }
 
     pub(super) fn dispatch(
@@ -1957,380 +1748,6 @@ impl RevisionMaterialSource for FixtureMaterialSource {
     }
 }
 
-/// The strict brain search input schema — the exact shape the production
-/// tool deserializes with `deny_unknown_fields`.
-fn brain_search_input_schema() -> ToolSchema {
-    ToolSchema::from_value(json!({
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "minLength": 1, "maxLength": 4096},
-            "source": {"type": "string", "minLength": 1, "maxLength": 128}
-        },
-        "required": ["query"],
-        "additionalProperties": false
-    }))
-    .expect("brain search input schema")
-}
-
-/// The strict brain read input schema — an identified canonical URL only.
-fn brain_read_input_schema() -> ToolSchema {
-    ToolSchema::from_value(json!({
-        "type": "object",
-        "properties": {"url": {"type": "string", "minLength": 1, "maxLength": 1024}},
-        "required": ["url"],
-        "additionalProperties": false
-    }))
-    .expect("brain read input schema")
-}
-
-fn brain_slice(retrieval_mode: RetrievalMode) -> SliceToml {
-    SliceToml {
-        schema: REGISTRY_SCHEMA.to_owned(),
-        inherit_seat_grants: false,
-        kind: RegistryKind::Slice,
-        enabled: true,
-        description: "brain fixture slice".to_owned(),
-        capabilities: BTreeSet::new(),
-        variables: BTreeMap::new(),
-        redirects: SliceRedirectsToml {
-            out_of_scope: "NeedsPlan".to_owned(),
-        },
-        knowledge: Some(SliceKnowledgeToml {
-            required: false,
-            atlas_sources: atlas_id_set(),
-            retrieval_mode,
-            candidate_limit: nz16(128),
-            top_k: nz16(16),
-            min_score_micros: 100_000,
-            chunk_tokens: nz32(512),
-            chunk_overlap_tokens: 64,
-            embedding_backend: EmbeddingBackend::Local,
-        }),
-        context: Some(SliceContextToml {
-            max_bundle_tokens: nz32(32768),
-            reserve_output_tokens: nz32(8192),
-            control_tokens: nz32(4096),
-            history_tokens: nz32(12288),
-            core_tokens: nz32(2048),
-            prefetch_tokens: nz32(6144),
-            tool_result_tokens: nz32(4096),
-            tool_schema_tokens: nz32(4096),
-            max_item_tokens: nz32(2048),
-        }),
-        tools: Some(SliceToolsToml {
-            allow: BTreeSet::new(),
-            deny: BTreeSet::new(),
-            redirects: SliceToolRedirectsToml {
-                max_http_hops: 2,
-                allow_cross_origin: false,
-                allow_https_downgrade: false,
-            },
-            alias_redirect: BTreeSet::new(),
-        }),
-        live: None,
-        budget: None,
-    }
-}
-
-fn brain_seat() -> SeatToml {
-    SeatToml {
-        schema: REGISTRY_SCHEMA.to_owned(),
-        kind: RegistryKind::Seat,
-        enabled: true,
-        description: "brain fixture seat".to_owned(),
-        categories: BTreeSet::new(),
-        tool_refs: BTreeSet::new(),
-        project_scope: BTreeSet::from([
-            odin_domain::ProjectId::new(BRAIN_PROJECT).expect("brain fixture project id")
-        ]),
-        read_project_scope: BTreeSet::new(),
-        models: Vec::new(),
-        brain_scope: atlas_id_set(),
-        limits: SeatLimitsToml {
-            max_parallel_runs: 4,
-            max_sessions: 4,
-            max_background_jobs: 4,
-            inline_seconds: 4,
-            budget: Some(BudgetPolicyToml {
-                usd_micros: 30_000_000,
-                window: AccountingWindowToml {
-                    duration_seconds: NonZeroU64::new(2_592_000).unwrap(),
-                },
-            }),
-        },
-        live: None,
-        slice: None,
-        knowledge: Some(SeatKnowledgeToml {
-            atlas_sources: atlas_id_set(),
-            required_tags: BTreeSet::new(),
-            denied_tags: BTreeSet::new(),
-            top_k: nz16(8),
-        }),
-        context: Some(SeatContextToml {
-            max_bundle_tokens: nz32(24576),
-            profile: "sized".into(),
-            review_lane: None,
-            consult: None,
-        }),
-        tools: Some(SeatToolsToml {
-            listing_bytes: None,
-            deny: BTreeSet::new(),
-            redirects: SeatToolRedirectsToml {
-                max_http_hops: 2,
-                allow_cross_origin: false,
-                disabled_aliases: BTreeSet::new(),
-            },
-        }),
-        guidance: None,
-        conversation: None,
-        profile_namespace: None,
-        ephemeral: None,
-        sandbox: odin_registry::schema::SeatSandboxToml::default(),
-    }
-}
-
-fn brain_project() -> ProjectToml {
-    ProjectToml {
-        schema: REGISTRY_SCHEMA.to_owned(),
-        kind: RegistryKind::Project,
-        enabled: true,
-        description: "brain fixture project".to_owned(),
-        source_root: String::new(),
-        default_seat: SeatId::new("seat.fixture").expect("brain fixture seat id"),
-        memory_namespaces: atlas_id_set(),
-        artifact_policy: "standard".to_owned(),
-        privacy: None,
-        accounts: Default::default(),
-        review_verdict: None,
-        repo: None,
-        deploy: None,
-        sphere: None,
-    }
-}
-
-fn atlas_id_set() -> BTreeSet<AtlasId> {
-    BTreeSet::from([AtlasId::new(BRAIN_ATLAS_SOURCE).expect("brain fixture atlas id")])
-}
-
-fn nz16(value: u16) -> NonZeroU16 {
-    NonZeroU16::new(value).unwrap()
-}
-
-fn nz32(value: u32) -> NonZeroU32 {
-    NonZeroU32::new(value).unwrap()
-}
-
-/// Keeps atlas routing empty so brain scope checks depend only on provenance.
-fn empty_fixture_atlas() -> Atlas {
-    Atlas {
-        schema: ATLAS_SCHEMA.to_owned(),
-        version: ATLAS_VERSION,
-        generation: "fixture-brain-generation".to_owned(),
-        source_paths: BTreeMap::new(),
-        source_hashes: BTreeMap::new(),
-        counts: AtlasCounts {
-            files: 0,
-            nodes: 0,
-            parse_errors: 0,
-            by_source: BTreeMap::new(),
-        },
-        files: Vec::new(),
-        parse_errors: Vec::new(),
-        nodes: Vec::new(),
-    }
-}
-
-struct BrainWorldInputs<'a> {
-    root: &'a Path,
-    ledger: &'a Arc<Mutex<Ledger>>,
-    operations: &'a HostToolOperations,
-    binding: &'a SessionOperationBinding,
-    session: &'a SessionId,
-    scope: &'a Scope,
-    slot: &'a BrainToolsSlot,
-    embedding: Option<BrainEmbedding>,
-}
-
-/// Assembles the governed knowledge world behind the brain fixture: the
-/// bridge-owned lane/run/live-session rows whose columns equal the dispatch
-/// scope, the registered session binding the backend re-verifies against,
-/// the real brain service over one wired atlas source, the real scoped URI
-/// router over the same ledger, and the production `RuntimeBrainTools`
-/// backend bound into the brain tool slot. `embedding` declares the
-/// slice's retrieval mode and binds the lane embedder; `None` serves the
-/// lexical plan with no embedding leg. Returns the live execution proof
-/// the host would capture at epoch 1.
-fn assemble_brain_world(
-    inputs: BrainWorldInputs<'_>,
-) -> (ExecutionBinding, Arc<LiveSessionBindings>) {
-    let BrainWorldInputs {
-        root,
-        ledger,
-        operations,
-        binding,
-        session,
-        scope,
-        slot,
-        embedding,
-    } = inputs;
-    let seat = &binding.policy.seat_id;
-    let lane = &binding.policy.lane_id;
-    let run = scope.run.clone().expect("brain fixture bound run");
-    let project = scope.project.clone().expect("brain fixture bound project");
-    let created_at = OffsetDateTime::UNIX_EPOCH;
-    {
-        let mut guard = ledger.lock().expect("brain fixture ledger lock");
-        odin_ledger::lane_run::create_lane(
-            guard.connection(),
-            &odin_ledger::lane_run::NewLane {
-                lane_id: lane.clone(),
-                seat_id: seat.clone(),
-                project_id: Some(project.clone()),
-                template_id: "template:fixture".to_owned(),
-                backend: "local_omp".to_owned(),
-                created_by: "operator:fixture".to_owned(),
-                created_at,
-                retained: false,
-            },
-        )
-        .expect("brain fixture lane");
-        odin_ledger::lane_run::create_run(
-            guard.connection(),
-            &odin_ledger::lane_run::NewRun {
-                run_id: run.clone(),
-                lane_id: lane.clone(),
-                attempt_number: 1,
-                workflow_id: Some("live:fixture".to_owned()),
-                workflow_version: Some(1),
-                input_hash: "fixture".to_owned(),
-                accepted_capability_revision: None,
-                lease_id: None,
-                absolute_deadline: None,
-                retry_budget: 0,
-                created_at,
-            },
-        )
-        .expect("brain fixture run");
-        guard
-            .create_live_session(&NewLiveSession {
-                session_id: session.clone(),
-                seat_id: seat.to_string(),
-                project_id: project.to_string(),
-                slice_id: binding.policy.slice_id.to_string(),
-                lane_id: lane.to_string(),
-                target_node_id: "node.fixture".to_owned(),
-                provider: "fixture-provider".to_owned(),
-                model: "fixture-model".to_owned(),
-                title: None,
-                manifest: json!({}),
-                open_tab: false,
-                state: "ready".to_owned(),
-                created_at,
-            })
-            .expect("brain fixture live session");
-    }
-
-    // Register the same session binding used for dispatch.
-    let sessions = Arc::new(LiveSessionBindings::new(operations.clone()));
-    sessions.register(session.clone(), binding.clone());
-
-    // A real brain authority: one atlas source tree, a registry-resolved
-    // policy at the session's served revision, empty stores.
-    let atlas_root = root.join("brain-atlas-src");
-    let src = atlas_root.join("crates/demo/src");
-    fs::create_dir_all(&src).expect("brain fixture source dir");
-    fs::write(
-        src.join("lib.rs"),
-        "//! Fixture brain crate.\n\n/// Marker.\npub fn fixture_brain_marker() -> u64 { 1 }\n",
-    )
-    .expect("brain fixture source");
-    for class in ["extension", "registry", "skeletons"] {
-        fs::create_dir_all(atlas_root.join(class)).expect("brain fixture source classes");
-    }
-    let model = ModelDescriptor {
-        name: ModelName::new("model.fixture-brain").expect("brain fixture model"),
-        tokenizer: TokenizerId::new("odin.tokenizer.utf8-bytes.v1").expect("tokenizer"),
-        context_window_tokens: nz32(8192),
-    };
-    let mode = embedding
-        .as_ref()
-        .map_or(RetrievalMode::Lexical, |embedding| embedding.mode);
-    let policy = EffectiveBrainPolicy::resolve(
-        binding.served_revision,
-        &brain_slice(mode),
-        &brain_seat(),
-        &BTreeMap::from([(BRAIN_PROJECT, &brain_project())]),
-        &std::collections::BTreeMap::from([(
-            "sized",
-            &odin_registry::ContextProfileToml::sized(nz32(2048), nz32(6144)),
-        )]),
-        &model,
-    )
-    .expect("brain fixture policy");
-    let service = Arc::new(
-        BrainService::open(
-            BrainServiceConfig {
-                store_root: root.join("brain-store"),
-                sources: BTreeMap::from([(
-                    AtlasId::new(BRAIN_ATLAS_SOURCE).expect("brain fixture atlas id"),
-                    BrainSourceConfig::Atlas { root: atlas_root },
-                )]),
-                embedding_available: embedding.is_some(),
-                embedding_model: embedding.as_ref().map(|_| {
-                    EmbeddingModelId::new("test:fixture-brain-v1")
-                        .expect("brain fixture embedding model")
-                }),
-                archive_ingest_gate: None,
-                postgres: odin_brain::test_cluster::TestCluster::thread_store(),
-                rerank: None,
-            },
-            policy,
-            Arc::clone(ledger),
-        )
-        .expect("brain fixture service"),
-    );
-    service
-        .ensure_generation()
-        .expect("brain fixture generation");
-
-    let artifact_dir = root.join("brain-artifacts");
-    fs::create_dir_all(&artifact_dir).expect("brain fixture artifact root");
-    let router = ScopedUriRouter::new(
-        Arc::clone(ledger),
-        Arc::new(OnceLock::from(Arc::new(empty_fixture_atlas()))),
-        AtlasScope::all(),
-        artifact_dir,
-        262_144,
-        BTreeMap::from([(seat.clone(), Arc::clone(&service))]),
-    )
-    .expect("brain fixture router");
-    let backend = RuntimeBrainTools {
-        brains: BTreeMap::from([(seat.clone(), Arc::clone(&service))]),
-        sessions: Arc::downgrade(&sessions),
-        router,
-        embedding: embedding.map(|embedding| {
-            Arc::new(FixtureLaneEmbedding(embedding.embedder)) as Arc<dyn LaneEmbeddingProvider>
-        }),
-    };
-    assert!(
-        slot.set(Arc::new(backend)).is_ok(),
-        "bind brain backend exactly once"
-    );
-
-    // The proof the host bridge would capture from its completed binding
-    // at the seeded epoch: the same session, run, and lane the scope
-    // binds, at live-session epoch 1.
-    let mut bridge_binding = BridgeBinding::new(
-        scope.clone(),
-        session.clone(),
-        run,
-        lane.clone(),
-        "fixture-owner",
-    );
-    bridge_binding.epoch = 1;
-    (ExecutionBinding::from_binding(&bridge_binding), sessions)
-}
-
 /// The fixture adapter answers every call with Obscura's typed failure for
 /// a page that did not load, relayed beside an in-doubt settlement as the
 /// declared-adapter executor does.
@@ -2382,4 +1799,17 @@ impl odin_kernel::OperationExecutor for PageNotLoaded {
             detail: "adapter fixture reported a typed failure".to_owned(),
         })
     }
+}
+
+/// The fixture's operations run on a fixed clock, so an owner decision is
+/// stamped at the request's own minting time, inside its deadline.
+pub(super) fn decided_within_deadline(
+    ledger: &odin_ledger::Ledger,
+    approval_id: &odin_domain::ApprovalId,
+) -> OffsetDateTime {
+    ledger
+        .approval(approval_id)
+        .expect("approval readable")
+        .expect("approval record")
+        .requested_at
 }

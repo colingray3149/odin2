@@ -12,16 +12,16 @@ use k8s_openapi::api::core::v1::{
 use k8s_openapi::api::networking::v1::{NetworkPolicy, NetworkPolicySpec};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta, Status};
 use kube::api::{AttachParams, DeleteParams, PostParams, Preconditions};
+use odin_domain::huginn::KubeResources;
 use odin_domain::{Digest, RunId};
 use odin_kernel::stop::{CorrelationId, PodWorkerIdentity, StopAuthority, WorkerId};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::client::{KubeClient, KubeError};
 use crate::object_wait::Settle;
+use crate::placement::{pinned_node, pod_requests, require_room};
 use crate::pod_worker::{label_worker, stop_error};
-use crate::reconciler::{
-    bounded_resources, worker_pod_security, worker_security, WORKER_RESERVATION,
-};
+use crate::reconciler::{bounded_resources, worker_pod_security, worker_security};
 use crate::workload::{state_claim_name, WorkloadPodPlan};
 
 const CARRY_MOUNT: &str = "/odin-carry";
@@ -36,6 +36,13 @@ const HELPER_TRANSFER: Duration = Duration::from_secs(600);
 /// The stderr a failed helper command reports; the rest is drained unread.
 const STDERR_KEPT: usize = 4096;
 const CLAIM_GONE: Duration = Duration::from_secs(120);
+/// A helper only streams a tar over exec, so it takes a sliver of a node, not a worker's share.
+const CARRIER_RESERVATION: KubeResources = KubeResources {
+    cpu_millis: 100,
+    memory_bytes: 128 * 1024 * 1024,
+    ephemeral_storage_bytes: 512 * 1024 * 1024,
+    gpu_count: 0,
+};
 
 /// The node a run's bound state volume lives on, when it is node-local.
 pub async fn state_node(client: &KubeClient, run_id: &RunId) -> Result<Option<String>, KubeError> {
@@ -43,6 +50,22 @@ pub async fn state_node(client: &KubeClient, run_id: &RunId) -> Result<Option<St
     Ok(binding
         .and_then(|binding| binding.admitted_nodes)
         .and_then(|nodes| (nodes.len() == 1).then(|| nodes[0].clone())))
+}
+
+/// Every node of the cluster, by name: where a run's export may be when no node was recorded.
+pub async fn node_names(client: &KubeClient) -> Result<Vec<String>, KubeError> {
+    let api: kube::Api<k8s_openapi::api::core::v1::Node> = kube::Api::all(client.client.clone());
+    let nodes = tokio::time::timeout(
+        client.request_timeout(),
+        api.list(&kube::api::ListParams::default()),
+    )
+    .await
+    .map_err(|_| KubeError::unavailable("the node list timed out"))??;
+    Ok(nodes
+        .items
+        .into_iter()
+        .filter_map(|node| node.metadata.name)
+        .collect())
 }
 
 fn helper_identity(seed: &str, purpose: &str) -> Result<(String, CorrelationId), KubeError> {
@@ -138,7 +161,7 @@ fn helper_pod(name: &str, carried: Carried<'_>, node: &str, image: &str, read_on
                     sub_path,
                     ..Default::default()
                 }]),
-                resources: Some(bounded_resources(WORKER_RESERVATION)),
+                resources: Some(bounded_resources(CARRIER_RESERVATION)),
                 security_context: Some(worker_security()),
                 ..Default::default()
             }],
@@ -397,6 +420,20 @@ async fn in_helper(
     input: Option<&[u8]>,
     limit: u64,
 ) -> Result<Vec<u8>, KubeError> {
+    // A helper pinned to a full node would sit Pending until its start timeout; refuse first.
+    let spec = pod
+        .spec
+        .as_ref()
+        .ok_or_else(|| KubeError::rejected("state carry helper has no pod spec"))?;
+    let node = pinned_node(spec)
+        .ok_or_else(|| KubeError::rejected("state carry helper is not pinned to a node"))?;
+    let request = pod_requests(spec)?;
+    require_room(
+        client,
+        &std::collections::BTreeSet::from([node.to_owned()]),
+        request,
+    )
+    .await?;
     let helper = Helper::start(client, stops, correlation, pod).await?;
     let name = helper.name.clone();
     let used = helper.run(client, argv, input, limit).await;
@@ -663,10 +700,12 @@ pub async fn export_tar(
 }
 
 /// The regular files of a tar archive as `(path, bytes)`, paths without a leading `./`.
-/// Only ustar names and the header's own size are read; a GNU long-name entry is refused.
+/// A name longer than ustar's comes from the PAX `path` record (Python's tarfile) or a GNU
+/// long-name entry before it; only the header's own size is read.
 pub fn tar_regular_files(tar: &[u8]) -> Result<Vec<(String, &[u8])>, String> {
     let mut files = Vec::new();
     let mut offset = 0;
+    let mut long_name: Option<String> = None;
     while offset + 512 <= tar.len() {
         let header = &tar[offset..offset + 512];
         if header.iter().all(|byte| *byte == 0) {
@@ -682,34 +721,69 @@ pub fn tar_regular_files(tar: &[u8]) -> Result<Vec<(String, &[u8])>, String> {
         let size = u64::from_str_radix(field(124..136).trim(), 8)
             .map_err(|_| "a tar entry has an unreadable size".to_owned())?;
         let kind = header[156];
-        if matches!(kind, b'L' | b'K' | b'x' | b'g') {
-            return Err(
-                "a tar entry carries a long or extended name, which is not unpacked".to_owned(),
-            );
-        }
         let size = usize::try_from(size).unwrap_or(usize::MAX);
         let body = offset + 512;
         let end = body.checked_add(size).filter(|end| *end <= tar.len());
         let Some(end) = end else {
             return Err("a tar entry runs past the end of the archive".to_owned());
         };
-        if matches!(kind, b'0' | 0) {
-            let prefix = if &header[257..262] == b"ustar" {
-                field(345..500)
-            } else {
-                String::new()
-            };
-            let name = field(0..100);
-            let path = if prefix.is_empty() {
-                name
-            } else {
-                format!("{prefix}/{name}")
-            };
-            files.push((path.trim_start_matches("./").to_owned(), &tar[body..end]));
+        match kind {
+            b'L' => {
+                let name = &tar[body..end];
+                let name = name.split(|byte| *byte == 0).next().unwrap_or(name);
+                long_name = Some(String::from_utf8_lossy(name).into_owned());
+            }
+            b'x' => {
+                if let Some(path) = pax_path(&tar[body..end]) {
+                    long_name = Some(path);
+                }
+            }
+            b'0' | 0 => {
+                let path = long_name.take().unwrap_or_else(|| {
+                    let prefix = if &header[257..262] == b"ustar" {
+                        field(345..500)
+                    } else {
+                        String::new()
+                    };
+                    let name = field(0..100);
+                    if prefix.is_empty() {
+                        name
+                    } else {
+                        format!("{prefix}/{name}")
+                    }
+                });
+                files.push((path.trim_start_matches("./").to_owned(), &tar[body..end]));
+            }
+            // A global PAX header, a GNU long link name or any other entry names no file.
+            _ => {
+                if kind != b'K' && kind != b'g' {
+                    long_name = None;
+                }
+            }
         }
         offset = body + size.div_ceil(512) * 512;
     }
     Ok(files)
+}
+
+/// The `path` of a PAX extended header: records `<length> <key>=<value>\n`.
+fn pax_path(records: &[u8]) -> Option<String> {
+    let mut rest = records;
+    let mut path = None;
+    while !rest.is_empty() {
+        let space = rest.iter().position(|byte| *byte == b' ')?;
+        let length: usize = std::str::from_utf8(&rest[..space]).ok()?.parse().ok()?;
+        if length <= space || length > rest.len() {
+            return path;
+        }
+        let record = &rest[space + 1..length];
+        let record = record.strip_suffix(b"\n").unwrap_or(record);
+        if let Some(value) = record.strip_prefix(b"path=") {
+            path = Some(String::from_utf8_lossy(value).into_owned());
+        }
+        rest = &rest[length..];
+    }
+    path
 }
 
 /// Ignore directory entries so an empty export folder counts as no export.
@@ -801,12 +875,19 @@ pub async fn replant(
     .map(|_| ())
 }
 
-/// Rehome must satisfy the same placement labels as the initial launch.
+/// Rehome must satisfy the same placement labels and data roots as the initial launch.
 pub async fn require_node_fits(
     client: &KubeClient,
     target: &str,
-    selector: &BTreeMap<String, String>,
+    required: &crate::placement::NodeRequirements,
+    data: &[crate::workload::WorkloadDataMount],
 ) -> Result<(), KubeError> {
+    if !crate::placement::node_covers(&client.config, target, data) {
+        return Err(KubeError::rejected(format!(
+            "node {target} declares no data roots covering {}",
+            crate::placement::data_paths(data)
+        )));
+    }
     let nodes: kube::Api<k8s_openapi::api::core::v1::Node> = kube::Api::all(client.client.clone());
     let node = tokio::time::timeout(client.request_timeout(), nodes.get_opt(target))
         .await
@@ -818,7 +899,7 @@ pub async fn require_node_fits(
                 "rehome target node {target:?} is not in the cluster"
             ))
         })?;
-    let missing = missing_placement(&node.metadata.labels.unwrap_or_default(), selector);
+    let missing = required.missing(&node.metadata.labels.unwrap_or_default());
     if missing.is_empty() {
         Ok(())
     } else {
@@ -829,20 +910,52 @@ pub async fn require_node_fits(
     }
 }
 
-fn missing_placement(
-    labels: &BTreeMap<String, String>,
-    selector: &BTreeMap<String, String>,
-) -> Vec<String> {
-    selector
-        .iter()
-        .filter(|(key, value)| labels.get(*key) != Some(*value))
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tar_block(name: &str, kind: u8, body: &[u8]) -> Vec<u8> {
+        let mut header = [0u8; 512];
+        header[..name.len()].copy_from_slice(name.as_bytes());
+        header[124..135].copy_from_slice(format!("{:011o}", body.len()).as_bytes());
+        header[156] = kind;
+        header[257..262].copy_from_slice(b"ustar");
+        let mut block = header.to_vec();
+        block.extend_from_slice(body);
+        block.resize(512 + body.len().div_ceil(512) * 512, 0);
+        block
+    }
+
+    /// Python's tarfile writes a long name as a PAX `path` record, GNU tar as an `L` entry.
+    #[test]
+    fn long_names_come_from_pax_and_gnu_entries() {
+        let long = format!("./recon/{}/steps/001-tool/report.json", "a".repeat(120));
+        let record = format!("path={long}\n");
+        let record = format!(
+            "{} {record}",
+            record.len() + 1 + (record.len() + 3).to_string().len()
+        );
+        let mut tar = tar_block("././@PaxHeader", b'x', record.as_bytes());
+        tar.extend(tar_block("short-name", b'0', b"pax"));
+        tar.extend(tar_block(
+            "././@LongLink",
+            b'L',
+            format!("{long}2\0").as_bytes(),
+        ));
+        tar.extend(tar_block("short-name", b'0', b"gnu"));
+        tar.extend(tar_block("plain.txt", b'0', b"plain"));
+        tar.extend([0u8; 1024]);
+        let files = tar_regular_files(&tar).expect("long names unpack");
+        let long = long.trim_start_matches("./");
+        assert_eq!(
+            files,
+            vec![
+                (long.to_owned(), &b"pax"[..]),
+                (format!("{long}2"), &b"gnu"[..]),
+                ("plain.txt".to_owned(), &b"plain"[..]),
+            ]
+        );
+    }
 
     #[cfg(unix)]
     #[test]
@@ -943,19 +1056,24 @@ mod tests {
         };
         let declared = labels(&[("odin.capability/scrape", "true")]);
         let pc = labels(&[
+            ("node-restriction.kubernetes.io/odin-trust", "fleet"),
             ("odin.capability/cfd", "true"),
             ("odin.capability/gpu", "true"),
         ]);
         let mini = labels(&[
+            ("node-restriction.kubernetes.io/odin-trust", "fleet"),
             ("odin.capability/scrape", "true"),
             ("odin.capability/embed", "true"),
         ]);
+        let declared = crate::placement::NodeRequirements::labels(declared);
         assert_eq!(
-            missing_placement(&pc, &declared),
+            declared.missing(&pc),
             vec!["odin.capability/scrape=true".to_owned()]
         );
-        assert!(missing_placement(&mini, &declared).is_empty());
-        assert!(missing_placement(&pc, &BTreeMap::new()).is_empty());
+        assert!(declared.missing(&mini).is_empty());
+        assert!(crate::placement::NodeRequirements::default()
+            .missing(&pc)
+            .is_empty());
     }
 
     fn assert_helper_confined_like_its_admitted_workload(pod: &Pod) {
@@ -1005,7 +1123,7 @@ mod tests {
         let resources = container
             .resources
             .as_ref()
-            .expect("the helper declares the admitted workload's resource bound");
+            .expect("the helper declares its resource bound");
         let limits = resources.limits.as_ref().expect("a helper is bounded");
         for bound in ["cpu", "memory", "ephemeral-storage"] {
             assert!(limits.contains_key(bound), "a helper is bounded in {bound}");
@@ -1015,6 +1133,24 @@ mod tests {
             Some(limits),
             "a helper's bound is flat (requests == limits) like every admitted container's"
         );
+    }
+
+    #[test]
+    fn a_state_carry_helper_reserves_only_a_carrier_share() {
+        const MIB: u64 = 1024 * 1024;
+        let run = RunId::new("run:live:carry-share:pod:counter").expect("run id");
+        let pod = claim_helper(
+            "odin-carry-out-share",
+            &state_claim_name(&run),
+            "mini",
+            "python@sha256:1",
+            true,
+        );
+        let request = crate::placement::pod_requests(pod.spec.as_ref().expect("helper spec"))
+            .expect("helper request");
+        assert!(request.cpu_millis <= 100, "{request:?}");
+        assert!(request.memory_bytes <= 128 * MIB, "{request:?}");
+        assert!(request.ephemeral_storage_bytes <= 512 * MIB, "{request:?}");
     }
 
     #[test]

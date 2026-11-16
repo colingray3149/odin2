@@ -118,7 +118,7 @@ impl SandboxRuntime {
                 ));
             }
         }
-        // PDEATHSIG would track the short-lived broker thread and kill a healthy worker when it exits.
+        // No --die-with-parent: its PDEATHSIG would track the short-lived broker thread and kill a healthy worker when it exits.
         let mut argv = odin_process::capsule_sandbox_argv(
             self.bwrap.display().to_string(),
             capsule_root,

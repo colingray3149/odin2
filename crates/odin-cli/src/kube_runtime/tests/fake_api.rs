@@ -16,7 +16,7 @@ struct State {
     revision: u64,
 }
 
-pub(super) struct FakeKubeApi {
+pub(crate) struct FakeKubeApi {
     port: u16,
     state: Arc<Mutex<State>>,
 }
@@ -33,7 +33,11 @@ fn merge(value: &mut Value, patch: Value) {
     match (value, patch) {
         (Value::Object(value), Value::Object(patch)) => {
             for (key, field) in patch {
-                merge(value.entry(key).or_insert(Value::Null), field);
+                if field.is_null() {
+                    value.remove(&key);
+                } else {
+                    merge(value.entry(key).or_insert(Value::Null), field);
+                }
             }
         }
         (value, patch) => *value = patch,
@@ -109,7 +113,7 @@ impl State {
 }
 
 impl FakeKubeApi {
-    pub(super) async fn start() -> Self {
+    pub(crate) async fn start() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("loopback API");
@@ -117,7 +121,7 @@ impl FakeKubeApi {
         // One ready node, so the reconciler's placement has somewhere to put a Job.
         let node = json!({
             "apiVersion": "v1", "kind": "Node",
-            "metadata": {"name": "pc", "uid": "node-pc"},
+            "metadata": {"name": "pc", "uid": "node-pc", "labels": {"node-restriction.kubernetes.io/odin-trust": "fleet"}},
             "status": {
                 "conditions": [{"type": "Ready", "status": "True"}],
                 "allocatable": {"cpu": "16", "memory": "32Gi", "ephemeral-storage": "64Gi", "pods": "100"}
@@ -188,7 +192,7 @@ impl FakeKubeApi {
         Self { port, state }
     }
 
-    pub(super) fn client(&self, root: &Path) -> odin_kube::KubeClient {
+    pub(crate) fn client(&self, root: &Path) -> odin_kube::KubeClient {
         odin_kube::KubeClient {
             client: kube::Client::try_from(kube::Config::new(
                 format!("http://127.0.0.1:{}", self.port)
@@ -216,6 +220,7 @@ impl FakeKubeApi {
         )
         .expect("kubeconfig mode");
         odin_kube::KubeConfig {
+            node_data_roots: Default::default(),
             kubeconfig: root.join("kubeconfig"),
             cluster: "fake".to_owned(),
             namespace: "default".to_owned(),
@@ -224,6 +229,15 @@ impl FakeKubeApi {
             teardown_timeout: std::time::Duration::from_secs(5),
             vpn_transport: None,
         }
+    }
+
+    /// Adds an object the cluster already holds, such as a Pending pod that fills the node.
+    pub(super) fn seed(&self, key: &str, object: Value) {
+        self.state
+            .lock()
+            .expect("API state")
+            .objects
+            .insert(key.to_owned(), object);
     }
 
     /// The Jobs the API holds right now, by name.

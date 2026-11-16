@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/science.review.verdict.output.json",
+  "title": "science.review.verdict output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "proposal": {
+      "type": "string"
+    },
+    "approve": {
+      "type": "boolean"
+    },
+    "reviewer": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "proposal",
+    "approve",
+    "reviewer"
+  ]
+}

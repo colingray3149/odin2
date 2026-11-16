@@ -8,6 +8,21 @@ use odin_omp::host_tools::delegation::ChildSessionControl as _;
 use odin_omp::live::supervisor::LiveSupervisor;
 use time::OffsetDateTime;
 
+#[test]
+fn declared_watch_does_not_redeliver_to_the_workload_owner() {
+    let owner = odin_domain::SeatId::new("kubert").unwrap();
+    let supervisor = odin_domain::SeatId::new("supervisor").unwrap();
+    let watchers = vec![owner.clone(), supervisor.clone()];
+    assert_eq!(
+        super::exclude_delivered_seat(watchers.clone(), Some(&owner)),
+        vec![supervisor]
+    );
+    assert_eq!(
+        super::exclude_delivered_seat(watchers.clone(), None),
+        watchers
+    );
+}
+
 /// This durable-read fixture must never launch or provision a session.
 struct ReportReadOnly;
 
@@ -283,6 +298,8 @@ async fn fixture_resting_pod_answer(
                 inputs: Vec::new(),
                 launching_run: None,
                 unresolved_hosts: Default::default(),
+                limits: None,
+                seeds: Vec::new(),
             }),
             served_revision: None,
             harness: None,
@@ -490,6 +507,7 @@ async fn assert_long_pod_report(failed: bool) {
         assert_eq!(
             pod.failure,
             Some(odin_omp::host_tools::delegation::SessionFailure {
+                event: 0,
                 code: POD_FAILURE_CODE.to_owned(),
                 message: POD_FAILURE_DETAIL.to_owned(),
             })
@@ -1183,4 +1201,87 @@ async fn a_child_ended_by_its_lifetime_is_reported_to_its_seat() {
         odin_omp::host_tools::delegation::DelegationPhase::Ended
     );
     fixture.finish().await;
+}
+
+/// A report that stays pending is stuck once, five minutes in however its turns go, and settling
+/// it resolves the stuck card once.
+#[test]
+fn a_pending_report_is_stuck_once_after_five_minutes_and_settling_clears_it() {
+    let start = tokio::time::Instant::now();
+    let operation = "op-live-stuck";
+    let mut stuck = super::StuckReports::default();
+    assert!(!stuck.pending(operation, start));
+    // Follow-up turns settle in between: the clock keeps running.
+    assert!(!stuck.pending(operation, start + super::STUCK_AFTER / 2));
+    assert!(stuck.pending(operation, start + super::STUCK_AFTER));
+    assert!(
+        !stuck.pending(operation, start + super::STUCK_AFTER * 2),
+        "one incident until settled"
+    );
+    assert_eq!(stuck.retain(&[]), vec![operation.to_owned()]);
+    assert!(stuck.retain(&[]).is_empty());
+}
+
+fn live_run(
+    state: odin_domain::huginn::KubeWorkloadState,
+    run: &str,
+    subject: Option<&str>,
+) -> super::ReplacementRun {
+    super::ReplacementRun {
+        state,
+        run: odin_domain::RunId::new(run).expect("run id"),
+        subject: subject.map(str::to_owned),
+    }
+}
+
+/// A cancelled run's ask follows the one live run that shares its subject,
+/// and refuses to guess when several do: a wrong key would close the ask on a
+/// stranger's report. Terminal runs, the cancelled run itself and runs for
+/// other subjects never count.
+#[test]
+fn a_replacement_is_named_only_when_no_other_run_shares_the_subject() {
+    use odin_domain::huginn::KubeWorkloadState::*;
+    let cancelled = "run:live:1:pod:research-deep:aaaa";
+    let replacement = "run:live:2:pod:research-deep:bbbb";
+    let subject = "zilanxiong public profile";
+    let one = vec![live_run(Running, replacement, Some(subject))];
+    assert_eq!(
+        super::replacement_among(cancelled, subject, one).run_id(),
+        replacement
+    );
+    // Two same-subject live runs: no declaration says which one serves the
+    // ask, so none is named.
+    let two = vec![
+        live_run(Running, replacement, Some(subject)),
+        live_run(Running, "run:live:3:pod:research-deep:cccc", Some(subject)),
+    ];
+    assert_eq!(
+        super::replacement_among(cancelled, subject, two),
+        super::Replacement::Ambiguous
+    );
+    // A finished or failed same-subject run is not a live carrier, so the
+    // surviving run is named alone.
+    let finished = vec![
+        live_run(
+            Succeeded,
+            "run:live:4:pod:research-deep:dddd",
+            Some(subject),
+        ),
+        live_run(Running, replacement, Some(subject)),
+    ];
+    assert_eq!(
+        super::replacement_among(cancelled, subject, finished).run_id(),
+        replacement
+    );
+    // The cancelled run never replaces itself, and other subjects never count.
+    let own = vec![live_run(Running, cancelled, Some(subject))];
+    assert_eq!(
+        super::replacement_among(cancelled, subject, own),
+        super::Replacement::None
+    );
+    let other = vec![live_run(Running, replacement, Some("another subject"))];
+    assert_eq!(
+        super::replacement_among(cancelled, subject, other),
+        super::Replacement::None
+    );
 }

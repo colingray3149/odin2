@@ -314,6 +314,8 @@ fn test_seat() -> SeatToml {
             max_parallel_runs: 4,
             max_sessions: 4,
             max_background_jobs: 4,
+            max_batch_launches: 256,
+            max_batch_inputs: 16,
             inline_seconds: 4,
             budget: Some(BudgetPolicyToml {
                 usd_micros: 30_000_000,
@@ -339,6 +341,7 @@ fn test_seat() -> SeatToml {
         tools: Some(SeatToolsToml {
             listing_bytes: None,
             deny: tool_names(&["search_one"]),
+            deferred: BTreeSet::new(),
             redirects: SeatToolRedirectsToml {
                 max_http_hops: 2,
                 allow_cross_origin: false,
@@ -402,13 +405,14 @@ fn memory_project(sources: &[&AtlasId]) -> ProjectToml {
         source_root: String::new(),
         default_seat: SeatId::new("sinmara").unwrap(),
         memory_namespaces: sources.iter().map(|source| (*source).clone()).collect(),
-        artifact_policy: "standard".to_owned(),
         privacy: None,
         accounts: Default::default(),
         review_verdict: None,
         repo: None,
+        hub_refresh_seconds: None,
         deploy: None,
         sphere: None,
+        agents: Default::default(),
     }
 }
 

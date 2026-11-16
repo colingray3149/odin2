@@ -32,6 +32,7 @@ fn conversation_transport_uses_exact_declared_project_not_lane_order() {
         answer_timeout_seconds: NonZeroU64::new(240).expect("bound"),
         stall_seconds: None,
         class: None,
+        escalation: None,
     });
     let seat_id = odin_domain::SeatId::new("coordinator").expect("seat");
     let mut ask_object = odin_registry::schema::parse_object_toml(

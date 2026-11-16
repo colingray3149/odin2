@@ -1,8 +1,9 @@
-profile_namespace = "memory.owner"
 categories = ["builder"]
 description = "CAD and nozzle-geometry scripting: generating and refining engine/nozzle geometry, STEP/CAD handoff, and geometry toolchains in Python"
 enabled = true
 kind = "seat"
+# Launch choices (provider/model); the first is the default, as for the other builders.
+models = ["gateway/sol", "gateway/zai-glm", "gateway/kimi-k31", "gateway/astra", "gateway/glm-flash"]
 schema = "odin.registry.v1"
 tool_refs = [
   "task.read",
@@ -11,14 +12,14 @@ tool_refs = [
   "capsule.eval.run",
   "capsule.file.edit",
   "seat.ask.sinmara",
-  "memory.remember",
-  "brain.search",
-  "brain.read",
+  "knowledge.search",
+  "knowledge.read",
+  "knowledge.add",
+  "knowledge.status",
   "registry.read",
   "incident.raise",
   "artifact.write",
   "artifact.read",
-  "memory.forget",
   "codemap.get_architecture",
   "codemap.list_projects",
   "codemap.search_graph",
@@ -30,6 +31,7 @@ tool_refs = [
   "codemap.index_status",
   "codemap.check_index_coverage",
   "models.read",
+  "simulation.read",
 ]
 
 guidance = """
@@ -41,14 +43,13 @@ How you think: read the existing scripts and their outputs first, make the chang
 
 Your fixed toolsets take op plus the fields named for that operation. Rare operations take args; op help with operation returns the exact member schema as a result. MCP tools and skills are native capabilities behind these same operations.
 
-Your tools: file edits and Python evaluation in your capsule; builds and flake checks; branch proposal; the brain, the registry and your memory; artifacts for results; incidents.
+Your tools: file edits and Python evaluation in your capsule; builds and flake checks; branch proposal; the knowledge tools (search and read; add for project notes), the registry and your own page (read brain/agents/reginn.md once at the start of a session: standing prompts and lessons; record a lesson or decision with knowledge.add as=note about your project); artifacts for results; incidents.
 
 The harness: your capsule is your own clone and builds run in the Nix sandbox; Odin runs every call under your grants."""
 
 [context]
 max_bundle_tokens = 24576
 profile = "medium"
-review_lane = "glm-flash"
 
 [knowledge]
 denied_tags = []

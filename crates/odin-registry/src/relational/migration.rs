@@ -29,7 +29,7 @@ impl MigrationRecord {
 }
 
 /// Reject missing, extra, or changed schema files so registry validation agrees with embedded migrations.
-pub const MIGRATION_REGISTRY: [MigrationRecord; 24] = [
+pub const MIGRATION_REGISTRY: [MigrationRecord; 27] = [
     MigrationRecord {
         version: 1,
         path: "schemas/0001_control_plane.sql",
@@ -174,6 +174,24 @@ pub const MIGRATION_REGISTRY: [MigrationRecord; 24] = [
         checksum: "66a7ecdf98fd124981ef43b16dd6a5db87641c43e2b6ba6020ca6666362d55a9",
         canonical: include_str!("../../../../schemas/0024_task_outcomes.sql"),
     },
+    MigrationRecord {
+        version: 25,
+        path: "schemas/0025_drop_budget_reservations.sql",
+        checksum: "48c49712f2a21f2c0f161c1ae35a4d316dda2a911b93858d359b96c0758c3735",
+        canonical: include_str!("../../../../schemas/0025_drop_budget_reservations.sql"),
+    },
+    MigrationRecord {
+        version: 26,
+        path: "schemas/0026_operation_fences.sql",
+        checksum: "71917cb526a6fe58517bb5c05cc38ca82611a78d738136a3ccd927cbd2007d7d",
+        canonical: include_str!("../../../../schemas/0026_operation_fences.sql"),
+    },
+    MigrationRecord {
+        version: 27,
+        path: "schemas/0027_recovery_receipts.sql",
+        checksum: "dd1c23e5706d7198b1aba3ec70da5bf54d903510abd0beac8581533a105291e9",
+        canonical: include_str!("../../../../schemas/0027_recovery_receipts.sql"),
+    },
 ];
 
 /// Production checks require complete, ordered migration files; fixture catalogs may be partial.
@@ -291,6 +309,12 @@ mod tests {
         for record in &MIGRATION_REGISTRY {
             std::fs::write(root.join(record.path), record.canonical).unwrap();
         }
+        std::fs::create_dir_all(root.join("schemas/campaign")).unwrap();
+        std::fs::write(
+            root.join("schemas/campaign/0001_campaign_store.sql"),
+            "SELECT 1;",
+        )
+        .unwrap();
         let context = RelationContext::new(&root);
         assert!(migration_inventory_findings(&context).is_empty());
 

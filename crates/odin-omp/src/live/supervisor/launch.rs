@@ -155,6 +155,10 @@ impl LiveSupervisor {
             .await
             .map_err(live_error)?;
         let mut summary = restore_summary(&*self.ledger, &session).await?;
+        if reclaim {
+            summary.provider = manifest.provider.clone();
+            summary.model = manifest.model.clone();
+        }
         summary.quiet_seconds = self
             .bindings
             .read()
@@ -189,6 +193,16 @@ impl LiveSupervisor {
                 .and_then(|binding| binding.turn_budget),
         )?;
         *ownership.actor.lock().map_err(unavailable)? = Some(actor.clone());
+        if reclaim && manifest.workload.is_none() {
+            actor
+                .append(LiveEventBody::ModelReclaimed(
+                    odin_domain::huginn::ModelReclaimed {
+                        provider: manifest.provider.clone(),
+                        model: manifest.model.clone(),
+                    },
+                ))
+                .await?;
+        }
         // A reclaim advances the session's epoch in the durable manifest,
         // and that advance is itself a journal fact: it is always
         // published at the head — even when the state name is unchanged —
@@ -231,6 +245,7 @@ impl LiveSupervisor {
                         return;
                     };
                     if supervisor.heartbeat_due(session, Some(interval))
+                        && supervisor.heartbeat_changed(&seat, session).await
                         && prompt_heartbeat(&heartbeat_actor, session).await.is_err()
                     {
                         supervisor.clear_heartbeat(session);
@@ -318,6 +333,7 @@ async fn prompt_heartbeat(
             body: LiveCommandBody::Prompt {
                 message,
                 owner_text: None,
+                wake: false,
             },
         })
         .await

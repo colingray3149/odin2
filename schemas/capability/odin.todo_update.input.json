@@ -5,10 +5,26 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "todoId": { "type": "string", "minLength": 1 },
-    "status": { "enum": ["pending", "active", "blocked", "completed", "cancelled"] },
-    "expectedRevision": { "type": "integer", "minimum": 0 },
-    "timestampMs": { "type": "integer" }
+    "todoId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "active",
+        "blocked",
+        "completed",
+        "cancelled"
+      ]
+    },
+    "expectedRevision": {
+      "type": "integer",
+      "minimum": 0
+    }
   },
-  "required": ["todoId", "status", "expectedRevision", "timestampMs"]
+  "required": [
+    "todoId",
+    "status"
+  ]
 }

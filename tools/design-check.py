@@ -62,7 +62,7 @@ GLOBS = [
     "!**/node_modules/**", "!target/**",
 ]
 QUIET_TOML = re.compile(r"\[quiet\]")
-QUIET_DEFINITION = "crates/odin-hermes/src/conversation/prompt.rs"
+QUIET_DEFINITION = "crates/odin-domain/src/huginn/session.rs"
 QUIET_DEF_LINE = re.compile(r"""\bconst\s+QUIET_REPLY\s*:\s*&str\s*=\s*"\[quiet\]"\s*;""")
 IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 FLEET_HOST = re.compile(r"fd7a:115c:a1e0|\.ts\.net|\b(?:mini|pc|laptop|workspace)\b")
@@ -100,7 +100,7 @@ def production_path(path):
 
 
 def canonical_quiet(root, path, line, text):
-    """The one allowed token: the single QUIET_REPLY initializer in prompt.rs."""
+    """The one allowed token: the single QUIET_REPLY initializer in odin-domain's huginn session."""
     if path != QUIET_DEFINITION or text != '"[quiet]"':
         return False
     source = pathlib.Path(root, path).read_text(errors="replace").splitlines()

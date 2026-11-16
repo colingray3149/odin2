@@ -15,6 +15,7 @@ use crate::host_tools::operations::{
     admission_digest, resolve_session_generation, session_capsule_id, DeclaredOperationCatalog,
     HostToolOperations, LiveSessionBindings, OperationStackInputs, SessionOperationBinding,
 };
+use crate::host_tools::result_budget::SessionResultBudgets;
 use crate::host_tools::{
     BrowserCapabilityOwner, CanonicalV2CapabilityOwner, CompiledHostToolCatalog, HostToolRegistry,
     KubeCapabilityOwner, ModelVisibleToolConfig,
@@ -31,6 +32,15 @@ use crate::uri::ScopedUriRouter;
 use super::{validate_served_shape, ProductionBridgeRuntimeFactory};
 
 impl ProductionBridgeRuntimeFactory {
+    /// Use the same live authority shared by all bridges of this factory.
+    pub fn recover_cfd(
+        &self,
+        correlation: &odin_types::CorrelationId,
+    ) -> Result<odin_kernel::operation::OperationDecision, odin_kernel::operation::OperationRejection>
+    {
+        self.operations.recover_cfd(correlation)
+    }
+
     pub fn new(
         config: ProductionBridgeRuntimeConfig,
         owner: Arc<dyn BrowserCapabilityOwner>,
@@ -222,6 +232,11 @@ impl ProductionBridgeRuntimeFactory {
             AdapterStackConfig {
                 adapters: Arc::clone(&config.adapters),
                 status_ttl: config.adapter_status_ttl,
+                promotion_verifier: config.promotion_verifier.clone(),
+                campaign_validator: config.campaign_validator.clone(),
+                spend_validator: config.spend_validator.clone(),
+                campaign_recorder: config.campaign_recorder.clone(),
+                spend_recorder: config.spend_recorder.clone(),
             },
             Arc::clone(&executor),
             Arc::clone(&config.schema_catalog),
@@ -246,7 +261,9 @@ impl ProductionBridgeRuntimeFactory {
             Arc::clone(&config.operation_authority_provider),
         )
         .map_err(|error| invalid(error.to_string()))?;
-        let operations = operations.with_toolsets(config.toolsets.clone());
+        let operations = operations
+            .with_toolsets(config.toolsets.clone())
+            .with_deferred(config.deferred_toolsets.clone());
         let operations = match &config.jobs {
             Some(jobs) => operations.with_jobs(Arc::clone(jobs)),
             None => operations,
@@ -263,6 +280,12 @@ impl ProductionBridgeRuntimeFactory {
             Some(calls) => operations.with_approved_calls(Arc::clone(calls)),
             None => operations,
         };
+        let operations = match &config.root_plan_consent {
+            Some(request) => operations.with_root_plan_consent(Arc::clone(request)),
+            None => operations,
+        };
+        // Filled when a workload session opens with a declared tool-result ceiling.
+        let session_result_budgets = SessionResultBudgets::default();
         let mut result_budgets = config.tool_result_budgets.clone();
         for (seat, policy) in &config.brain_policies {
             if let Some(context) = &policy.context {
@@ -275,6 +298,7 @@ impl ProductionBridgeRuntimeFactory {
         let operations =
             operations.with_result_transformer(crate::host_tools::result_budget::transformer(
                 result_budgets,
+                Arc::clone(&session_result_budgets),
                 config.artifact_root.clone(),
                 Arc::clone(&config.bridge_ledger),
             ));
@@ -394,7 +418,6 @@ impl ProductionBridgeRuntimeFactory {
             brains: brains.clone(),
             sessions: Arc::downgrade(&session_bindings),
             router: uri_router.clone(),
-            embedding: config.brain_embedding.clone(),
         });
         if brain_tools.set(tools).is_err() {
             return Err(LiveError::unavailable(
@@ -440,8 +463,10 @@ impl ProductionBridgeRuntimeFactory {
             workload_carrier: config.workload_carrier,
             brains,
             core_tokens: Mutex::new(BTreeMap::new()),
+            session_result_budgets,
             embedding: config.brain_embedding,
             seat_sandboxes: config.seat_sandboxes,
+            seat_read_roots: config.seat_read_roots,
             project_spheres: config.project_spheres,
             seat_memory_max: config.seat_memory_max,
             sandbox_host: config.sandbox_host,

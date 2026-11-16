@@ -21,8 +21,9 @@ effect_class = "R3"
 seat_tags = ["operator"]
 # One bounded ingest of a multi-gigabyte export runs as one finite operator
 # command; the ceiling covers the streamed parse plus staging and index
-# build at the declared batch bounds (30 minutes).
-timeout_seconds = 1800
+# build at the declared batch bounds. archive.text (2.3M chunks) took 91 min on
+# 2026-11-04, so the ceiling is four hours, inside the nightly window.
+timeout_seconds = 14400
 idempotency = "required"
 retry = { max_attempts = 0 }
 approval_policy = "none"

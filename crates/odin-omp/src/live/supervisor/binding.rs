@@ -298,6 +298,17 @@ impl LiveSessionLauncher for LiveBridgeLauncher {
                 .await
                 .map_err(bridge_binding_error)?,
         );
+        // A resumed transcript can restore its own last model after argv is
+        // parsed. Reassert the composed launch pair before accepting turns.
+        if reclaim && manifest.workload.is_none() {
+            if let Err(error) = bridge
+                .set_model(manifest.provider.as_str(), manifest.model.as_str())
+                .await
+            {
+                let _ = bridge.stop().await;
+                return Err(bridge_binding_error(error));
+            }
+        }
         let coordinator = self
             .child_stop
             .lock()

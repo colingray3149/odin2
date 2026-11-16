@@ -139,18 +139,27 @@ fn declared_tokenizer(
     Ok(declared)
 }
 
+/// The brain identity of a card's declared context counter.
+fn card_tokenizer_id(tokenizer: odin_registry::ModelTokenizer) -> &'static str {
+    match tokenizer {
+        odin_registry::ModelTokenizer::Qwen3 => odin_brain::context::QWEN3_TOKENIZER_ID,
+        odin_registry::ModelTokenizer::Estimate => odin_brain::context::ESTIMATE_TOKENIZER_ID,
+    }
+}
+
 /// The declared context window of every served seat's launch options: the
 /// serving model's window and tokenizer from its resolved brain policy, and
-/// every other lane's window and tokenizer from `brain.lane_windows` (byte
-/// counted when it declares none). A lane without a `brain.lane_windows`
-/// entry takes its model card's window (`card_windows`, keyed by card id
-/// `provider/lane`). A launch option with neither runs unguarded; a declared
-/// switch to it is refused by the session's control seam.
+/// every other lane's window from `brain.lane_windows` or its model card
+/// (`card_windows`, keyed by card id `provider/lane`). A lane's tokenizer is
+/// its own declaration, else its card's counter (`card_tokenizers`), else
+/// exact bytes. A launch option with neither window runs unguarded; a
+/// declared switch to it is refused by the session's control seam.
 pub(super) fn served_lane_windows(
     config: &OdindConfig,
     brain_policies: &BTreeMap<odin_domain::SeatId, odin_brain::config::EffectiveBrainPolicy>,
     seat_bindings: &[odin_omp::live::supervisor::LiveSeatBinding],
     card_windows: &BTreeMap<String, u64>,
+    card_tokenizers: &BTreeMap<String, odin_registry::ModelTokenizer>,
 ) -> Result<BTreeMap<odin_domain::SeatId, Vec<odin_omp::live::runtime::LaneWindow>>, String> {
     let Some(brain) = config.brain.as_ref() else {
         return Ok(BTreeMap::new());
@@ -163,6 +172,10 @@ pub(super) fn served_lane_windows(
         let mut lanes = Vec::new();
         for option in &binding.launch_options {
             let model = option.model.as_str();
+            let card_id = format!("{}/{model}", option.provider.as_str());
+            let card_tokenizer = card_tokenizers
+                .get(&card_id)
+                .map(|tokenizer| card_tokenizer_id(*tokenizer));
             let (window, tokenizer) = if model == policy.model.name.as_str() {
                 (
                     policy.model.context_window_tokens,
@@ -172,12 +185,11 @@ pub(super) fn served_lane_windows(
                 (
                     declared.window(),
                     declared_tokenizer(
-                        declared.tokenizer(),
+                        declared.tokenizer().or(card_tokenizer),
                         &format!("brain.lane_windows.{model}.tokenizer"),
                     )?,
                 )
             } else {
-                let card_id = format!("{}/{model}", option.provider.as_str());
                 let Some(tokens) = card_windows.get(&card_id) else {
                     continue;
                 };
@@ -189,7 +201,7 @@ pub(super) fn served_lane_windows(
                     })?;
                 (
                     window,
-                    declared_tokenizer(None, &format!("model card {card_id} tokenizer"))?,
+                    declared_tokenizer(card_tokenizer, &format!("model card {card_id} tokenizer"))?,
                 )
             };
             lanes.push(odin_omp::live::runtime::LaneWindow {
@@ -1055,8 +1067,16 @@ pub(super) fn brain_sources(
                 let seat = key.strip_prefix("memory.").ok_or_else(|| {
                     format!("brain.sources.{key}: a memory source id is memory.<seat>")
                 })?;
-                let namespace = odin_brain::source::silverbullet::memory_namespace(seat)
-                    .map_err(|error| format!("brain.sources.{key}: {error}"))?;
+                // A seat's declared profile source reads the owner's me/ pages.
+                let namespace = if policies
+                    .values()
+                    .any(|policy| policy.profile_namespace.as_ref() == Some(&id))
+                {
+                    odin_brain::source::silverbullet::OWNER_PROFILE_NAMESPACE.to_owned()
+                } else {
+                    odin_brain::source::silverbullet::memory_namespace(seat)
+                        .map_err(|error| format!("brain.sources.{key}: {error}"))?
+                };
                 let scope = odin_brain::source::silverbullet::VaultScope::generated_only(
                     &namespace,
                     &vault.excluded_namespaces,

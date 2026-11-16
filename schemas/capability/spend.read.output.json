@@ -7,6 +7,7 @@
   "properties": {
     "seats": { "type": "array", "items": { "allOf": [ { "$ref": "#/$defs/tagCost" }, { "required": ["seat"] } ] } },
     "workloads": { "type": "array", "items": { "allOf": [ { "$ref": "#/$defs/tagCost" }, { "required": ["workload"] } ] } },
+    "compute": { "description": "Compute spend (leases, offload runs), apart from the model total; each row names its source.", "type": "array", "items": { "type": "object", "additionalProperties": false, "properties": { "label": { "type": "string" }, "usd": { "type": "number", "minimum": 0 }, "source": { "type": "string" } }, "required": ["label", "usd", "source"] } },
     "sessions": { "type": "array", "items": { "allOf": [ { "$ref": "#/$defs/tagCost" }, { "required": ["session"] } ] } },
     "untagged_usd": { "type": "number", "minimum": 0 },
     "attribution_error": { "type": "string" },

@@ -42,7 +42,107 @@ pub struct PodExecToml {
         skip_serializing_if = "super::workload::WorkloadTransport::is_direct"
     )]
     pub transport: super::workload::WorkloadTransport,
+    /// How the tool joins recon chains; absent keeps it out of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recon: Option<PodExecRecon>,
 }
+
+/// The kinds of entity recon chains carry between tools.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReconKind {
+    Username,
+    Email,
+    Phone,
+    Domain,
+    Host,
+    Url,
+    Ip,
+    Name,
+    Image,
+    /// A fact a source holds about an entity (a site an address is registered on, a contract a
+    /// company won): a finding, never run on.
+    Record,
+}
+
+/// The kind a recon tool takes, or the kinds it takes alike (a web search takes a name, an
+/// address or a handle the same way).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ReconTakes {
+    One(ReconKind),
+    Many(Vec<ReconKind>),
+}
+
+impl ReconTakes {
+    pub fn kinds(&self) -> Vec<ReconKind> {
+        match self {
+            Self::One(kind) => vec![*kind],
+            Self::Many(kinds) => kinds.clone(),
+        }
+    }
+}
+
+/// Where a recon tool's findings are read from.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReconOutput {
+    /// The files the tool wrote under its `/export` argv paths.
+    #[default]
+    Files,
+    /// What the tool printed.
+    Stdout,
+}
+
+/// `[exec.recon]`: the entity kind a tool takes and the input field it fills, the kinds its output
+/// names, and how that output is read. odin-recon runs the tool on every entity of `takes`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PodExecRecon {
+    pub takes: ReconTakes,
+    /// The required argv input field the entity fills.
+    pub field: String,
+    /// The kinds read from its output; empty keeps the output as evidence only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub finds: Vec<ReconKind>,
+    /// Only strings under these JSON keys or CSV columns are read; empty reads every string
+    /// unless `named` is declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<String>,
+    /// JSON keys whose string is one finding of that kind as it stands (`fullname = "name"`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub named: BTreeMap<String, ReconKind>,
+    /// A JSON object holding one of these keys counts only when the key has a listed value
+    /// (`status = ["Found"]` keeps a scanner's hits and drops its misses).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rows: BTreeMap<String, Vec<String>>,
+    /// The key of an object in each row whose facts describe that row's findings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Argv added when the call is deep (`-a`: every site instead of the top ones).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deep: Vec<String>,
+    #[serde(default)]
+    pub from: ReconOutput,
+    /// Of what it printed, only lines starting with this are read (its findings, not its banner).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<String>,
+    /// Fixed values of the other required input fields.
+    #[serde(default, rename = "with", skip_serializing_if = "BTreeMap::is_empty")]
+    pub fixed: BTreeMap<String, String>,
+    /// The deepest chain step it runs on; absent runs at every depth.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<u8>,
+    /// One run takes every entity of a round, comma-joined, instead of one run each.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub batch: bool,
+    /// The flag that takes a proxy URL, when the tool can leave through a pool exit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<String>,
+}
+
+/// The deepest step a recon chain goes.
+pub const RECON_MAX_DEPTH: u8 = 3;
 
 /// What a pod tool reads on stdin. `url` fetches a public page. `source`
 /// hands one required string field through as UTF-8 bytes. The two are exclusive.
@@ -59,6 +159,9 @@ pub struct PodExecStdin {
     /// The required string input field written to the tool as UTF-8 bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// The tool reads `{"plan", "request"}`: the calling pod's recon plan and the call's input.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub plan: bool,
 }
 
 impl PodExecStdin {
@@ -173,6 +276,10 @@ impl PodExecToml {
         }
         if let Some(stdin) = &self.stdin {
             match (&stdin.url, &stdin.source) {
+                (None, None) if stdin.plan && stdin.render.is_none() => {}
+                _ if stdin.plan => {
+                    return Err("[exec] stdin plan takes no url, source or render".to_owned())
+                }
                 (Some(url), None) => {
                     if !required(url) || property_type(url) != Some("string") {
                         return Err(format!(
@@ -202,11 +309,18 @@ impl PodExecToml {
                         ));
                     }
                 }
-                _ => return Err("[exec] stdin must name exactly one of url or source".to_owned()),
+                _ => {
+                    return Err(
+                        "[exec] stdin must name exactly one of url, source or plan".to_owned()
+                    )
+                }
             }
         }
         if self.view.is_some() && self.stdin.as_ref().is_some_and(PodExecStdin::fetches) {
             return Err("[exec] view cannot share a table that fetches a page".to_owned());
+        }
+        if let Some(recon) = &self.recon {
+            self.validate_recon(recon, &required)?;
         }
         if let Some(view) = &self.view {
             if !self
@@ -226,6 +340,80 @@ impl PodExecToml {
             }
         }
         Ok(())
+    }
+
+    /// The entity fills one argv field; every other required argv field is fixed.
+    fn validate_recon(
+        &self,
+        recon: &PodExecRecon,
+        required: &dyn Fn(&str) -> bool,
+    ) -> Result<(), String> {
+        let fields: Vec<&str> = self
+            .argv
+            .iter()
+            .filter_map(|token| placeholder(token).map(|(_, field, _)| field))
+            .collect();
+        if !fields.contains(&recon.field.as_str()) {
+            return Err(format!(
+                "[exec.recon] field {:?} is not an argv placeholder",
+                recon.field
+            ));
+        }
+        if let Some(open) = fields.iter().find(|field| {
+            **field != recon.field && required(field) && !recon.fixed.contains_key(**field)
+        }) {
+            return Err(format!(
+                "[exec.recon] argv field {open:?} needs a fixed value in `with`"
+            ));
+        }
+        if let Some((key, kind)) = recon
+            .named
+            .iter()
+            .find(|(_, kind)| !recon.finds.contains(kind))
+        {
+            return Err(format!(
+                "[exec.recon] named {key:?} is a {kind:?}, which finds does not list"
+            ));
+        }
+        if recon.max_depth.is_some_and(|depth| depth > RECON_MAX_DEPTH) {
+            return Err(format!(
+                "[exec.recon] max_depth is at most {RECON_MAX_DEPTH}"
+            ));
+        }
+        if recon
+            .proxy
+            .as_ref()
+            .is_some_and(|flag| !flag.starts_with('-') || flag.chars().any(char::is_whitespace))
+        {
+            return Err("[exec.recon] proxy is not one flag token".to_owned());
+        }
+        Ok(())
+    }
+
+    /// One step of a pod's recon plan: this tool as odin-recon runs it, with the capability's
+    /// own timeout. `None` when the tool declares no `[exec.recon]`.
+    pub fn recon_step(&self, capability: &str, timeout_seconds: u32) -> Option<Value> {
+        let recon = self.recon.as_ref()?;
+        Some(serde_json::json!({
+            "capability": capability,
+            "executable": self.executable,
+            "argv": self.argv,
+            "takes": recon.takes.kinds(),
+            "field": recon.field,
+            "finds": recon.finds,
+            "keys": recon.keys,
+            "named": recon.named,
+            "rows": recon.rows,
+            "detail": recon.detail,
+            "deep": recon.deep,
+            "from": recon.from,
+            "lines": recon.lines,
+            "with": recon.fixed,
+            "max_depth": recon.max_depth.unwrap_or(RECON_MAX_DEPTH),
+            "batch": recon.batch,
+            "proxy": recon.proxy,
+            "timeout": timeout_seconds,
+        }))
     }
 
     /// The tool's argv after the executable, rendered from schema-validated

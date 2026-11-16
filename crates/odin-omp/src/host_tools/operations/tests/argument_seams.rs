@@ -147,7 +147,7 @@ fn resolvable_ids_resolve_at_the_seam_and_name_the_values_on_failure() {
         "subject": "s",
         "urgency": "medium",
     });
-    let normalized = normalize_capability_arguments(&ask, &narrowing, arguments)
+    let normalized = normalize_capability_arguments(&ask, None, &narrowing, arguments)
         .expect("a unique prefix resolves");
     assert_eq!(normalized["project"], json!("solar"));
 
@@ -157,7 +157,7 @@ fn resolvable_ids_resolve_at_the_seam_and_name_the_values_on_failure() {
         "subject": "s",
         "urgency": "medium",
     });
-    let error = normalize_capability_arguments(&ask, &narrowing, ambiguous)
+    let error = normalize_capability_arguments(&ask, None, &narrowing, ambiguous)
         .expect_err("an ambiguous prefix is rejected with the values named");
     assert!(matches!(
         error,
@@ -166,6 +166,62 @@ fn resolvable_ids_resolve_at_the_seam_and_name_the_values_on_failure() {
                 && detail.contains("\"odin\", \"solar\", \"surreal\"")
                 && detail.contains("\"s\" is not")
     ));
+}
+
+#[test]
+fn seat_ask_accepts_the_shapes_models_send() {
+    let mut ask = contract(
+        SEAT_ASK_CAPABILITY,
+        SEAT_ASK_TOOL,
+        SEAT_ASK_HANDLER,
+        SEAT_ASK_EXTRACTOR,
+        EffectClass::R3,
+    );
+    ask.delegate_to = Some(odin_domain::SeatId::new("kubert").unwrap());
+    let narrowing = json!({
+        "type": "object",
+        "properties": {"project": {"type": "string", "enum": ["odin", "solar"]}}
+    });
+    let scope = odin_domain::Scope {
+        project: Some(odin_domain::ProjectId::new("solar").unwrap()),
+        ..odin_domain::Scope::default()
+    };
+    let shaped = normalize_capability_arguments(
+        &ask,
+        Some(&scope),
+        &narrowing,
+        json!({
+            "message": "\nCheck the solar build\nIt fails on main.",
+            "urgency": "low",
+            "options": ["retry", {"label": "skip", "action_ref": "skip"}],
+        }),
+    )
+    .expect("the accepted variants shape");
+    assert_eq!(
+        shaped["question"],
+        json!("\nCheck the solar build\nIt fails on main.")
+    );
+    assert!(shaped.get("message").is_none());
+    assert_eq!(shaped["subject"], json!("Check the solar build"));
+    assert_eq!(shaped["project"], json!("solar"));
+    assert_eq!(
+        shaped["options"],
+        json!([
+            {"label": "retry", "action_ref": "retry"},
+            {"label": "skip", "action_ref": "skip"}
+        ])
+    );
+
+    // An escalation surface has no project: a supplied one is dropped.
+    let escalation = json!({"type": "object", "properties": {"question": {"type": "string"}}});
+    let shaped = normalize_capability_arguments(
+        &ask,
+        None,
+        &escalation,
+        json!({"project": "odin", "subject": "s", "question": "q", "urgency": "low"}),
+    )
+    .unwrap();
+    assert!(shaped.get("project").is_none());
 }
 
 #[test]
@@ -291,9 +347,8 @@ fn file_edit_explicit_null_preimage_creates_exact_bytes_and_is_journaled() {
 
 #[test]
 fn projection_routes_and_timeouts_come_from_the_served_publication() {
-    use super::fixture::BRAIN_SEARCH_TOOL;
     use crate::host_tools::operations::RevisionMaterialSource;
-    let fixture = Fixture::for_brain();
+    let fixture = Fixture::for_eval();
     let material = fixture
         .material_source
         .material_at(fixture.binding.served_revision)
@@ -302,7 +357,7 @@ fn projection_routes_and_timeouts_come_from_the_served_publication() {
     let lane = fixture.scope.lane.clone().unwrap();
     let policy = material.seat_operation_bindings[&(seat.clone(), lane.clone())].clone();
     let mut contracts = (*material.contracts).clone();
-    let id = material.tool_index[BRAIN_SEARCH_TOOL].clone();
+    let id = material.tool_index[EVAL_TOOL].clone();
     let contract = contracts.get_mut(&id).unwrap();
     contract.toolset = Some("renamed".into());
     contract.op = Some("lookup".into());
@@ -314,21 +369,21 @@ fn projection_routes_and_timeouts_come_from_the_served_publication() {
     let mut binding = fixture.binding.clone();
     binding.served_revision = revision;
     let view = fixture.operations.projection_view(&binding).unwrap();
-    let admitted = std::collections::BTreeSet::from([BRAIN_SEARCH_TOOL.to_owned()]);
-    assert!(view
-        .prepare_tool_call(
-            &admitted,
-            "renamed",
-            json!({"op":"lookup","query":"marker"}),
-            Some(&fixture.scope)
-        )
-        .is_ok());
+    let admitted = std::collections::BTreeSet::from([EVAL_TOOL.to_owned()]);
+    if let Err(error) = view.prepare_tool_call(
+        &admitted,
+        "renamed",
+        json!({"op":"lookup","interpreter":"python","source":"print(1)","timeout_ms":1000,"max_stdout_bytes":64,"max_stderr_bytes":64}),
+        Some(&fixture.scope),
+    ) {
+        panic!("the served publication routes the renamed toolset: {error:?}");
+    }
     let current = fixture
         .operations
         .prepare_tool_call(
             &admitted,
             "renamed",
-            json!({"op":"lookup","query":"marker"}),
+            json!({"op":"lookup","interpreter":"python","source":"print(1)","timeout_ms":1000,"max_stdout_bytes":64,"max_stderr_bytes":64}),
             Some(&fixture.scope),
         )
         .err()
@@ -338,7 +393,81 @@ fn projection_routes_and_timeouts_come_from_the_served_publication() {
         "{current:?}"
     );
     assert_eq!(
-        view.declared_timeout(BRAIN_SEARCH_TOOL),
+        view.declared_timeout(EVAL_TOOL),
         Some(std::time::Duration::from_secs(77))
+    );
+}
+
+/// The listing's call shapes reach the member they name: fields as `args` JSON text, a deferred
+/// toolset through `more`, `ask` with `to`, and a wrong op answered with the real ones.
+#[test]
+fn listed_call_shapes_route_to_their_member_and_a_wrong_op_names_the_real_ones() {
+    use crate::host_tools::operations::{PreparedToolCall, RevisionMaterialSource};
+    let fixture = Fixture::for_eval();
+    let material = fixture
+        .material_source
+        .material_at(fixture.binding.served_revision)
+        .unwrap();
+    let seat = fixture.scope.seat.clone().unwrap();
+    let lane = fixture.scope.lane.clone().unwrap();
+    let policy = material.seat_operation_bindings[&(seat.clone(), lane.clone())].clone();
+    let mut contracts = (*material.contracts).clone();
+    let id = material.tool_index[EVAL_TOOL].clone();
+    let contract = contracts.get_mut(&id).unwrap();
+    contract.toolset = Some("sample".into());
+    contract.op = Some("ask_kubert".into());
+    let revision = fixture.binding.served_revision + 1;
+    fixture
+        .material_source
+        .add_generation(revision, &contracts, &policy, seat, lane);
+    let mut binding = fixture.binding.clone();
+    binding.served_revision = revision;
+    let view = fixture.operations.projection_view(&binding).unwrap();
+    let admitted = std::collections::BTreeSet::from([EVAL_TOOL.to_owned()]);
+    let fields = json!({"interpreter":"python","source":"print(1)","timeout_ms":1000,"max_stdout_bytes":64,"max_stderr_bytes":64});
+    let call = |tool: &str, arguments: serde_json::Value| {
+        view.prepare_tool_call(&admitted, tool, arguments, Some(&fixture.scope))
+    };
+    for (tool, arguments) in [
+        (
+            "sample",
+            json!({"op":"ask_kubert","args":fields.to_string()}),
+        ),
+        (
+            "sample",
+            json!({"op":"ask","to":"Kubert","args":fields.clone()}),
+        ),
+        (
+            "more",
+            json!({"tool":"sample","op":"ask_kubert","args":fields.to_string()}),
+        ),
+    ] {
+        match call(tool, arguments.clone()) {
+            Ok(PreparedToolCall::Call {
+                name,
+                arguments: sent,
+                ..
+            }) => {
+                assert_eq!(name, EVAL_TOOL);
+                assert_eq!(sent["source"], "print(1)", "{arguments}");
+            }
+            other => panic!("{tool} {arguments}: {:?}", other.err()),
+        }
+    }
+    let wrong = call("sample", json!({"op":"lookup"}))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        wrong.contains("sample has no op \"lookup\"") && wrong.contains("ask_kubert"),
+        "{wrong}"
+    );
+    let nobody = call("sample", json!({"op":"ask","to":"loki"}))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        nobody.contains("sample.ask needs to: one of kubert"),
+        "{nobody}"
     );
 }

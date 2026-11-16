@@ -29,14 +29,138 @@ pub(crate) fn require_placement_authority(
     Ok(())
 }
 
+/// The refusal prefix when every admitted node is short of room right now; the launch
+/// queue waits on it, while other refusals settle.
+pub const CAPACITY_REFUSAL: &str = "no admitted node has room for the pod's requests";
+const HOSTNAME_LABEL: &str = "kubernetes.io/hostname";
+
+/// What a node must carry beyond room: exact labels, and integer labels at or above a floor.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NodeRequirements {
+    pub labels: BTreeMap<String, String>,
+    pub minimums: BTreeMap<String, u64>,
+    /// Node taints (`odin.dev/<name>`) the launch tolerates. Without `external`, a node must
+    /// carry the fleet trust label, which only the server sets.
+    pub tolerate: std::collections::BTreeSet<String>,
+}
+
+impl NodeRequirements {
+    pub fn labels(labels: BTreeMap<String, String>) -> Self {
+        Self {
+            labels,
+            ..Self::default()
+        }
+    }
+
+    /// Each requirement `node_labels` fails, as `key=value` or `key>=floor`.
+    pub fn missing(&self, node_labels: &BTreeMap<String, String>) -> Vec<String> {
+        let trust = (!self
+            .tolerate
+            .contains(odin_registry::schema::EXTERNAL_TOLERATION))
+        .then(|| {
+            (
+                odin_registry::schema::NODE_TRUST_LABEL.to_owned(),
+                odin_registry::schema::NODE_TRUST_FLEET.to_owned(),
+            )
+        });
+        let exact = self
+            .labels
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .chain(trust)
+            .filter(|(key, value)| node_labels.get(key) != Some(value))
+            .map(|(key, value)| format!("{key}={value}"));
+        let floors = self
+            .minimums
+            .iter()
+            .filter(|(key, floor)| {
+                node_labels
+                    .get(*key)
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .is_none_or(|value| value < **floor)
+            })
+            .map(|(key, floor)| format!("{key}>={floor}"));
+        exact.chain(floors).collect()
+    }
+}
+
+pub fn is_capacity_refusal(error: &KubeError) -> bool {
+    matches!(error, KubeError::Unavailable { reason } if reason.starts_with(CAPACITY_REFUSAL))
+}
+
 /// Returns a node name for required node affinity. The caller must retain scheduler
 /// admission, rather than bypassing resource checks through `PodSpec.node_name`.
 pub async fn choose_node(
     client: &KubeClient,
-    required_labels: &BTreeMap<String, String>,
+    required: &NodeRequirements,
     request: KubeResources,
     target: Option<&str>,
+    data: &[crate::workload::WorkloadDataMount],
 ) -> Result<String, KubeError> {
+    let allowed = data_admitting(&client.config, data);
+    if allowed.is_empty() && !data.is_empty() {
+        return Err(KubeError::rejected(format!(
+            "no allowed node declares data roots covering {}",
+            data_paths(data)
+        )));
+    }
+    let (nodes, pods) = observe(client).await?;
+    select_node(nodes, &pods, &allowed, required, request, target)
+}
+
+/// The allowed nodes whose declared data roots cover every data mount's host path.
+pub(crate) fn data_admitting(
+    config: &crate::KubeConfig,
+    data: &[crate::workload::WorkloadDataMount],
+) -> std::collections::BTreeSet<String> {
+    config
+        .allowed_nodes
+        .iter()
+        .filter(|node| node_covers(config, node, data))
+        .cloned()
+        .collect()
+}
+
+pub(crate) fn node_covers(
+    config: &crate::KubeConfig,
+    node: &str,
+    data: &[crate::workload::WorkloadDataMount],
+) -> bool {
+    data.iter().all(|mount| {
+        config.node_data_roots.get(node).is_some_and(|roots| {
+            roots
+                .iter()
+                .any(|root| std::path::Path::new(&mount.host_path).starts_with(root))
+        })
+    })
+}
+
+pub(crate) fn data_paths(data: &[crate::workload::WorkloadDataMount]) -> String {
+    data.iter()
+        .map(|mount| mount.host_path.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Refuses before a pod is created unless one of `nodes` has room for `request`; the
+/// scheduler would otherwise leave it Pending. Returns the node it fits on.
+pub async fn require_room(
+    client: &KubeClient,
+    nodes: &std::collections::BTreeSet<String>,
+    request: KubeResources,
+) -> Result<String, KubeError> {
+    let (candidates, pods) = observe(client).await?;
+    select_node(
+        candidates,
+        &pods,
+        nodes,
+        &NodeRequirements::default(),
+        request,
+        None,
+    )
+}
+
+async fn observe(client: &KubeClient) -> Result<(Vec<Node>, Vec<Pod>), KubeError> {
     let node_api: kube::Api<Node> = kube::Api::all(client.client.clone());
     let pod_api: kube::Api<Pod> = kube::Api::all(client.client.clone());
     let nodes = tokio::time::timeout(
@@ -70,25 +194,51 @@ pub async fn choose_node(
             "cluster inventory exceeds the bounded placement scan",
         ));
     }
-    select_node(
-        nodes.items,
-        &pods.items,
-        &client.config.allowed_nodes,
-        required_labels,
-        request,
-        target,
-    )
+    Ok((nodes.items, pods.items))
 }
 
-pub(crate) fn select_node(
-    mut candidates: Vec<Node>,
-    pods: &[Pod],
-    allowed_nodes: &std::collections::BTreeSet<String>,
-    required_labels: &BTreeMap<String, String>,
-    request: KubeResources,
-    target: Option<&str>,
-) -> Result<String, KubeError> {
-    require_placement_authority(allowed_nodes, target)?;
+/// The node a pod with no `nodeName` yet is pinned to: a hostname `nodeSelector`, or a
+/// single required affinity value. The scheduler still has to place it, so its requests
+/// count against that node until it runs.
+pub(crate) fn pinned_node(spec: &PodSpec) -> Option<&str> {
+    if let Some(node) = &spec.node_name {
+        return Some(node);
+    }
+    if let Some(node) = spec
+        .node_selector
+        .as_ref()
+        .and_then(|selector| selector.get(HOSTNAME_LABEL))
+    {
+        return Some(node);
+    }
+    let terms = &spec
+        .affinity
+        .as_ref()?
+        .node_affinity
+        .as_ref()?
+        .required_during_scheduling_ignored_during_execution
+        .as_ref()?
+        .node_selector_terms;
+    // Alternative terms pin nothing; a single term pins when one of its requirements names one node.
+    let [term] = terms.as_slice() else {
+        return None;
+    };
+    term.match_expressions
+        .iter()
+        .flatten()
+        .chain(term.match_fields.iter().flatten())
+        .find_map(|requirement| {
+            let pins = matches!(requirement.key.as_str(), HOSTNAME_LABEL | "metadata.name")
+                && requirement.operator == "In";
+            match requirement.values.as_deref() {
+                Some([node]) if pins => Some(node.as_str()),
+                _ => None,
+            }
+        })
+}
+
+/// Requests each node has committed to: its placed pods and pods pinned to it.
+fn reservations(pods: &[Pod]) -> Result<BTreeMap<String, (KubeResources, u64)>, KubeError> {
     let mut reservations: BTreeMap<String, (KubeResources, u64)> = BTreeMap::new();
     for pod in pods {
         if pod
@@ -100,52 +250,111 @@ pub(crate) fn select_node(
             continue;
         }
         if let Some(spec) = &pod.spec {
-            if let Some(node) = &spec.node_name {
-                let reservation = reservations.entry(node.clone()).or_default();
+            if let Some(node) = pinned_node(spec) {
+                let reservation = reservations.entry(node.to_owned()).or_default();
                 add(&mut reservation.0, &pod_reservation(pod, spec)?)?;
                 reservation.1 = reservation.1.checked_add(1).ok_or_else(arithmetic_error)?;
             }
         }
     }
+    Ok(reservations)
+}
+
+pub(crate) fn select_node(
+    mut candidates: Vec<Node>,
+    pods: &[Pod],
+    allowed_nodes: &std::collections::BTreeSet<String>,
+    required: &NodeRequirements,
+    request: KubeResources,
+    target: Option<&str>,
+) -> Result<String, KubeError> {
+    require_placement_authority(allowed_nodes, target)?;
+    let reservations = reservations(pods)?;
     candidates.sort_unstable_by(|left, right| left.metadata.name.cmp(&right.metadata.name));
+    let mut refused = Vec::new();
+    // A node that could not hold the request even when empty will never take it.
+    let mut could_ever_hold = false;
     for node in candidates {
         let Some(name) = node.metadata.name.as_deref() else {
             continue;
         };
         if !allowed_nodes.contains(name)
             || target.is_some_and(|target| target != name)
-            || !schedulable(&node)
+            || !schedulable(&node, &required.tolerate)
         {
             continue;
         }
-        if !required_labels.iter().all(|(key, value)| {
-            node.metadata
-                .labels
-                .as_ref()
-                .and_then(|labels| labels.get(key))
-                == Some(value)
-        }) {
+        let no_labels = BTreeMap::new();
+        if !required
+            .missing(node.metadata.labels.as_ref().unwrap_or(&no_labels))
+            .is_empty()
+        {
             continue;
         }
-        let allocatable = resource_requirements(
-            node.status
-                .as_ref()
-                .and_then(|status| status.allocatable.as_ref()),
-        )?;
-        let (reserved, pod_count) = reservations.get(name).copied().unwrap_or_default();
-        let slots = node
-            .status
-            .as_ref()
-            .and_then(|status| status.allocatable.as_ref())
-            .and_then(|values| values.get("pods"))
-            .map_or(Ok(0), |value| quantity_units(&value.0, 1))?;
-        if pod_count < slots && fits(request, allocatable, reserved) {
+        let used = reservations.get(name).copied().unwrap_or_default();
+        let short = shortfall(&node, used, request)?;
+        if short.is_empty() {
             return Ok(name.to_owned());
         }
+        could_ever_hold |= shortfall(&node, Default::default(), request)?.is_empty();
+        refused.push(format!("{name} lacks {}", short.join(", ")));
     }
-    Err(KubeError::unavailable(
-        "no ready schedulable node satisfies the Job capabilities and resource reservations",
-    ))
+    if refused.is_empty() {
+        return Err(KubeError::unavailable(
+            "no ready schedulable node satisfies the Job capabilities and resource reservations",
+        ));
+    }
+    if !could_ever_hold {
+        return Err(KubeError::rejected(format!(
+            "no admitted node is large enough for the pod's requests: {}",
+            refused.join("; ")
+        )));
+    }
+    Err(KubeError::unavailable(format!(
+        "{CAPACITY_REFUSAL}: {}",
+        refused.join("; ")
+    )))
+}
+
+/// What `node` lacks for `request` beyond `used` (its reservations and pod count); empty
+/// when it has room.
+fn shortfall(
+    node: &Node,
+    (used, pods): (KubeResources, u64),
+    request: KubeResources,
+) -> Result<Vec<&'static str>, KubeError> {
+    let status = node.status.as_ref();
+    let allocatable = resource_requirements(status.and_then(|status| status.allocatable.as_ref()))?;
+    let slots = status
+        .and_then(|status| status.allocatable.as_ref())
+        .and_then(|values| values.get("pods"))
+        .map_or(Ok(0), |value| quantity_units(&value.0, 1))?;
+    let lacks = [
+        (
+            request.cpu_millis > allocatable.cpu_millis.saturating_sub(used.cpu_millis),
+            "cpu",
+        ),
+        (
+            request.memory_bytes > allocatable.memory_bytes.saturating_sub(used.memory_bytes),
+            "memory",
+        ),
+        (
+            request.ephemeral_storage_bytes
+                > allocatable
+                    .ephemeral_storage_bytes
+                    .saturating_sub(used.ephemeral_storage_bytes),
+            "ephemeral storage",
+        ),
+        (
+            request.gpu_count > allocatable.gpu_count.saturating_sub(used.gpu_count),
+            "GPU",
+        ),
+        (pods >= slots, "pod slots"),
+    ];
+    Ok(lacks
+        .into_iter()
+        .filter_map(|(short, name)| short.then_some(name))
+        .collect())
 }
 
 /// The read-only view of one node object; `revision` is the caller's
@@ -178,6 +387,7 @@ pub fn node_view(cluster: &str, node: &Node, revision: u64) -> Result<KubeNodeVi
         usage_stale: true,
         observed_at: time::OffsetDateTime::now_utc(),
         stale: false,
+        mode: facts.mode,
     })
 }
 
@@ -188,9 +398,15 @@ pub(crate) struct NodeFacts {
     pub operating_system: String,
     pub capacity: KubeResources,
     pub allocatable: KubeResources,
+    pub mode: Option<String>,
 }
 
 /// `Unschedulable` spec wins, then the `Ready` condition, else `Unknown`.
+/// A node's allocatable CPU in millicores, the denominator of a pod's share of its price.
+pub fn allocatable_cpu_millis(node: &Node) -> Result<u64, KubeError> {
+    node_facts(node).map(|facts| facts.allocatable.cpu_millis)
+}
+
 pub(crate) fn node_facts(node: &Node) -> Result<NodeFacts, KubeError> {
     let status = node.status.as_ref();
     let unschedulable = node
@@ -216,6 +432,12 @@ pub(crate) fn node_facts(node: &Node) -> Result<NodeFacts, KubeError> {
     };
     let info = status.and_then(|status| status.node_info.as_ref());
     Ok(NodeFacts {
+        mode: node
+            .metadata
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.get(crate::node_admin::NODE_MODE_ANNOTATION))
+            .cloned(),
         state,
         unschedulable,
         architecture: info
@@ -229,14 +451,20 @@ pub(crate) fn node_facts(node: &Node) -> Result<NodeFacts, KubeError> {
     })
 }
 
-fn schedulable(node: &Node) -> bool {
+/// Ready, not cordoned, and every blocking taint is one the launch tolerates.
+fn schedulable(node: &Node, tolerate: &std::collections::BTreeSet<String>) -> bool {
+    let tolerated = |key: &str| {
+        key.strip_prefix(odin_registry::schema::NODE_TAINT_PREFIX)
+            .is_some_and(|name| tolerate.contains(name))
+    };
     if node.metadata.deletion_timestamp.is_some()
         || node.spec.as_ref().is_some_and(|spec| {
             spec.unschedulable == Some(true)
                 || spec.taints.as_ref().is_some_and(|taints| {
-                    taints
-                        .iter()
-                        .any(|taint| matches!(taint.effect.as_str(), "NoSchedule" | "NoExecute"))
+                    taints.iter().any(|taint| {
+                        matches!(taint.effect.as_str(), "NoSchedule" | "NoExecute")
+                            && !tolerated(&taint.key)
+                    })
                 })
         })
     {
@@ -250,16 +478,6 @@ fn schedulable(node: &Node) -> bool {
                 .iter()
                 .any(|condition| condition.type_ == "Ready" && condition.status == "True")
         })
-}
-
-fn fits(request: KubeResources, capacity: KubeResources, used: KubeResources) -> bool {
-    request.cpu_millis <= capacity.cpu_millis.saturating_sub(used.cpu_millis)
-        && request.memory_bytes <= capacity.memory_bytes.saturating_sub(used.memory_bytes)
-        && request.ephemeral_storage_bytes
-            <= capacity
-                .ephemeral_storage_bytes
-                .saturating_sub(used.ephemeral_storage_bytes)
-        && request.gpu_count <= capacity.gpu_count.saturating_sub(used.gpu_count)
 }
 
 pub(crate) fn resource_requirements(
@@ -296,7 +514,7 @@ pub(crate) fn container_resources(
     Ok((requested, resource_requirements(limits)?))
 }
 
-pub(crate) fn pod_requests(spec: &PodSpec) -> Result<KubeResources, KubeError> {
+pub fn pod_requests(spec: &PodSpec) -> Result<KubeResources, KubeError> {
     pod_resources(spec, false)
 }
 
@@ -560,7 +778,7 @@ mod tests {
             "kind": "Node",
             "metadata": {
                 "name": name,
-                "labels": { "workload": "batch" }
+                "labels": { "workload": "batch", "node-restriction.kubernetes.io/odin-trust": "fleet" }
             },
             "status": {
                 "conditions": [{ "type": "Ready", "status": "True" }],
@@ -571,6 +789,163 @@ mod tests {
             }
         }))
         .unwrap()
+    }
+
+    fn external_node(name: &str) -> Node {
+        let mut node = placement_node(name);
+        node.metadata
+            .labels
+            .as_mut()
+            .unwrap()
+            .remove("node-restriction.kubernetes.io/odin-trust");
+        node.spec = Some(
+            serde_json::from_value(serde_json::json!({
+                "taints": [{ "key": "odin.dev/external", "value": "true", "effect": "NoSchedule" }]
+            }))
+            .unwrap(),
+        );
+        node
+    }
+
+    #[test]
+    fn a_tainted_node_takes_only_tolerating_launches() {
+        let admitted = ["rented".to_owned()].into_iter().collect();
+        let request = KubeResources::default();
+        let fleet_only = NodeRequirements::default();
+        assert!(select_node(
+            vec![external_node("rented")],
+            &[],
+            &admitted,
+            &fleet_only,
+            request,
+            None
+        )
+        .is_err());
+        let tolerating = NodeRequirements {
+            tolerate: ["external".to_owned()].into_iter().collect(),
+            ..NodeRequirements::default()
+        };
+        assert_eq!(
+            select_node(
+                vec![external_node("rented")],
+                &[],
+                &admitted,
+                &tolerating,
+                request,
+                None
+            )
+            .unwrap(),
+            "rented"
+        );
+        // Tolerating one taint does not tolerate another.
+        let mut other = external_node("rented");
+        other.spec.as_mut().unwrap().taints.as_mut().unwrap()[0].key =
+            "odin.dev/maintenance".to_owned();
+        assert!(select_node(vec![other], &[], &admitted, &tolerating, request, None).is_err());
+    }
+
+    #[test]
+    fn an_untrusted_node_never_takes_a_fleet_launch() {
+        // A hostile kubelet may label itself with any capability, but not the trust label.
+        let mut untrusted = external_node("rented");
+        untrusted.spec = None;
+        untrusted
+            .metadata
+            .labels
+            .as_mut()
+            .unwrap()
+            .insert("odin.capability/simulation".to_owned(), "true".to_owned());
+        let admitted = ["rented".to_owned(), "mini".to_owned()]
+            .into_iter()
+            .collect();
+        let required = NodeRequirements::labels(BTreeMap::from([(
+            "odin.capability/simulation".to_owned(),
+            "true".to_owned(),
+        )]));
+        assert!(select_node(
+            vec![untrusted.clone()],
+            &[],
+            &admitted,
+            &required,
+            KubeResources::default(),
+            None
+        )
+        .is_err());
+        let mut mini = placement_node("mini");
+        mini.metadata
+            .labels
+            .as_mut()
+            .unwrap()
+            .insert("odin.capability/simulation".to_owned(), "true".to_owned());
+        assert_eq!(
+            select_node(
+                vec![untrusted, mini],
+                &[],
+                &admitted,
+                &required,
+                KubeResources::default(),
+                None
+            )
+            .unwrap(),
+            "mini"
+        );
+    }
+
+    #[test]
+    fn min_vram_selects_only_nodes_labelled_at_or_above() {
+        let labelled = |name: &str, vram: Option<&str>| {
+            let mut node = placement_node(name);
+            if let Some(vram) = vram {
+                node.metadata
+                    .labels
+                    .get_or_insert_with(BTreeMap::new)
+                    .insert("odin.gpu/vram-gib".to_owned(), vram.to_owned());
+            }
+            node
+        };
+        let admitted = ["small", "large", "plain", "odd"]
+            .map(str::to_owned)
+            .into_iter()
+            .collect();
+        let required = NodeRequirements {
+            minimums: BTreeMap::from([("odin.gpu/vram-gib".to_owned(), 12)]),
+            ..NodeRequirements::default()
+        };
+        let inventory = || {
+            vec![
+                labelled("small", Some("8")),
+                labelled("plain", None),
+                labelled("odd", Some("lots")),
+                labelled("large", Some("32")),
+            ]
+        };
+        let request = KubeResources::default();
+        assert_eq!(
+            select_node(inventory(), &[], &admitted, &required, request, None).unwrap(),
+            "large"
+        );
+        for refused in ["small", "plain", "odd"] {
+            assert!(
+                select_node(
+                    inventory(),
+                    &[],
+                    &admitted,
+                    &required,
+                    request,
+                    Some(refused)
+                )
+                .is_err(),
+                "{refused} is below the floor or unlabelled"
+            );
+        }
+        let exact = NodeRequirements {
+            minimums: BTreeMap::from([("odin.gpu/vram-gib".to_owned(), 8)]),
+            ..NodeRequirements::default()
+        };
+        assert!(select_node(inventory(), &[], &admitted, &exact, request, Some("small")).is_ok());
+        assert!(required
+            .missing(&BTreeMap::new())
+            .contains(&"odin.gpu/vram-gib>=12".to_owned()));
     }
 
     #[test]
@@ -587,7 +962,15 @@ mod tests {
             vec![node("worker-b"), node("worker-a")],
         ] {
             assert_eq!(
-                select_node(inventory, &[], &admitted, &labels, request, None).unwrap(),
+                select_node(
+                    inventory,
+                    &[],
+                    &admitted,
+                    &NodeRequirements::labels(labels.clone()),
+                    request,
+                    None
+                )
+                .unwrap(),
                 "worker-b",
             );
         }
@@ -595,7 +978,7 @@ mod tests {
             vec![node("worker-a"), node("worker-b")],
             &[],
             &admitted,
-            &labels,
+            &NodeRequirements::labels(labels.clone()),
             request,
             Some("worker-a"),
         )
@@ -604,7 +987,7 @@ mod tests {
             vec![node("worker-a")],
             &[],
             &Default::default(),
-            &labels,
+            &NodeRequirements::labels(labels.clone()),
             request,
             None,
         )
@@ -656,7 +1039,7 @@ mod tests {
                     inventory.clone(),
                     &[],
                     &admitted,
-                    &labels,
+                    &NodeRequirements::labels(labels.clone()),
                     KubeResources::default(),
                     None,
                 )
@@ -669,7 +1052,7 @@ mod tests {
                     inventory,
                     &[],
                     &admitted,
-                    &labels,
+                    &NodeRequirements::labels(labels.clone()),
                     KubeResources::default(),
                     Some("worker-b"),
                 )
@@ -710,7 +1093,7 @@ mod tests {
                     vec![placement_node("worker-a"), target.clone()],
                     &[],
                     &admitted,
-                    &labels,
+                    &NodeRequirements::labels(labels.clone()),
                     request,
                     None,
                 )
@@ -723,7 +1106,7 @@ mod tests {
                     vec![placement_node("worker-a"), target.clone()],
                     &[],
                     &admitted,
-                    &labels,
+                    &NodeRequirements::labels(labels.clone()),
                     request,
                     Some("worker-b"),
                 )
@@ -744,7 +1127,7 @@ mod tests {
                     inventory.clone(),
                     &[],
                     &admitted,
-                    &labels,
+                    &NodeRequirements::labels(labels.clone()),
                     request,
                     Some("worker-b"),
                 )
@@ -773,7 +1156,7 @@ mod tests {
                     inventory.clone(),
                     std::slice::from_ref(&pod),
                     &admitted,
-                    &labels,
+                    &NodeRequirements::labels(labels.clone()),
                     request,
                     None,
                 )
@@ -786,7 +1169,7 @@ mod tests {
                     inventory,
                     &[pod],
                     &admitted,
-                    &labels,
+                    &NodeRequirements::labels(labels.clone()),
                     request,
                     Some("worker-b"),
                 )
@@ -794,5 +1177,99 @@ mod tests {
                 "reserved {resource}",
             );
         }
+    }
+
+    #[test]
+    fn a_pending_pod_pinned_to_a_node_holds_its_requests_before_it_runs() {
+        const GIB: u64 = 1 << 30;
+        let admitted =
+            std::collections::BTreeSet::from(["worker-a".to_owned(), "worker-b".to_owned()]);
+        let labels = BTreeMap::new();
+        let request = KubeResources {
+            memory_bytes: 2 * GIB,
+            ..KubeResources::default()
+        };
+        let inventory = || vec![placement_node("worker-a"), placement_node("worker-b")];
+        // Pending with no nodeName: only its affinity says where it will run.
+        let pinned = |node: &str| -> Pod {
+            serde_json::from_value(serde_json::json!({
+                "metadata": { "name": format!("pending-{node}") },
+                "spec": {
+                    "containers": [{
+                        "name": "worker",
+                        "resources": { "requests": { "memory": "7Gi" } }
+                    }],
+                    "affinity": { "nodeAffinity": {
+                        "requiredDuringSchedulingIgnoredDuringExecution": {
+                            "nodeSelectorTerms": [{ "matchExpressions": [{
+                                "key": "kubernetes.io/hostname",
+                                "operator": "In",
+                                "values": [node]
+                            }] }]
+                        }
+                    } }
+                },
+                "status": { "phase": "Pending" }
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            select_node(
+                inventory(),
+                &[],
+                &admitted,
+                &NodeRequirements::labels(labels.clone()),
+                request,
+                None
+            )
+            .unwrap(),
+            "worker-a",
+        );
+        assert_eq!(
+            select_node(
+                inventory(),
+                &[pinned("worker-a")],
+                &admitted,
+                &NodeRequirements::labels(labels.clone()),
+                request,
+                None,
+            )
+            .unwrap(),
+            "worker-b",
+        );
+        let refused = select_node(
+            inventory(),
+            &[pinned("worker-a"), pinned("worker-b")],
+            &admitted,
+            &NodeRequirements::labels(labels.clone()),
+            request,
+            None,
+        )
+        .unwrap_err();
+        assert!(is_capacity_refusal(&refused), "{refused}");
+        assert!(
+            refused.to_string().contains("worker-a lacks memory"),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_pod_no_admitted_node_can_hold_is_rejected_not_queued() {
+        let admitted = std::collections::BTreeSet::from(["worker-a".to_owned()]);
+        let request = KubeResources {
+            memory_bytes: 16 * 1024 * 1024 * 1024,
+            ..KubeResources::default()
+        };
+        let error = select_node(
+            vec![placement_node("worker-a")],
+            &[],
+            &admitted,
+            &NodeRequirements::default(),
+            request,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(error, KubeError::Rejected { .. }), "{error}");
+        assert!(!is_capacity_refusal(&error));
     }
 }

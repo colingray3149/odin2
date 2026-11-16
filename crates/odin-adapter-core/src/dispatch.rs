@@ -1,10 +1,10 @@
 //! Persist validated receipts before reporting success; failures after dispatch remain uncertain.
 
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use odin_kernel::capability::{HandlerBinding, SchemaCatalog};
+use odin_kernel::schema;
 use odin_kernel::{
     EffectOutcome, ExecutorFault, OperationExecutor, Payload, PreWorld, PreparedEffect,
 };
@@ -16,33 +16,6 @@ use crate::ids::OperationKind;
 use crate::operation::{AdapterOperationRecord, IdempotencyKey, OperationRecordState};
 use crate::transport::{AdapterTransportFault, JsonRpcOutcome, JsonRpcRequest, RpcMethod};
 use crate::{AdapterError, ADAPTER_OPERATION_HANDLER, ADAPTER_RECEIPT_EVIDENCE};
-/// Canonical schema digests prevent cached validators from serving a different schema.
-static VALIDATORS: LazyLock<Mutex<HashMap<odin_domain::Digest, Arc<jsonschema::Validator>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-fn compiled_validator(
-    schema: &odin_domain::knowledge::ToolSchema,
-) -> Result<Arc<jsonschema::Validator>, String> {
-    let digest = schema.digest();
-    if let Some(validator) = VALIDATORS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&digest)
-    {
-        return Ok(Arc::clone(validator));
-    }
-    let validator = Arc::new(
-        jsonschema::options()
-            .build(schema.canonical_json())
-            .map_err(|error| error.to_string())?,
-    );
-    VALIDATORS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(digest, Arc::clone(&validator));
-    Ok(validator)
-}
-
 /// A relay failure after persistence leaves durable evidence but no caller-visible result.
 pub trait AdapterResultSink: Send + Sync {
     /// Backend errors retain their `{"error":{"code","message"[,"data"]}}` shape.
@@ -72,6 +45,14 @@ pub trait AdapterBackends: Send + Sync {
 }
 
 pub type AdapterClock = Arc<dyn Fn() -> time::OffsetDateTime + Send + Sync>;
+/// Validates a bound operation input.
+pub type ValueValidator = Arc<dyn Fn(&Value) -> Result<(), String> + Send + Sync>;
+/// Validates a bound operation input in its authenticated project.
+pub type ProjectValidator = Arc<dyn Fn(&str, &Value) -> Result<(), String> + Send + Sync>;
+/// Records a successful operation input and result.
+pub type ValueRecorder = Arc<dyn Fn(&Value, &Value) -> Result<(), String> + Send + Sync>;
+/// Records a successful operation input and result in its authenticated project.
+pub type ProjectRecorder = Arc<dyn Fn(&str, &Value, &Value) -> Result<(), String> + Send + Sync>;
 
 pub struct AdapterExecutor {
     backends: Arc<dyn AdapterBackends>,
@@ -80,6 +61,22 @@ pub struct AdapterExecutor {
     receipts: Arc<dyn EffectReceiptSink>,
     results: Arc<dyn AdapterResultSink>,
     clock: AdapterClock,
+    promotion_verifier: Option<ValueValidator>,
+    campaign_validator: Option<ValueValidator>,
+    spend_validator: Option<ProjectValidator>,
+    campaign_recorder: Option<ValueRecorder>,
+    spend_recorder: Option<ProjectRecorder>,
+}
+
+fn check_spend_cap(input: &Value) -> Result<(), String> {
+    let estimated = input["estimated_usd"]
+        .as_f64()
+        .ok_or("invalid estimated spend")?;
+    let cap = input["cap_usd"].as_f64().ok_or("invalid spend cap")?;
+    if estimated > cap {
+        return Err("estimated spend exceeds the approved cap".to_owned());
+    }
+    Ok(())
 }
 
 fn marker(name: &str) -> HandlerBinding {
@@ -104,7 +101,42 @@ impl AdapterExecutor {
             receipts,
             results,
             clock,
+            promotion_verifier: None,
+            campaign_validator: None,
+            spend_validator: None,
+            campaign_recorder: None,
+            spend_recorder: None,
         }
+    }
+
+    /// Bind the controller's science verdict authority to promotion dispatch.
+    pub fn with_promotion_verifier(mut self, verifier: Option<ValueValidator>) -> Self {
+        self.promotion_verifier = verifier;
+        self
+    }
+
+    /// Bind campaign approval validation before dispatch.
+    pub fn with_campaign_validator(mut self, validator: Option<ValueValidator>) -> Self {
+        self.campaign_validator = validator;
+        self
+    }
+
+    /// Bind rental approval validation before dispatch.
+    pub fn with_spend_validator(mut self, validator: Option<ProjectValidator>) -> Self {
+        self.spend_validator = validator;
+        self
+    }
+
+    /// Bind durable campaign accounting to successful upstream approvals.
+    pub fn with_campaign_recorder(mut self, recorder: Option<ValueRecorder>) -> Self {
+        self.campaign_recorder = recorder;
+        self
+    }
+
+    /// Bind durable rental approval accounting to successful upstream approvals.
+    pub fn with_spend_recorder(mut self, recorder: Option<ProjectRecorder>) -> Self {
+        self.spend_recorder = recorder;
+        self
     }
 
     /// Capability IDs must match an operation declared by the adapter.
@@ -141,8 +173,8 @@ impl AdapterExecutor {
             .schemas
             .schema(operation.output_schema.as_str())
             .map_err(|error| uncertain(error.to_string()))?;
-        let validator = compiled_validator(&tool).map_err(uncertain)?;
-        match crate::violations(&validator, result) {
+        let validator = schema::validator(&tool).map_err(uncertain)?;
+        match schema::violations(&validator, result) {
             Some(detail) => Err(uncertain(detail)),
             None => Ok(()),
         }
@@ -168,8 +200,8 @@ impl AdapterExecutor {
                 .schemas
                 .schema(requirement.schema.as_str())
                 .map_err(|error| uncertain(error.to_string()))?;
-            let validator = compiled_validator(&tool).map_err(uncertain)?;
-            if let Some(detail) = crate::violations(&validator, evidence) {
+            let validator = schema::validator(&tool).map_err(uncertain)?;
+            if let Some(detail) = schema::violations(&validator, evidence) {
                 return Err(uncertain(detail));
             }
         }
@@ -276,13 +308,11 @@ impl AdapterExecutor {
                 contract.evidence_extractor
             )));
         }
-        if effect.executor_binding().is_some() {
-            return Err(rejected(
-                "adapter permits carry no executor binding; deployment facts stay in the \
-                 backend's declared argv"
-                    .to_owned(),
-            ));
-        }
+            if effect.executor_binding().is_some() {
+                return Err(rejected(
+                    "adapter permits carry no executor binding".to_owned(),
+                ));
+            }
         if effect.stop_handle().is_cancelled() {
             return Err(rejected("stop intent recorded before dispatch".to_owned()));
         }
@@ -342,10 +372,11 @@ impl AdapterExecutor {
             .schemas
             .schema(operation.input_schema.as_str())
             .map_err(|error| input_schema_error(error.to_string()))?;
-        let validator = compiled_validator(&tool).map_err(input_schema_error)?;
-        if let Some(detail) = crate::violations(&validator, &effect.payload().arguments) {
+        let validator = schema::validator(&tool).map_err(input_schema_error)?;
+        if let Some(detail) = schema::violations(&validator, &effect.payload().arguments) {
             return Err(input_schema_error(detail));
         }
+
 
         let operation_id = effect.operation_id().as_str();
         let idempotency_key = IdempotencyKey::new(operation_id).map_err(|error| {
@@ -359,7 +390,7 @@ impl AdapterExecutor {
             json!({
                 "operation_id": operation_id,
                 "idempotency_key": idempotency_key.as_str(),
-                "input": effect.payload().arguments.clone(),
+                "input": tool_input(&effect.payload().arguments),
             }),
         )
         .map_err(|error| rejected(format!("request frame refused: {error}")))?;
@@ -491,6 +522,7 @@ impl OperationExecutor for AdapterExecutor {
         PreparedEffect::OMP_HOST_EXECUTOR
     }
 
+
     fn declared_pre_world(
         &self,
         contract: &odin_kernel::CapabilityContract,
@@ -587,6 +619,14 @@ fn settled_line(adapter: &str, kind: &str, correlation: &str, result: &Value) ->
 #[cfg(test)]
 mod fault_line_tests {
     use super::*;
+
+
+    #[test]
+    fn spend_cap_checks_the_bound_estimate() {
+        assert!(check_spend_cap(&json!({"estimated_usd": 5, "cap_usd": 5})).is_ok());
+        assert!(check_spend_cap(&json!({"estimated_usd": 6, "cap_usd": 5})).is_err());
+        assert!(check_spend_cap(&json!({"cap_usd": 5})).is_err());
+    }
 
     #[test]
     fn a_failed_call_logs_the_state_its_fault_leaves() {

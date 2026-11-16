@@ -167,6 +167,7 @@ fn node_health(node: &Node) -> Result<KubeNodeHealth, KubeError> {
         unschedulable: facts.unschedulable,
         capacity: facts.capacity,
         allocatable: facts.allocatable,
+        mode: facts.mode,
     })
 }
 

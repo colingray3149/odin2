@@ -1,8 +1,8 @@
 schema = "odin.registry.v1"
 kind = "toolset"
 enabled = true
-description = "The web and research pods: search, read pages, save evidence, launch an investigation by prompt and depth."
+description = "The web and research pods: read pages, save evidence, launch an investigation by prompt and depth."
 examples = [
-  'research {op: search, query}',
-  'research {op: investigate, profile, prompt}',
+  'research {op: read, url}',
+  'research {op: investigate, profile, prompt, seeds}',
 ]

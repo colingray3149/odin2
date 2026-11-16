@@ -84,28 +84,12 @@ pub enum AdapterError {
     Receipt { detail: String },
 }
 
-/// Reported schema violations per instance; later ones only repeat the same defect.
-const MAX_REPORTED_ERRORS: usize = 5;
-
-/// The violations of one instance joined for an error message, or `None` when it is valid.
-pub(crate) fn violations(
-    validator: &jsonschema::Validator,
-    instance: &serde_json::Value,
-) -> Option<String> {
-    let errors: Vec<String> = validator
-        .iter_errors(instance)
-        .map(|error| error.to_string())
-        .take(MAX_REPORTED_ERRORS)
-        .collect();
-    (!errors.is_empty()).then(|| errors.join("; "))
-}
-
 /// A broken embedded schema is a build defect, not an invalid input.
 pub(crate) fn validate_canonical(
     schema_name: &'static str,
     wire: &serde_json::Value,
 ) -> Result<(), AdapterError> {
-    match violations(embedded_validator(schema_name), wire) {
+    match odin_kernel::schema::violations(embedded_validator(schema_name), wire) {
         None => Ok(()),
         Some(detail) => Err(AdapterError::Schema {
             schema: schema_name,
@@ -133,7 +117,5 @@ fn embedded_validator(schema_name: &'static str) -> &'static jsonschema::Validat
 fn compile_embedded(schema_json: &'static str) -> jsonschema::Validator {
     let schema: serde_json::Value =
         serde_json::from_str(schema_json).expect("embedded canonical adapter schema parses");
-    jsonschema::options()
-        .build(&schema)
-        .expect("embedded canonical adapter schema compiles")
+    odin_kernel::schema::compile(&schema).expect("embedded canonical adapter schema compiles")
 }

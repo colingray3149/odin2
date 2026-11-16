@@ -333,6 +333,7 @@ fn prompt_command(
             message: proof.message.clone(),
             // The operator's own typed words, without any rendering.
             owner_text: Some(operator_text(&proof.message)),
+            wake: false,
         },
     }
 }

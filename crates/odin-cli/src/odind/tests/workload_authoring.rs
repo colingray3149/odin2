@@ -160,7 +160,6 @@ fn fixture() -> Fixture {
             "source_root = \"\"\n",
             "default_seat = \"coordinator\"\n",
             "memory_namespaces = [\"atlas.personal\"]\n",
-            "artifact_policy = \"standard\"\n",
         ),
     )
     .expect("project");
@@ -917,9 +916,19 @@ fn incomplete_draft_lists_declared_clarifications_not_refusals() {
 #[test]
 fn complete_draft_returns_the_exact_declaration_digest_and_lane_facts() {
     let fixture = fixture();
+    let answers = WorkloadDraftAnswers {
+        limits: Some(odin_domain::huginn::WorkloadLimits {
+            output_reserve_tokens: Some(65536),
+            checkpoint_percent: Some(70),
+            max_rollovers: Some(4),
+            ..Default::default()
+        }),
+        resources: Some(json!({"cpu": 1, "memory": "1Gi"})),
+        ..complete_answers()
+    };
     let draft = fixture
         .route
-        .draft(draft_request("site-agent", complete_answers()))
+        .draft(draft_request("site-agent", answers))
         .expect("a complete draft compiles");
     let declaration = draft.declaration.as_ref().expect("complete declaration");
     assert_eq!(
@@ -937,6 +946,12 @@ fn complete_draft_returns_the_exact_declaration_digest_and_lane_facts() {
         Some(3600),
         "the declared run lifetime is part of the declaration"
     );
+    assert_eq!(
+        rendered["limits"]["output_reserve_tokens"].as_integer(),
+        Some(65536),
+        "the declared run limits are part of the declaration"
+    );
+    assert_eq!(rendered["resources"]["memory"].as_str(), Some("1Gi"));
     // Pods select gateway routes, not session lanes.
     let lane = draft.lane.as_ref().expect("lane facts");
     assert_eq!(lane.lane, "zai-glm");

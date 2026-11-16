@@ -4,13 +4,13 @@ kind = "capability"
 enabled = true
 implementation = "builtin"
 version = 1
-description = "Sends the owner a file in his own DM: an earlier attachment, a shared artifact, or a brain photo, video or document. Worth it whenever he asks for one of his files or to see photos: the file itself rather than its text or a link, up to ten, one call each, with the reply saying what it is. It stays in his own channel, so he isn't asked."
+description = "Sends the owner a file in his own DM: an earlier attachment, a shared artifact, or a brain photo, video or document. Worth it whenever he asks for one of his files or to see photos: the file itself rather than its text or a link, up to ten, one call each, with the reply saying what it is. An office document also goes as a PDF in the same message, with its page count; if the PDF cannot be made, nothing is sent. When several versions exist, identify the version, date and page count in the reply, checking the source rather than guessing. It stays in his own channel, so he isn't asked. Pass the `artifact` field from a files or email result, never the result's own id."
 handler = { id = "discord_file_send" }
 input_schema = "schemas/capability/discord.file.send.input.json"
 output_schema = "schemas/capability/discord.file.send.output.json"
 effect_class = "R1"
 seat_tags = ["coordinator"]
-timeout_seconds = 60
+timeout_seconds = 300
 idempotency = "required"
 retry = { max_attempts = 0 }
 approval_policy = "none"
@@ -18,4 +18,5 @@ evidence_extractor = { id = "odin_hermes_discord_file_send_evidence" }
 tests = [
   "odin-hermes::it runtime::file_send::a_staged_file_keeps_its_name_and_one_over_discords_limit_is_refused_before_any_upload",
   "odin-hermes runtime::files::tests::a_sent_artifact_keeps_an_extension_its_player_recognises",
+  "odin-hermes::it runtime::file_send::a_tool_result_named_like_the_thesis_is_refused_before_any_upload",
 ]

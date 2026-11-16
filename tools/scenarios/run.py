@@ -51,6 +51,7 @@ MANUAL = {
     "pod.emergency-stop": "global kill; owner window",
     "fleet.drain-restore": "cordons the authority host",
     "adapter.web-fallback-controlled": "no checker",
+    "board.simulation.render": "no checker; needs a stub pod printing ODIN-STATUS and ODIN-RENDER",
     "brain.retirement": "no checker",
     "memory.knowledge-fabric": "no checker",
     "registry.environment-kind": "no checker",

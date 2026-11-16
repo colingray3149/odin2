@@ -113,9 +113,7 @@ kind = "lane"
 enabled = true
 description = "architect fixture lane for {project}"
 project = "{project}"
-family = "engine"
 default_seat = "architect"
-queue = "interactive"
 requires_independent_review = false
 "#
     )
@@ -129,9 +127,7 @@ kind = "lane"
 enabled = true
 description = "fixture transfer lane {name}"
 project = "odin"
-family = "transfer"
 default_seat = "architect"
-queue = "interactive"
 requires_independent_review = false
 direction = "{direction}"
 payload_kind = "{payload}"
@@ -149,7 +145,6 @@ description = "{description}"
 source_root = ""
 default_seat = "architect"
 memory_namespaces = ["atlas.code"]
-artifact_policy = "standard"
 "#
     )
 }

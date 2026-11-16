@@ -15,6 +15,39 @@ fn lapsed_line(asked: &str) -> String {
 }
 
 impl ConversationRoot {
+    /// A device's yes on a call another seat parked (a project seat's campaign card) runs
+    /// it as well: no conversation question waits on it, and that seat's turn
+    /// has moved on. The outcome goes to the journal.
+    pub(super) async fn run_other_seats_approval(&self, approval_id: &str) {
+        if self
+            .approvals
+            .approval_status(approval_id)
+            .await
+            .ok()
+            .flatten()
+            != Some(odin_domain::ApprovalStatus::Approved)
+        {
+            return;
+        }
+        let Ok(id) = odin_domain::ApprovalId::new(approval_id.to_owned()) else {
+            return;
+        };
+        match self.approvals.run_approved(&id).await {
+            Ok(receipt) => {
+                tracing::info!(
+                    approval = approval_id,
+                    "a device's yes ran the held call: {receipt}"
+                );
+            }
+            Err(cause) => {
+                tracing::info!(
+                    approval = approval_id,
+                    "a device's yes ran no held call: {cause}"
+                );
+            }
+        }
+    }
+
     /// Holds `reply` behind each approval its turn put to the owner; `None`
     /// when the turn has no reply of its own to close (a wake still owns
     /// it, or a holding line already went out), so only a lapse is told.

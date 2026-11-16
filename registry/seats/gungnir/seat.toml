@@ -4,6 +4,7 @@ enabled = true
 description = "Builder: implements one job on a project in its own clone, gets it reviewed, and proposes the branch."
 categories = ["builder"]
 tool_refs = [
+  "toolset:plan",
   "toolset:docs",
   "toolset:data",
   "code.rewrite",
@@ -30,16 +31,16 @@ tool_refs = [
   "seat.ask.sinmara",
   "seat.ask.supervisor",
   "seat.ask.kubert",
-  "memory.remember",
-  "brain.search",
-  "brain.read",
+  "knowledge.search",
+  "knowledge.read",
+  "knowledge.add",
+  "knowledge.status",
   "registry.read",
   "incident.raise",
   "artifact.write",
   "artifact.read",
   "artifact.analyze",
   "device.run",
-  "memory.forget",
   "kube.workload.summarize",
   "kube.workload.create",
   "codemap.get_architecture",
@@ -53,13 +54,14 @@ tool_refs = [
   "codemap.index_status",
   "codemap.check_index_coverage",
   "models.read",
+  "simulation.read",
 ]
 project_scope = [
   "odin",
   "rig",
 ]
 # Launch choices seat.model.set may pick (provider/model); the first is the default.
-models = ["gateway/zai-glm", "gateway/kimi-k31", "gateway/astra", "gateway/glm-flash"]
+models = ["gateway/sol", "gateway/zai-glm", "gateway/kimi-k31", "gateway/astra", "gateway/glm-flash"]
 brain_scope = [
   "memory.owner",
   "atlas.code",
@@ -67,9 +69,7 @@ brain_scope = [
   "state.repos",
   "memory.gungnir",
   "memory.project.odin",
-  "memory.project.rig",
 ]
-profile_namespace = "memory.owner"
 
 guidance = """
 You are Gungnir, the owner's lead engineer for Odin and project code. You take one job at a time on one of his projects, do it in your own clone, and bring back a reviewed branch. His projects are a one-person tool: correct, minimal, readable and declarative is what good looks like.
@@ -80,7 +80,7 @@ How you think through a job: read the code first (navigation, history, diagnosti
 
 Your fixed toolsets take op plus the fields named for that operation. Rare operations take args; op help with operation returns the exact member schema as a result. MCP tools and skills are native capabilities behind these same operations.
 
-Your tools: code reading in your clone and the declared checkouts; file edits and evaluation in your capsule; builds, flake checks, diagnostics and tests; review requests and Forseti; branch proposal; Claude sessions for larger work; delegated workers; the brain, the registry and your memory; artifacts; pod summaries; incidents.
+Your tools: code reading in your clone and the declared checkouts; file edits and evaluation in your capsule; builds, flake checks, diagnostics and tests; review requests and Forseti; branch proposal; Claude sessions for larger work; delegated workers; the knowledge tools (search and read; add for project notes), the registry and your own page (read brain/agents/gungnir.md once at the start of a session: standing prompts and lessons; record a lesson or decision with knowledge.add as=note about your project); artifacts; pod summaries; incidents.
 
 The harness: your capsule is your own clone, the Nix sandbox runs your builds and tests, and a proposed branch lands in the project's own repository for merging. Odin runs every call under your grants, and when an action needs the owner's yes, Odin asks him.
 
@@ -113,7 +113,6 @@ atlas_sources = [
   "state.repos",
   "memory.gungnir",
   "memory.project.odin",
-  "memory.project.rig",
 ]
 required_tags = []
 denied_tags = []
@@ -122,7 +121,6 @@ top_k = 16
 [context]
 max_bundle_tokens = 24_576
 profile = "codebase"
-review_lane = "glm-flash"
 consult = { lane = "astra", effort = "high" }
 
 [tools]

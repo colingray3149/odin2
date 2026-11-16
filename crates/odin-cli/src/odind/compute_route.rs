@@ -240,6 +240,97 @@ async fn remote_sample(ssh: &Path, host: &DeclaredHost) -> Result<ComputeSample,
     serde_json::from_slice(&stdout).map_err(|error| miss(format!("sample was not JSON: {error}")))
 }
 
+/// One finite sample of one declared host: in-process for the authority, else over SSH.
+async fn sample_host(ssh: &Path, host: &DeclaredHost) -> Result<ComputeSample, HostMiss> {
+    let node = host.node.clone();
+    let id = host.id.clone();
+    Ok(if host.local {
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = Arc::clone(&cancel);
+        struct StopOnDrop(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for StopOnDrop {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        let _stop = StopOnDrop(Arc::clone(&cancel));
+        let sampled_node = node.clone();
+        let sampled_id = id.clone();
+        let joined =
+            tokio::task::spawn_blocking(move || take_stopped(&sampled_node, &sampled_id, &stop));
+        joined
+            .await
+            .map_err(|error| HostMiss {
+                host: id.clone(),
+                node: node.clone(),
+                detail: error.to_string(),
+            })?
+            .map_err(|error| HostMiss {
+                host: id.clone(),
+                node: node.clone(),
+                detail: error,
+            })?
+    } else {
+        tokio::time::timeout(SAMPLE_BOUND, remote_sample(ssh, host))
+            .await
+            .map_err(|_| HostMiss {
+                host: id.clone(),
+                node: node.clone(),
+                detail: "sample exceeded its bound".to_owned(),
+            })??
+    })
+}
+
+/// GPU memory a run may take on `node` when its registry node is a desktop: the most any one
+/// card has free, less the node's declared desktop reserve. `None` for any other node.
+pub(crate) async fn desktop_free_vram(
+    registry: &SnapshotHandle,
+    local_node: &str,
+    ssh: &Path,
+    node: &str,
+) -> Result<Option<u64>, String> {
+    let snapshot = registry.current();
+    let Some(reserve_mib) = snapshot
+        .listed_objects(RegistryKind::Node)
+        .find_map(|object| match &object.config {
+            ObjectConfig::Node(declared)
+                if object.id == node && declared.capabilities.contains("desktop") =>
+            {
+                Some(
+                    declared
+                        .gpu
+                        .as_ref()
+                        .and_then(|gpu| gpu.desktop_reserve_mib),
+                )
+            }
+            _ => None,
+        })
+    else {
+        return Ok(None);
+    };
+    let reserve = u64::from(reserve_mib.unwrap_or(0)) << 20;
+    let host = declared_hosts(&snapshot, local_node)
+        .into_iter()
+        .find(|host| host.node == node)
+        .ok_or_else(|| format!("no enabled enrolled host declares node {node}"))?;
+    let sample = tokio::time::timeout(SAMPLE_BOUND, sample_host(ssh, &host))
+        .await
+        .map_err(|_| "sample exceeded its bound".to_owned())?
+        .map_err(|miss| miss.detail)?;
+    sample
+        .gpus
+        .iter()
+        .filter_map(|gpu| {
+            Some(
+                gpu.memory_total_bytes?
+                    .saturating_sub(gpu.memory_used_bytes?),
+            )
+        })
+        .max()
+        .map(|free| Some(free.saturating_sub(reserve)))
+        .ok_or_else(|| format!("{} reported no GPU memory", host.id))
+}
+
 /// One fleet snapshot. Every declared host is a sample or a named failure.
 /// A miss does not keep the previous gauges, and an all-host failure is still
 /// a snapshot the view can draw.
@@ -260,42 +351,7 @@ async fn collect_snapshot(
         set.spawn(async move {
             let node = host.node.clone();
             let id = host.id.clone();
-            let sample = if host.local {
-                let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let stop = Arc::clone(&cancel);
-                struct StopOnDrop(Arc<std::sync::atomic::AtomicBool>);
-                impl Drop for StopOnDrop {
-                    fn drop(&mut self) {
-                        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
-                let _stop = StopOnDrop(Arc::clone(&cancel));
-                let sampled_node = node.clone();
-                let sampled_id = id.clone();
-                let joined = tokio::task::spawn_blocking(move || {
-                    take_stopped(&sampled_node, &sampled_id, &stop)
-                });
-                joined
-                    .await
-                    .map_err(|error| HostMiss {
-                        host: id.clone(),
-                        node: node.clone(),
-                        detail: error.to_string(),
-                    })?
-                    .map_err(|error| HostMiss {
-                        host: id.clone(),
-                        node: node.clone(),
-                        detail: error,
-                    })?
-            } else {
-                tokio::time::timeout(SAMPLE_BOUND, remote_sample(&ssh, &host))
-                    .await
-                    .map_err(|_| HostMiss {
-                        host: id.clone(),
-                        node: node.clone(),
-                        detail: "sample exceeded its bound".to_owned(),
-                    })??
-            };
+            let sample = sample_host(&ssh, &host).await?;
             Ok::<_, HostMiss>((node, id, sample))
         });
     }
@@ -406,6 +462,24 @@ mod tests {
                 allow_workloads: false,
                 authoritative_state: true,
                 gateway_endpoint: None,
+                data_roots: Default::default(),
+                launch_queue: None,
+                workload_watch: None,
+                cost: None,
+                compute_meter_seconds: None,
+                offload_empty_poll_seconds: None,
+                external_drain_timeout_seconds: None,
+                simulation_pump_seconds: None,
+                missions_view_seconds: None,
+                image_prune_min_age_seconds: None,
+                image_prune_max_bytes: None,
+                image_prune_cadence_seconds: None,
+                image_prune_cri_timeout_seconds: None,
+                missions_preview_max_side: None,
+                root_plan_wake_seconds: None,
+                yield_to: None,
+                gpu: None,
+                external: false,
             })),
         }
     }

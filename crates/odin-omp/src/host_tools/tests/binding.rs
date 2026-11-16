@@ -189,11 +189,11 @@ fn exec_runner_rejects_noncanonical_stdout_bytes() {
 fn exec_runner_times_out_when_a_forked_descendant_holds_stdout() {
     // The HUP-ignoring descendant keeps stdout open until the process group is killed.
     // Read stdin first to avoid an EPIPE race with the parent's write.
-    let started = std::time::Instant::now();
     let tool = exec_tool(
         r##"exec 3>&1; (trap '' HUP; coproc P { read; }; read -t 2 -u ${P[0]}) >&3 2>/dev/null <&- & IFS= read -r _; printf '{"ok":true}\n'; exit 0"##,
         std::time::Duration::from_millis(400),
     );
+    let started = std::time::Instant::now();
     let error = tool
         .invoke(exec_invocation(json!({})))
         .expect_err("a fork-held stdout pipe must end in a timeout error");
@@ -229,6 +229,10 @@ fn kube_routes_reject_unprepared_invocations() {
     for name in [
         "odin_kube.workload.create",
         "odin_kube.workload.create_evidence",
+        "odin_kube.workload.create_many",
+        "odin_kube.workload.create_many_evidence",
+        "odin_kube.workload.queue_drop",
+        "odin_kube.workload.queue_drop_evidence",
     ] {
         let handler = catalog.resolve(name, &registry).expect("admitted adapter");
         let result = handler.invoke(HostInvocation {

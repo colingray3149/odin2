@@ -19,13 +19,6 @@ pub(super) fn validate_project(
         value.default_seat.as_str(),
         findings,
     );
-    require_allowed(
-        object,
-        "artifact_policy",
-        &value.artifact_policy,
-        &["standard", "private", "large-scientific"],
-        findings,
-    );
     for (kind, name) in &value.accounts {
         if !crate::schema::valid_account_name(name) {
             findings.push(fail(
@@ -34,6 +27,21 @@ pub(super) fn validate_project(
                 format!(
                     "accounts.{} = {name:?} must be an account handle (lowercase letters, digits, inner dashes)",
                     kind.as_str()
+                ),
+            ));
+        }
+    }
+    for role in value.agents.keys() {
+        if !role
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+            || role.is_empty()
+        {
+            findings.push(fail(
+                object,
+                "project-agents",
+                format!(
+                    "agents.{role} must be a role name (lowercase letters, digits, underscores)"
                 ),
             ));
         }

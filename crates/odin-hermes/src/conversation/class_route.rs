@@ -84,7 +84,7 @@ impl RouteHistory {
                         .pointer("/details/errorKind")
                         .or_else(|| value.get("errorKind"))
                         .and_then(Value::as_str)
-                        .filter(|kind| matches!(*kind, "arguments" | "schema" | "adapter_failed"))
+                        .filter(|kind| matches!(*kind, "arguments" | "adapter_failed"))
                     {
                         let calls = self
                             .failures
@@ -92,9 +92,8 @@ impl RouteHistory {
                             .or_default();
                         calls.insert(result.tool_use_id.clone());
                         if calls.len() >= 2 {
-                            self.warrant = Some(format!(
-                                "repeated typed tool/schema failure: {tool} ({kind})"
-                            ));
+                            self.warrant =
+                                Some(format!("repeated typed tool failure: {tool} ({kind})"));
                         }
                     }
                 } else if matches!(
@@ -161,6 +160,17 @@ fn next_class(class: &str) -> Result<&'static str, String> {
         "standard" => Ok("strong"),
         "strong" => Err("strong is the declared class ceiling".to_owned()),
         _ => Err(format!("class {class} is not fast, standard or strong")),
+    }
+}
+
+/// The owner asking for more effort: a leading redo, or "think hard" anywhere in his words.
+fn owner_warrant(content: &str) -> Option<&'static str> {
+    if owner_redo(content) {
+        Some("owner redo")
+    } else if content.to_ascii_lowercase().contains("think hard") {
+        Some("owner asked to think hard")
+    } else {
+        None
     }
 }
 
@@ -252,13 +262,10 @@ impl ConversationRoot {
         if let (Some(kind), Ok(reading)) = (refused, &reading) {
             note_refusal(&reading.book, summary.model.as_str(), kind.plain());
         }
-        let redo = owner_message.is_some_and(|key| history.consumed_owner.as_deref() != Some(key))
-            && owner_redo(content);
-        let warrant = if redo {
-            Some("owner redo".to_owned())
-        } else {
-            history.warrant
-        };
+        let owner = owner_message
+            .filter(|key| history.consumed_owner.as_deref() != Some(*key))
+            .and_then(|_| owner_warrant(content));
+        let warrant = owner.map(str::to_owned).or(history.warrant);
         let manual = history
             .model
             .as_deref()
@@ -312,9 +319,14 @@ impl ConversationRoot {
                     Ok(()) if warrant.is_some() && manual => {
                         Err("the owner's manual model choice is still selected".to_owned())
                     }
-                    Ok(()) if warrant.is_some() => reading
-                        .pick(target, needs)
-                        .map(|lane| (target.to_owned(), Some(lane))),
+                    Ok(()) if warrant.is_some() => match route.escalation.as_deref() {
+                        Some(lane) if reading.admits(lane, needs) => {
+                            Ok((target.to_owned(), Some(lane.to_owned())))
+                        }
+                        _ => reading
+                            .pick(target, needs)
+                            .map(|lane| (target.to_owned(), Some(lane))),
+                    },
                     Ok(()) => {
                         let routed = !manual
                             && (history.model.as_deref() == Some(summary.model.as_str())
@@ -512,6 +524,16 @@ mod tests {
     use odin_domain::{CapabilityId, CommandId, EventId, TurnId};
     use serde_json::json;
     use time::OffsetDateTime;
+
+    #[test]
+    fn prepayment_refusal_holds_account_without_holding_outages_or_context_errors() {
+        assert_eq!(
+            refusing_fault("litellm.APIError: prepayment credits depleted", Some(402)),
+            Some(ProviderFaultKind::UsageLimit)
+        );
+        assert_eq!(refusing_fault("gateway unavailable", Some(503)), None);
+        assert_eq!(refusing_fault("maximum context length", Some(400)), None);
+    }
 
     fn event(body: LiveEventBody) -> LiveEvent {
         LiveEvent::new(

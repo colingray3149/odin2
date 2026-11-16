@@ -1,0 +1,21 @@
+schema = "odin.registry.v1"
+toolset = "simulation"
+op = "read"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Reads the missions on Odin's simulation board while they run: every pod but research pods. Each shows its stage, node, last ODIN-STATUS sample, checkpoints, open renders and kept frames; one named mission can also list the files its export dir holds so far. Read-only."
+handler = { id = "simulation_read" }
+input_schema = "schemas/capability/simulation.read.input.json"
+output_schema = "schemas/capability/simulation.read.output.json"
+effect_class = "R0"
+seat_tags = ["coordinator", "operator", "builder", "judge"]
+timeout_seconds = 60
+idempotency = "pure"
+retry = { max_attempts = 1 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_simulation_read_evidence" }
+tests = [
+  "odin-cli::bin/odind simulation::tests::a_read_names_the_mission_its_last_sample_and_frames",
+]

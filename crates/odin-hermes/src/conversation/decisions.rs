@@ -103,6 +103,48 @@ fn kernel_refusal_sentence(refusal: &DecisionRefusal) -> String {
     }
 }
 
+/// A bare yes or no decides only when exactly one question is open; with several, the owner names
+/// the one he means by its number ("yes 2"). Returns the open questions with the chosen one first
+/// and the note his answer still carries, or the sentence that lists them.
+fn choose_open(
+    open: &[DeliveredApproval],
+    live_count: usize,
+    note: Option<String>,
+) -> Result<(Vec<DeliveredApproval>, Option<String>), String> {
+    if live_count > 0 && open.len() + live_count > 1 {
+        return Err(
+            "Several questions are waiting, so I did not decide any. Use the button on the question you mean."
+                .to_owned(),
+        );
+    }
+    if open.len() <= 1 {
+        return Ok((open.to_vec(), note));
+    }
+    let picked = note
+        .as_deref()
+        .and_then(|note| note.trim().trim_start_matches('#').parse::<usize>().ok())
+        .filter(|number| (1..=open.len()).contains(number));
+    if let Some(number) = picked {
+        let mut ordered = vec![open[number - 1].clone()];
+        ordered.extend(
+            open.iter()
+                .enumerate()
+                .filter(|(index, _)| *index != number - 1)
+                .map(|(_, approval)| approval.clone()),
+        );
+        return Ok((ordered, None));
+    }
+    let mut sentence = format!(
+        "{} questions are waiting, so I did not decide any. Say \u{201c}yes 1\u{201d} or \
+         \u{201c}no 2\u{201d} for the one you mean:",
+        open.len()
+    );
+    for (index, approval) in open.iter().enumerate() {
+        sentence.push_str(&format!("\n{}. {}", index + 1, approval.label));
+    }
+    Err(sentence)
+}
+
 const HEDGED_YES_SENTENCE: &str =
     "I read that as more than a yes, so I did not approve anything. Say just \u{201c}yes\u{201d} \
      to approve it as asked, or \u{201c}no\u{201d}.";
@@ -964,6 +1006,12 @@ impl ConversationRoot {
                 );
             }
             Err(refusal) => {
+                if approval.capability_id.as_str() == "plan.root-consent" {
+                    if let Some(plan) = &wake {
+                        self.drop_wake(plan)?;
+                    }
+                    return Ok("The reviewed plan could not be accepted; it may have changed. Nothing was authorized.".to_owned());
+                }
                 if let Some(plan) = &wake {
                     self.drop_wake(plan)?;
                 }
@@ -971,7 +1019,9 @@ impl ConversationRoot {
             }
         }
         let mut ack = decision_ack(approved).to_owned();
-        if approved {
+        if approved && approval.capability_id.as_str() == "plan.root-consent" {
+            ack = "The reviewed root plan is accepted.".to_owned();
+        } else if approved {
             let ran = self.approvals.run_approved(&approval.approval_id).await;
             let outcome = match &ran {
                 Ok(receipt) => format!("it ran, and its result was: {receipt}"),
@@ -1021,12 +1071,53 @@ impl ConversationRoot {
         let guard = self.lock.lock().await;
         let Some((mut record, plan)) = self.external_plan(approval_id, approved).await? else {
             drop(guard);
-            return Ok(decide.await);
+            let decided = decide.await;
+            if approved {
+                self.run_other_seats_approval(approval_id).await;
+            }
+            return Ok(decided);
         };
         self.own_requested_wake(&mut record, &plan).await?;
         let decided = decide.await;
+        // A paired device's yes runs the held call exactly as a DM yes does,
+        // and the seat's notice carries what it came to.
+        if approved && plan.kind == WakeKind::KernelRetry {
+            self.run_external_approval(approval_id, &plan).await?;
+        }
         drop(guard);
         Ok(decided)
+    }
+
+    /// Once the device decision is durably Approved, runs the held call and
+    /// records its outcome on the wake, then resumes the wake to report it.
+    async fn run_external_approval(
+        &self,
+        approval_id: &str,
+        plan: &PendingWake,
+    ) -> Result<(), String> {
+        if self.approvals.approval_status(approval_id).await?
+            != Some(odin_domain::ApprovalStatus::Approved)
+        {
+            return Ok(());
+        }
+        let id = odin_domain::ApprovalId::new(approval_id.to_owned())
+            .map_err(|error| format!("approval id {approval_id}: {error}"))?;
+        let outcome = match self.approvals.run_approved(&id).await {
+            Ok(receipt) => format!("it ran, and its result was: {receipt}"),
+            Err(cause) => format!("it did not run: {cause}"),
+        };
+        let mut stored = self.load_record()?;
+        if let Some(entry) = stored
+            .wakes
+            .iter_mut()
+            .find(|entry| entry.command_id == plan.command_id)
+        {
+            entry.outcome = Some(outcome);
+            self.store_record(&mut stored)?;
+        }
+        let stored = self.load_record()?;
+        self.resume_wakes(&stored).await;
+        Ok(())
     }
 
     /// Both paired-device and DM decisions enter with the conversation lock
@@ -1114,7 +1205,9 @@ impl ConversationRoot {
             .map_err(|error| error.to_string())?
             .into_iter()
             .find(|approval| {
-                approval.session == target && approval.approval_id.as_str() == approval_id
+                approval.capability_id.as_str() != "plan.root-consent"
+                    && approval.session == target
+                    && approval.approval_id.as_str() == approval_id
             })
         else {
             return Ok(None);
@@ -1212,13 +1305,13 @@ impl OwnerDecisionRoute for ConversationRoot {
                 .delivered_pending(&self.owner.channel_id, &self.owner.owner_user_id, now)
                 .await
                 .map_err(|error| error.to_string())?;
-            let approved = match &answer {
-                OwnerAnswer::Yes(_) => true,
-                OwnerAnswer::No(_) => false,
+            let (approved, note) = match answer {
+                OwnerAnswer::Yes(note) => (true, note),
+                OwnerAnswer::No(note) => (false, note),
                 OwnerAnswer::Hedged if !kernel.is_empty() => {
                     return Ok(Some(HEDGED_YES_SENTENCE.to_owned()))
                 }
-                OwnerAnswer::Hedged => true,
+                OwnerAnswer::Hedged => (true, None),
             };
             if kernel.is_empty() {
                 return self
@@ -1226,6 +1319,10 @@ impl OwnerDecisionRoute for ConversationRoot {
                     .lapsed(&self.owner.channel_id, &self.owner.owner_user_id, now)
                     .await;
             }
+            let kernel = match choose_open(&kernel, 0, note) {
+                Ok((kernel, _)) => kernel,
+                Err(sentence) => return Ok(Some(sentence)),
+            };
             return self
                 .settle_kernel(&mut record, &message, &kernel, None, approved, now)
                 .await
@@ -1235,7 +1332,7 @@ impl OwnerDecisionRoute for ConversationRoot {
             .map_err(|error| format!("conversation session is invalid: {error}"))?;
         let session_key = session_id.to_string();
         let target = format!("run:live:{session_id}");
-        // Every open question the owner was asked, newest first: his yes or no answers the newest.
+        // Every open kernel question the owner was asked, newest first.
         let kernel = self
             .approvals
             .delivered_pending(&self.owner.channel_id, &self.owner.owner_user_id, now)
@@ -1288,17 +1385,26 @@ impl OwnerDecisionRoute for ConversationRoot {
             OwnerAnswer::Hedged if open => return Ok(Some(HEDGED_YES_SENTENCE.to_owned())),
             OwnerAnswer::Hedged => (PermissionDecision::AllowOnce, None),
         };
+        let (kernel, owner_note) = match choose_open(&kernel, live.len(), owner_note) {
+            Ok(chosen) => chosen,
+            Err(sentence) => return Ok(Some(sentence)),
+        };
         if let Some(approval) = kernel.first() {
             let approved = decision == PermissionDecision::AllowOnce;
             // Only this conversation's own seat is told the outcome; a worker's question is
             // answered and run all the same.
-            let wake = if approval.session == target {
+            let wake = if approval.capability_id.as_str() != "plan.root-consent"
+                && approval.session == target
+            {
                 self.kernel_wake(session_id, &session_key, approval, approved, owner_note)
                     .await?
             } else {
                 None
             };
-            if wake.is_none() && approval.session == target {
+            if wake.is_none()
+                && approval.capability_id.as_str() != "plan.root-consent"
+                && approval.session == target
+            {
                 return Ok(Some(
                     "That conversation has closed, so nothing was authorized.".to_owned(),
                 ));
@@ -1308,7 +1414,7 @@ impl OwnerDecisionRoute for ConversationRoot {
                 .await
                 .map(Some);
         }
-        // His yes or no answers the newest question.
+        // Exactly one live question remains.
         if let Some(question) = live.last() {
             let follows = question
                 .delivered_message_id
@@ -1377,5 +1483,47 @@ impl OwnerDecisionRoute for ConversationRoot {
         self.approvals
             .lapsed(&self.owner.channel_id, &self.owner.owner_user_id, now)
             .await
+    }
+}
+
+#[cfg(test)]
+mod choose_open_tests {
+    use super::*;
+
+    fn open(label: &str) -> DeliveredApproval {
+        DeliveredApproval {
+            approval_id: odin_domain::ApprovalId::new(format!(
+                "approval:{}",
+                label.replace(' ', "-")
+            ))
+            .unwrap(),
+            revision: 1,
+            capability_id: odin_domain::CapabilityId::new("registry.edit.grant").unwrap(),
+            session: "run:live:x".to_owned(),
+            label: label.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_bare_answer_decides_only_a_single_open_question() {
+        let one = [open("edit scribe")];
+        let (chosen, note) = choose_open(&one, 0, Some("thanks".to_owned())).unwrap();
+        assert_eq!(chosen, one.to_vec());
+        assert_eq!(note.as_deref(), Some("thanks"));
+
+        let two = [open("edit scribe"), open("deploy odin")];
+        let listed = choose_open(&two, 0, None).unwrap_err();
+        assert!(
+            listed.contains("1. edit scribe") && listed.contains("2. deploy odin"),
+            "{listed}"
+        );
+        let (chosen, note) = choose_open(&two, 0, Some("2".to_owned())).unwrap();
+        assert_eq!(chosen[0].label, "deploy odin");
+        assert_eq!(chosen.len(), 2);
+        assert_eq!(note, None);
+        assert!(choose_open(&two, 0, Some("3".to_owned())).is_err());
+        assert!(choose_open(&one, 1, None).is_err());
+        assert!(choose_open(&[], 2, None).is_err());
+        assert!(choose_open(&[], 1, None).is_ok());
     }
 }

@@ -2,8 +2,6 @@
 //! leads the seat's `models`, and the first entry is what its sessions open
 //! with. `seat.model.set` and Huginn's `SeatModelSet` both land here.
 
-use odin_registry::ObjectConfig;
-
 use crate::project_authoring::{DaemonProjectRoute, Edit};
 
 fn path(seat: &str) -> String {
@@ -92,36 +90,43 @@ impl DaemonProjectRoute {
         by: &str,
     ) -> Result<String, String> {
         let choice = format!("{provider}/{model}");
-        let current = self
-            .pin
-            .current()
-            .objects
-            .iter()
-            .find_map(|object| match &object.config {
-                ObjectConfig::Seat(declared) if object.id == seat => declared
-                    .models
-                    .first()
-                    .map(|first| format!("{}/{}", first.provider, first.model)),
-                _ => None,
-            });
-        if current.as_deref() == Some(choice.as_str()) {
-            return Ok(format!("{choice} is already {seat}'s declared model"));
-        }
         let message = format!("seat: model '{seat}' {choice} (runtime, {by})");
         let edited = choice.clone();
-        let (revision, commit) = self.transact(
+        let unchanged_choice = choice.clone();
+        let seat_path = path(seat);
+        let result = self.transact_checked_optional(
             &message,
             Vec::new(),
             vec![Edit::new(path(seat), path(seat), move |text| {
                 models_led_by(text, &edited)
             })],
             &[],
+            |_| Ok(()),
+            move |root| {
+                let text = std::fs::read_to_string(root.join(&seat_path))
+                    .map_err(|error| format!("could not read {seat_path}: {error}"))?;
+                let declaration: toml::Table =
+                    toml::from_str(&text).map_err(|error| format!("seat declaration: {error}"))?;
+                Ok(declaration
+                    .get("models")
+                    .and_then(toml::Value::as_array)
+                    .and_then(|models| models.first())
+                    .and_then(toml::Value::as_str)
+                    == Some(unchanged_choice.as_str()))
+            },
         )?;
-        tracing::info!("seat model seat={seat} model={choice} revision={revision} commit={commit}");
-        Ok(format!(
-            "{seat} is declared on {choice} (registry revision {revision}, commit {})",
-            commit.get(..10).unwrap_or(&commit)
-        ))
+        match result {
+            None => Ok(format!("{choice} is already {seat}'s declared model")),
+            Some((revision, commit)) => {
+                tracing::info!(
+                    "seat model seat={seat} model={choice} revision={revision} commit={commit}"
+                );
+                Ok(format!(
+                    "{seat} is declared on {choice} (registry revision {revision}, commit {})",
+                    commit.get(..10).unwrap_or(&commit)
+                ))
+            }
+        }
     }
 }
 

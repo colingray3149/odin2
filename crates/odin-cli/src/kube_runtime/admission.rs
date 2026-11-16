@@ -21,6 +21,35 @@ use super::evidence::{
 };
 use super::{WorkloadLaunchInputs, WorkloadLaunchPort, WorkloadResolve};
 
+pub(super) fn require_no_campaign_policy(
+    tool: &'static str,
+    required: bool,
+) -> Result<(), HostToolError> {
+    if required {
+        return Err(arguments_error(
+            tool,
+            "this workload profile requires an approved campaign launch",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn campaign_required_profiles_fail_closed_without_verified_launch() {
+    assert!(require_no_campaign_policy("kube.workload.create", false).is_ok());
+    assert!(require_no_campaign_policy("kube.workload.create", true).is_err());
+}
+
+#[tokio::test]
+async fn campaign_verifier_must_be_composed() {
+    let coordinator = KubeCommandCoordinator::new(None);
+    assert!(coordinator.ensure_campaign_verifier("test").is_err());
+    assert!(coordinator
+        .verify_campaign_stage("test", "profile", "node", b"{}")
+        .is_err());
+}
+
 /// The single production kube capability owner, composed exactly once by
 /// `odind` before listener startup.
 ///
@@ -42,6 +71,13 @@ pub struct KubeCommandCoordinator {
     /// Seats that read every run, not only their own and their project's:
     /// the owner-facing conversation seats.
     pub(super) overseers: std::collections::BTreeSet<SeatId>,
+    /// Where launches no node has room for wait. Unset, such a launch refuses as before.
+    launch_queue: Option<super::LaunchQueue>,
+    /// Free GPU memory of a desktop node; unset, declared GPU memory is not checked.
+    pub(super) vram_probe: Option<super::VramProbe>,
+    /// The executor of profiles that declare `[offload]`; unset, they refuse.
+    pub(super) offload: Option<Arc<crate::live::offload::Offload>>,
+    stage_verifier: Option<super::stage::StageVerifier>,
 }
 
 impl KubeCommandCoordinator {
@@ -55,7 +91,66 @@ impl KubeCommandCoordinator {
             runtime: tokio::runtime::Handle::current(),
             models_path: None,
             overseers: std::collections::BTreeSet::new(),
+            launch_queue: None,
+            vram_probe: None,
+            offload: None,
+            stage_verifier: None,
         }
+    }
+
+    pub(crate) fn with_stage_verifier(mut self, verifier: super::stage::StageVerifier) -> Self {
+        self.stage_verifier = Some(verifier);
+        self
+    }
+
+    pub(super) fn ensure_campaign_verifier(&self, tool: &'static str) -> Result<(), HostToolError> {
+        if self.stage_verifier.is_none() {
+            return Err(HostToolError::Unavailable {
+                tool,
+                reason: "trusted campaign stage verification is not configured".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    pub(super) fn verify_campaign_stage(
+        &self,
+        tool: &'static str,
+        profile: &str,
+        node: &str,
+        manifest: &[u8],
+    ) -> Result<super::stage::VerifiedStage, HostToolError> {
+        let verifier = self
+            .stage_verifier
+            .as_ref()
+            .ok_or_else(|| HostToolError::Unavailable {
+                tool,
+                reason: "trusted campaign stage verification is not configured".to_owned(),
+            })?;
+        verifier(profile, node, manifest)
+            .map_err(|reason| HostToolError::Unavailable { tool, reason })
+    }
+
+    /// Holds launches that no node has room for in this directory.
+    pub fn with_launch_queue(mut self, dir: std::path::PathBuf) -> Self {
+        self.launch_queue = Some(super::LaunchQueue::new(dir));
+        self
+    }
+
+    /// Reads a node's free GPU memory before a launch that declares its need is placed there.
+    pub fn with_vram_probe(mut self, probe: super::VramProbe) -> Self {
+        self.vram_probe = Some(probe);
+        self
+    }
+
+    /// Runs offload profiles on their declared compute targets.
+    pub(crate) fn with_offload(mut self, offload: Arc<crate::live::offload::Offload>) -> Self {
+        self.offload = Some(offload);
+        self
+    }
+
+    pub fn launch_queue(&self) -> Option<super::LaunchQueue> {
+        self.launch_queue.clone()
     }
 
     /// Uses the same explicit models declaration as the native OMP sandbox.
@@ -126,10 +221,23 @@ impl KubeCommandCoordinator {
         scope: &Scope,
         arguments: &Value,
     ) -> Result<(), HostToolError> {
+        self.preflight_create_campaign(scope, arguments, false)
+    }
+
+    pub(super) fn preflight_create_campaign(
+        &self,
+        scope: &Scope,
+        arguments: &Value,
+        trusted_campaign: bool,
+    ) -> Result<(), HostToolError> {
         let tool = KubeCapabilityBinding::WorkloadCreate.id();
         // Use the same scope checks as execution.
-        require_kube_seat_scope(tool, scope)?;
+        let seat = require_kube_seat_scope(tool, scope)?;
         let input: ProfileInput = decode_arguments(tool, arguments.clone())?;
+        if let Some(cell) = self.runtime_cell.as_ref() {
+            let (_, max_inputs) = super::create_many::seat_batch_limits(&cell.snapshot(), &seat);
+            super::create_many::validate_input_count(tool, input.inputs.len(), max_inputs)?;
+        }
         validate_run_label(tool, input.label.as_deref())?;
         let scope = &pod_launch_scope(tool, scope, &input, 1)?;
         let (run_id, project_id, _) = require_kube_launch_scope(tool, scope)?;
@@ -137,20 +245,60 @@ impl KubeCommandCoordinator {
         // probe. An absent sphere does not. An unconfigured cell has no
         // pinned snapshot, so this check waits for execution's cell.
         if let Some(cell) = self.runtime_cell.as_ref() {
-            require_sphere_profile(tool, cell.snapshot(), &project_id, &input.profile)?;
+            require_sphere_profile(tool, &cell.snapshot(), &project_id, &input.profile)?;
         }
         // An un-armed launch port falls to the container-profile path at
         // execution; no declared gate exists to run here.
-        let Some(port) = self.workload_port() else {
-            return self.require_create_target(tool, input.target_node.as_deref(), None);
-        };
-        let resolution = port.resolve_launch(&input.profile);
+        let resolution = self
+            .workload_port()
+            .map_or(WorkloadResolve::NotWorkload, |port| {
+                port.resolve_launch(&input.profile)
+            });
         // The route refusal stays FIRST and verbatim: a dispatch the
         // served projection cannot route never reaches cell or journal
         // checks.
         let inputs = match resolution {
-            WorkloadResolve::NotWorkload => None,
-            WorkloadResolve::Script(inputs) => {
+            WorkloadResolve::NotWorkload => {
+                let cell =
+                    self.runtime_cell
+                        .as_ref()
+                        .ok_or_else(|| HostToolError::Unavailable {
+                            tool,
+                            reason: "the kube surface is not configured".to_owned(),
+                        })?;
+                let container = cell
+                    .container_profile(&input.profile)
+                    .filter(|profile| profile.enabled)
+                    .ok_or_else(|| {
+                        arguments_error(
+                            tool,
+                            format!(
+                                "published container profile {:?} is not admitted",
+                                input.profile
+                            ),
+                        )
+                    })?;
+                let seat = require_kube_seat_scope(tool, scope)?;
+                if !container.seats_offered.is_empty() && !container.seats_offered.contains(&seat) {
+                    return Err(HostToolError::Scope {
+                        tool,
+                        reason: "the bound seat is not offered the requested container profile",
+                    });
+                }
+                if !input.inputs.is_empty() || input.prompt.is_some() {
+                    return Err(arguments_error(
+                        tool,
+                        "container profiles do not take inputs or prompts",
+                    ));
+                }
+                None
+            }
+            WorkloadResolve::Script(mut inputs) => {
+                require_no_campaign_policy(
+                    tool,
+                    inputs.profile.profile.require_campaign_approval && !trusted_campaign,
+                )?;
+                super::launch::admit_script_limits(tool, &mut inputs, &input)?;
                 require_workload_scope(tool, scope, &inputs.profile.profile, &inputs.lane)?;
                 if let Some(gateway) = &inputs.gateway {
                     self.preflight_workload_gateway(tool, &inputs.profile.id, &gateway.endpoint)?;
@@ -158,7 +306,12 @@ impl KubeCommandCoordinator {
                 None
             }
             WorkloadResolve::Launch(inputs) => {
+                require_no_campaign_policy(
+                    tool,
+                    inputs.profile.profile.require_campaign_approval && !trusted_campaign,
+                )?;
                 require_workload_scope(tool, scope, &inputs.profile.profile, &inputs.lane)?;
+                admitted_limits(tool, &inputs.profile, &input)?;
                 Some(inputs)
             }
             WorkloadResolve::Refused(reason) => return Err(arguments_error(tool, reason)),
@@ -279,6 +432,12 @@ impl KubeCommandCoordinator {
                 self.create(binding.id(), timeout_seconds, operation_id, invocation)
                     .await
             }
+            KubeCapabilityBinding::WorkloadCreateMany => {
+                self.create_many(binding.id(), timeout_seconds, operation_id, invocation)
+            }
+            KubeCapabilityBinding::WorkloadCreateManyEvidence => {
+                super::create_many::extract_batch_evidence(binding.id(), invocation.arguments)
+            }
             KubeCapabilityBinding::WorkloadPause => {
                 self.mutate(
                     binding.id(),
@@ -322,6 +481,16 @@ impl KubeCommandCoordinator {
             KubeCapabilityBinding::WorkloadSummarize => {
                 self.summarize(binding.id(), invocation).await
             }
+            KubeCapabilityBinding::WorkloadSteer => {
+                self.steer(binding.id(), operation_id, invocation).await
+            }
+            KubeCapabilityBinding::WorkloadSteerEvidence => {
+                super::steer::extract_steer_evidence(binding.id(), invocation.arguments)
+            }
+            KubeCapabilityBinding::WorkloadQueue => self.queue_op(binding.id(), invocation, false),
+            KubeCapabilityBinding::WorkloadQueueDrop => {
+                self.queue_op(binding.id(), invocation, true)
+            }
             KubeCapabilityBinding::SnapshotRead => {
                 self.snapshot_read(binding.id(), invocation).await
             }
@@ -335,6 +504,10 @@ impl KubeCommandCoordinator {
             }
             KubeCapabilityBinding::WorkloadSummarizeEvidence => {
                 extract_summarize_evidence(binding.id(), invocation.arguments)
+            }
+            KubeCapabilityBinding::WorkloadQueueEvidence
+            | KubeCapabilityBinding::WorkloadQueueDropEvidence => {
+                super::launch_queue::extract_queue_evidence(binding.id(), invocation.arguments)
             }
             KubeCapabilityBinding::SnapshotReadEvidence => {
                 extract_snapshot_evidence(binding.id(), invocation.arguments)
@@ -379,7 +552,8 @@ impl KubeCapabilityOwner for KubeCommandCoordinator {
         let Some(cell) = self.runtime_cell.as_ref() else {
             return profiles;
         };
-        match crate::kube::spheres::project_sphere(cell.snapshot(), project) {
+        let snapshot = cell.snapshot();
+        match crate::kube::spheres::project_sphere(&snapshot, project) {
             Ok(sphere) => profiles
                 .into_iter()
                 .filter(|profile| crate::kube::spheres::sphere_admits_profile(sphere, &profile.id))
@@ -416,6 +590,9 @@ impl KubeCapabilityOwner for KubeCommandCoordinator {
         match binding {
             // Invalid declarations must fail before creating an approval row.
             KubeCapabilityBinding::WorkloadCreate => self.preflight_create(scope, arguments),
+            KubeCapabilityBinding::WorkloadCreateMany => {
+                self.preflight_create_many(binding.id(), scope, arguments)
+            }
             KubeCapabilityBinding::WorkloadPause => {
                 self.preflight_mutate(contract, binding.id(), "pause", scope, arguments)
             }
@@ -431,6 +608,21 @@ impl KubeCapabilityOwner for KubeCommandCoordinator {
             KubeCapabilityBinding::WorkloadSummarize => {
                 self.preflight_summarize(binding.id(), scope, arguments)
             }
+            KubeCapabilityBinding::WorkloadSteer => self.preflight_steer(
+                binding.id(),
+                HostInvocation {
+                    scope: scope.clone(),
+                    arguments: arguments.clone(),
+                },
+            ),
+            KubeCapabilityBinding::WorkloadQueue => {
+                require_kube_seat_scope(binding.id(), scope)?;
+                decode_arguments::<NoInput>(binding.id(), arguments.clone()).map(|_| ())
+            }
+            KubeCapabilityBinding::WorkloadQueueDrop => {
+                require_kube_seat_scope(binding.id(), scope)?;
+                super::launch_queue::QueueInput::decode(binding.id(), arguments.clone()).map(|_| ())
+            }
             KubeCapabilityBinding::SnapshotRead => {
                 self.preflight_snapshot_read(binding.id(), scope, arguments)
             }
@@ -442,11 +634,15 @@ impl KubeCapabilityOwner for KubeCommandCoordinator {
             // explicit documented no-op; the extractor's strict output
             // validation is the execution and governs at the permit.
             KubeCapabilityBinding::WorkloadCreateEvidence
+            | KubeCapabilityBinding::WorkloadCreateManyEvidence
             | KubeCapabilityBinding::WorkloadPauseEvidence
             | KubeCapabilityBinding::WorkloadResumeEvidence
             | KubeCapabilityBinding::WorkloadRestartEvidence
             | KubeCapabilityBinding::WorkloadCancelEvidence
             | KubeCapabilityBinding::WorkloadSummarizeEvidence
+            | KubeCapabilityBinding::WorkloadSteerEvidence
+            | KubeCapabilityBinding::WorkloadQueueEvidence
+            | KubeCapabilityBinding::WorkloadQueueDropEvidence
             | KubeCapabilityBinding::SnapshotReadEvidence
             | KubeCapabilityBinding::HealthReadEvidence => Ok(()),
         }
@@ -600,6 +796,7 @@ impl KubeCommandCoordinator {
     ) -> Result<(), HostToolError> {
         require_kube_seat_scope(tool, scope)?;
         let input: OptionalRunInput = decode_arguments(tool, arguments.clone())?;
+        input.checked_log_lines(tool)?;
         if let Some(raw) = input.run_id {
             let _run_id = RunId::new(raw)
                 .map_err(|error| arguments_error(tool, format!("invalid runId: {error}")))?;
@@ -738,6 +935,18 @@ pub(super) fn require_sphere_profile(
     ))
 }
 
+/// The run limits a launch admits: the profile's declared values with the launch's overrides.
+pub(super) fn admitted_limits(
+    tool: &'static str,
+    profile: &odin_registry::ComposedWorkloadProfile,
+    input: &ProfileInput,
+) -> Result<odin_domain::huginn::WorkloadLimits, HostToolError> {
+    profile
+        .profile
+        .resolve_limits(&input.limits.unwrap_or_default())
+        .map_err(|reason| arguments_error(tool, reason))
+}
+
 /// The invocation scope a pod launch runs under: the session's run plus one
 /// run per distinct launch, `<session run>:pod:<profile>:<launch>`, where
 /// `<launch>` digests what the create asks beyond the profile (its inputs
@@ -770,7 +979,7 @@ pub(super) fn pod_launch_scope(
         digest.trim_start_matches("blake3:")[..len].to_owned()
     };
     // Preserve existing launch identities when no prompt or company was supplied.
-    let asked = match (&input.prompt, &input.company) {
+    let mut asked = match (&input.prompt, &input.company) {
         (Some(prompt), Some(company)) => {
             serde_json::to_vec(&(&input.inputs, &input.target_node, prompt, company))
         }
@@ -779,6 +988,20 @@ pub(super) fn pod_launch_scope(
         (None, None) => serde_json::to_vec(&(&input.inputs, &input.target_node)),
     }
     .map_err(|error| arguments_error(tool, format!("cannot digest the launch: {error}")))?;
+    // Declared limits and seeds join the identity; a launch without them keeps its digest.
+    if let Some(limits) = &input.limits {
+        asked.extend(serde_json::to_vec(limits).map_err(|error| {
+            arguments_error(tool, format!("cannot digest the launch limits: {error}"))
+        })?);
+    }
+    if !input.seeds.is_empty() {
+        asked.extend(serde_json::to_vec(&input.seeds).map_err(|error| {
+            arguments_error(tool, format!("cannot digest the launch seeds: {error}"))
+        })?);
+    }
+    if let Some(from) = &input.continue_from {
+        asked.extend(format!("continue-from:{from}").as_bytes());
+    }
     let launch = short(&asked, 8);
     let suffix = if generation > 1 {
         format!(":{generation}")
@@ -1100,6 +1323,15 @@ pub(super) struct ProfileInput {
     /// Shown in views as the run's label (the Job's `odin.label` annotation); never identity.
     #[serde(default)]
     pub(super) label: Option<String>,
+    /// Run limits this launch lowers from the profile's declared values.
+    #[serde(default)]
+    pub(super) limits: Option<odin_domain::huginn::WorkloadLimits>,
+    /// What the run is about: odin-recon runs on these as soon as the pod is up.
+    #[serde(default)]
+    pub(super) seeds: Vec<String>,
+    /// A finished run of the same profile whose state this run takes over, on its node.
+    #[serde(default)]
+    pub(super) continue_from: Option<String>,
     /// The caller-presented approval selector on the phase-two dispatch. The
     /// kernel gate consumes it before the handler runs; the handler itself
     /// never interprets it.
@@ -1132,12 +1364,43 @@ pub(super) struct RunInput {
     _approval_id: Option<serde::de::IgnoredAny>,
 }
 
-/// `kube.workload.summarize.input`: optional run selector.
+/// `kube.workload.summarize.input`: optional run selector, and how many of
+/// that run's newest log lines to read.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct OptionalRunInput {
     #[serde(default)]
     pub(super) run_id: Option<String>,
+    #[serde(default)]
+    pub(super) log_lines: Option<i64>,
+}
+
+/// The most log lines one summarize reads.
+pub(super) const MAX_LOG_LINES: i64 = 200;
+
+impl OptionalRunInput {
+    /// A log read names one run and keeps 1 to [`MAX_LOG_LINES`] lines.
+    pub(super) fn checked_log_lines(
+        &self,
+        tool: &'static str,
+    ) -> Result<Option<i64>, HostToolError> {
+        let Some(lines) = self.log_lines else {
+            return Ok(None);
+        };
+        if self.run_id.is_none() {
+            return Err(arguments_error(
+                tool,
+                "logLines reads one run's log: name its runId",
+            ));
+        }
+        if !(1..=MAX_LOG_LINES).contains(&lines) {
+            return Err(arguments_error(
+                tool,
+                format!("logLines must be an integer from 1 to {MAX_LOG_LINES}"),
+            ));
+        }
+        Ok(Some(lines))
+    }
 }
 
 /// `kube.snapshot.read.input`: no parameters.
@@ -1176,6 +1439,49 @@ pub(crate) fn replaced_image_refusal(
 }
 
 #[cfg(test)]
+mod launch_limit_tests {
+    use odin_domain::{RunId, Scope};
+
+    use super::{decode_arguments, pod_launch_scope, ProfileInput};
+
+    const TOOL: &str = "kube.workload.create";
+
+    #[test]
+    fn a_launch_names_only_declared_limit_fields_and_its_limits_join_the_run() {
+        let with_limits = |limits: serde_json::Value| {
+            decode_arguments::<ProfileInput>(
+                TOOL,
+                serde_json::json!({"profile": "research", "limits": limits}),
+            )
+        };
+        assert!(with_limits(serde_json::json!({"outputTokens": 1})).is_err());
+        let lowered =
+            with_limits(serde_json::json!({"deadlineSeconds": 3600})).expect("a declared field");
+        let scope = Scope {
+            run: Some(RunId::new("run:live:session").expect("run")),
+            ..Scope::default()
+        };
+        let plain: ProfileInput =
+            decode_arguments(TOOL, serde_json::json!({"profile": "research"}))
+                .expect("plain launch");
+        let run =
+            |input: &ProfileInput| pod_launch_scope(TOOL, &scope, input, 1).expect("scope").run;
+        assert_ne!(
+            run(&lowered),
+            run(&plain),
+            "declared limits change the run identity"
+        );
+        assert_eq!(
+            run(&plain),
+            pod_launch_scope(TOOL, &scope, &plain, 1)
+                .expect("scope")
+                .run,
+            "a launch without limits keeps its identity"
+        );
+    }
+}
+
+#[cfg(test)]
 mod sphere_profile_tests {
     use super::require_sphere_profile;
     use odin_domain::ProjectId;
@@ -1198,13 +1504,14 @@ mod sphere_profile_tests {
                 source_root: "/work".to_owned(),
                 default_seat: "gungnir".parse().expect("seat"),
                 memory_namespaces: BTreeSet::new(),
-                artifact_policy: "standard".to_owned(),
                 privacy: None,
                 accounts: Default::default(),
                 review_verdict: None,
                 repo: None,
+                hub_refresh_seconds: None,
                 deploy: None,
                 sphere,
+                agents: Default::default(),
             })),
         }
     }

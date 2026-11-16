@@ -88,6 +88,11 @@ pub enum RetrievalPosture {
         /// Why the vector leg did not run.
         reason: String,
     },
+    /// The reranker did not run: the fused (BM25 and vector) order served.
+    FusedOnly {
+        /// Why the rerank was skipped.
+        reason: String,
+    },
 }
 
 /// The outcome of one posture-aware retrieval.

@@ -149,16 +149,9 @@ fn decode_answers(
         monitoring_cadence_seconds: opt_u64(tool, arguments, "monitoringCadenceSeconds")?,
         progress: opt_string(tool, arguments, "progress", 64)?,
         stall_seconds: opt_u64(tool, arguments, "stallSeconds")?,
-        recovery: match arguments.get("recovery") {
-            None | Some(Value::Null) => None,
-            Some(value @ Value::Object(_)) => Some(value.clone()),
-            Some(_) => {
-                return Err(HostToolError::Arguments {
-                    tool,
-                    detail: "recovery must be an object".to_owned(),
-                })
-            }
-        },
+        recovery: opt_object(tool, arguments, "recovery")?,
+        limits: opt_limits(tool, arguments)?,
+        resources: opt_object(tool, arguments, "resources")?,
         tools: opt_strings(tool, arguments, "tools", 32, 128)?,
         watchdogs: match arguments.get("watchdogs") {
             None | Some(Value::Null) => None,
@@ -175,6 +168,38 @@ fn decode_answers(
             }
         },
     })
+}
+
+/// Reads one optional run-limits object; unknown or mistyped fields refuse by name.
+fn opt_limits(
+    tool: &'static str,
+    arguments: &Value,
+) -> Result<Option<odin_domain::huginn::WorkloadLimits>, HostToolError> {
+    match arguments.get("limits") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|error| HostToolError::Arguments {
+                tool,
+                detail: format!("limits is not a valid run-limits object: {error}"),
+            }),
+    }
+}
+
+/// Reads one optional object, kept verbatim for the skeleton compiler to type.
+fn opt_object(
+    tool: &'static str,
+    arguments: &Value,
+    field: &str,
+) -> Result<Option<Value>, HostToolError> {
+    match arguments.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value @ Value::Object(_)) => Ok(Some(value.clone())),
+        Some(_) => Err(HostToolError::Arguments {
+            tool,
+            detail: format!("{field} must be an object"),
+        }),
+    }
 }
 
 /// Reads one optional bounded array of nonempty strings.
@@ -312,10 +337,12 @@ fn produce_vault_page(runtime: &HermesRuntime, area: &str, title: &str, body: &s
     }
     let page = format!("{}/{}", vault.config().generated_namespace, key);
     let content = format!("# {title}\n\n{body}\n");
-    let _ = vault.write_generated(&crate::vault::VaultWriteGeneratedInput {
-        page_name: page,
+    if let Err(error) = vault.write_generated(&crate::vault::VaultWriteGeneratedInput {
+        page_name: page.clone(),
         content,
-    });
+    }) {
+        tracing::warn!("workload vault page {page} was not written: {error}");
+    }
 }
 
 /// The two model-facing workload authoring tools.

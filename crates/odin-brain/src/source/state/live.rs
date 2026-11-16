@@ -330,12 +330,10 @@ fn lane_summary(id: &str, value: &Value) -> String {
         _ => "unknown",
     };
     let project = field_str(value, "project").unwrap_or("unknown");
-    let family = field_str(value, "family").unwrap_or("unknown");
-    let queue = field_str(value, "queue").unwrap_or("unknown");
     let description = field_str(value, "description")
         .map(|description| bounded(description, 120))
         .unwrap_or_default();
-    format!("Lane {id} ({enabled}) project {project} family {family} queue {queue}: {description}")
+    format!("Lane {id} ({enabled}) project {project}: {description}")
 }
 
 /// The approval as the ledger projects it, when it still awaits a decision.

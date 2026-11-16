@@ -1,0 +1,29 @@
+schema = "odin.registry.v1"
+kind = "model"
+enabled = true
+description = "GPT-6.1 Sol on the ChatGPT Pro Codex account: the coding seats' first lane."
+# The card id; everything else names the bare lane (this folder).
+id = "gateway/sol"
+# Upstream provider/model exactly as AVAILABLE lists it.
+served = "openai-codex/gpt-6.1-sol"
+# frontier, everyday or fast-cheap.
+tier = "frontier"
+# Position in the class try order.
+order = 3
+# Account pin holding this card's credentials.
+account = "chatgpt"
+# One line naming when this card is the right pick.
+strengths = "Programming: building, refactoring and reviewing code."
+# Fallback lanes, in order.
+fallbacks = ["astra", "terra"]
+# True names a lane seats may run.
+seats = true
+# Strict tool-call validation; a Codex provider fact.
+strict = true
+
+
+# The context counter: an estimate (bytes / 4) calibrated from provider usage.
+tokenizer = "estimate"
+
+[thinking]
+default = "medium"

@@ -781,6 +781,7 @@ mod tests {
     use super::*;
     use odin_process::test_support::RegisteredWorkerFixture;
     use odin_process::Value as DbusValue;
+    use std::process::Stdio;
 
     /// Separate D-Bus fixture managers count queries to check lookup order and caching.
     struct ManagerFixture {

@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "knowledge"
+expose = "on_demand"
+op = "status"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "The Brain page as data. Every part's state and reason, recent changes and index counts; part or area narrows it."
+handler = { id = "knowledge_status" }
+input_schema = "schemas/capability/knowledge.status.input.json"
+output_schema = "schemas/capability/knowledge.status.output.json"
+effect_class = "R0"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "pure"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_knowledge_status_evidence" }
+tests = [
+  "odin-hermes runtime::knowledge::tests::each_declared_knowledge_tool_forwards_its_arguments_and_the_seat",
+]

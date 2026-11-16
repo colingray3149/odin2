@@ -558,6 +558,7 @@ impl Ledger {
                     "SELECT approval_id FROM approvals
                      WHERE status IN ('requested', 'approved')
                        AND target_kind = ?1 AND target_id = ?2
+                       AND capability_id != 'plan.root-consent'
                      ORDER BY approval_id",
                 )?;
                 let rows = statement.query_map([target_kind, from_target_id], |row| row.get(0))?;
@@ -651,6 +652,8 @@ impl Ledger {
             }
             crate::inbox::InboxClaim::Inserted => {}
         }
+        let root_consent = load_approval(&transaction, approval_id)?
+            .is_some_and(|approval| approval.scope.capability_id.as_str() == "plan.root-consent");
         let outcome = decide_in_tx(
             &transaction,
             approval_id,
@@ -658,7 +661,7 @@ impl Ledger {
             decided_by,
             decided_at,
             expected_revision,
-            Some(intake.owner_preview),
+            Some(intake.owner_preview || root_consent),
         )?;
         if let DecideApproval::Decided(approval) = &outcome {
             if approval.status == ApprovalStatus::Approved {
@@ -671,6 +674,21 @@ impl Ledger {
                             capability_id, arguments_hash, revision, decided_by, decided_at
                      FROM approvals WHERE approval_id = ?1 AND status = 'approved'",
                     params![approval_id.as_str(), intake.consumer_id, intake.message_id],
+                )?;
+                if approval.scope.capability_id.as_str() == "plan.root-consent" {
+                    crate::plan_acceptance::apply_root_plan_consent_in_tx(
+                        &transaction,
+                        approval,
+                        decided_by,
+                        decided_at,
+                    )?;
+                }
+            }
+            if root_consent {
+                crate::plan_acceptance::queue_root_plan_continuation_in_tx(
+                    &transaction,
+                    approval,
+                    decided_at,
                 )?;
             }
             transaction.commit()?;
@@ -862,7 +880,7 @@ impl Ledger {
     }
 }
 
-fn insert_requested(
+pub(crate) fn insert_requested(
     transaction: &Transaction<'_>,
     request: &NewApproval,
 ) -> LedgerResult<Approval> {
@@ -934,9 +952,28 @@ fn decide_in_tx(
     let Some(current) = load_approval(transaction, approval_id)? else {
         return Ok(DecideApproval::NotFound);
     };
+    if current.scope.capability_id.as_str() == "plan.root-consent" && owner_preview.is_none() {
+        return Err(LedgerError::invalid_data(
+            "root plan consent requires authenticated owner intake".into(),
+        ));
+    }
     require_revision(&current, expected_revision)?;
     if current.status != ApprovalStatus::Requested {
         return Ok(DecideApproval::NotRequested(current));
+    }
+    // A decision at or past the deadline expires the request instead: every decide path (Discord, phone,
+    // Huginn, CLI) goes through here, so none can record a yes the consume step would then refuse.
+    if decided_at >= current.expires_at {
+        let changed = transaction.execute(
+            "UPDATE approvals
+             SET status = 'expired', revision = revision + 1
+             WHERE approval_id = ?1 AND revision = ?2 AND status = 'requested'",
+            params![approval_id.to_string(), expected_revision],
+        )?;
+        ensure_guarded_update(transaction, approval_id, expected_revision, changed)?;
+        let expired = load_existing_approval(transaction, approval_id)?;
+        crate::approval_feed::journal_approval_change(transaction, &expired, decided_at)?;
+        return Ok(DecideApproval::NotRequested(expired));
     }
     if matches!(decision, ApprovalDecision::Approve { .. })
         && owner_preview.is_some_and(|preview| requires_owner_preview(&current.scope, preview))
@@ -1436,6 +1473,27 @@ mod tests {
             ledger.expire_due_approvals(after).unwrap().is_empty(),
             "expired once"
         );
+    }
+
+    #[test]
+    fn a_decision_after_the_deadline_expires_the_request() {
+        let mut ledger = Ledger::open_in_memory().unwrap();
+        request(&mut ledger, "approval:late", scope(b"late"));
+        let id = ApprovalId::new("approval:late").unwrap();
+        let deadline = ledger.approval(&id).unwrap().unwrap().expires_at;
+        let late = ledger
+            .decide_approval(
+                &id,
+                ApprovalDecision::Approve { evidence_ref: None },
+                "human:one",
+                deadline + Duration::seconds(1),
+                1,
+            )
+            .unwrap();
+        let DecideApproval::NotRequested(late) = late else {
+            panic!("a late yes was recorded: {late:?}");
+        };
+        assert_eq!(late.status, odin_domain::ApprovalStatus::Expired);
     }
 
     #[test]

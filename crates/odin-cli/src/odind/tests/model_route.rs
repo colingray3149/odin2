@@ -231,6 +231,7 @@ async fn route_surveys_the_plane_and_switches_exactly_once() {
             ])
             .unwrap(),
             owner_text: None,
+            wake: false,
         },
     })
     .await

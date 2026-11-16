@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://odin.local/schemas/capability/kube.workload.queue.input.json",
+  "title": "kube.workload.queue input",
+  "description": "List your held launches, oldest first.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}

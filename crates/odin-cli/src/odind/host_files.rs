@@ -308,6 +308,53 @@ impl HostFileRoute for DaemonHostFiles {
         let folder = folder.as_deref().map(relative).transpose()?;
         self.save_or_queue(seat, root, folder.as_ref(), name, source, original)
     }
+
+    fn save_new(
+        &self,
+        seat: &str,
+        root_id: &str,
+        name: &str,
+        source: &mut std::fs::File,
+    ) -> Result<Value, String> {
+        save_new(
+            &self.roots,
+            self.here.as_deref(),
+            seat,
+            root_id,
+            name,
+            source,
+        )
+    }
+}
+
+/// `intake.copy`'s write: a new file at the top of a declared readWrite root
+/// on this host, refused when the name is taken.
+fn save_new(
+    roots: &[FileRoot],
+    here: Option<&str>,
+    seat: &str,
+    root_id: &str,
+    name: &str,
+    source: &mut std::fs::File,
+) -> Result<Value, String> {
+    let root = open_root(roots, here, seat, root_id)?;
+    if root.access != odin_domain::huginn::FileRootAccess::ReadWrite {
+        return Err(format!("{root_id} is read-only"));
+    }
+    if let Some(host) = root.host.as_deref().filter(|host| Some(*host) != here) {
+        return Err(format!(
+            "{root_id} is on {host}; only a root on this host takes a copy"
+        ));
+    }
+    let (byte_len, digest) = queue::identity(source)?;
+    let saved = odin_huginn::files::save::save_new_into_root(root, name, source, byte_len, digest)
+        .map_err(|error| format!("{root_id}: {error}"))?;
+    Ok(json!({
+        "host": here.unwrap_or_default(),
+        "root": root_id,
+        "path": saved.as_str(),
+        "sizeBytes": byte_len,
+    }))
 }
 
 #[cfg(test)]
@@ -362,5 +409,60 @@ mod tests {
         let refusal = open_root(&roots, Some("pc"), "kubert", "downloads").unwrap_err();
         assert!(refusal.contains("no folder"), "{refusal}");
         assert!(open_root(&roots, Some("pc"), "sinmara", "downloads").is_ok());
+    }
+
+    #[test]
+    fn a_copy_lands_once_in_a_writable_root_here_and_is_refused_otherwise() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().canonicalize().unwrap();
+        let writable = |id: &str, access, host: Option<&str>| {
+            FileRoot::new(FileRootInit {
+                canonical_path: path.clone(),
+                access,
+                media_policy: FileMediaPolicy {
+                    allowed_media_types: vec!["application/octet-stream".to_owned()],
+                },
+                max_object_bytes: NonZeroU64::new(1 << 20).unwrap(),
+                host: host.map(str::to_owned),
+                ..init(id, "sinmara", None)
+            })
+            .unwrap()
+        };
+        let roots = [
+            writable("cfd-incoming", FileRootAccess::ReadWrite, None),
+            writable("recon", FileRootAccess::ReadOnly, None),
+            writable(
+                "laptop-downloads",
+                FileRootAccess::ReadWrite,
+                Some("laptop"),
+            ),
+        ];
+        let source = path.join("staged");
+        std::fs::write(&source, b"tdms bytes").unwrap();
+        let copy = |root: &str, name: &str| {
+            let mut file = std::fs::File::open(&source).unwrap();
+            save_new(&roots, Some("mini"), "sinmara", root, name, &mut file)
+        };
+
+        let saved = copy("cfd-incoming", "run1.tdms").unwrap();
+        assert_eq!(saved["path"], "run1.tdms");
+        assert_eq!(saved["sizeBytes"], 10);
+        assert_eq!(
+            std::fs::read(path.join("run1.tdms")).unwrap(),
+            b"tdms bytes"
+        );
+
+        let taken = copy("cfd-incoming", "run1.tdms").unwrap_err();
+        assert!(taken.contains("already exists"), "{taken}");
+        let undeclared = copy("elsewhere", "run2.tdms").unwrap_err();
+        assert!(
+            undeclared.contains("no folder \"elsewhere\""),
+            "{undeclared}"
+        );
+        let read_only = copy("recon", "run2.tdms").unwrap_err();
+        assert!(read_only.contains("recon is read-only"), "{read_only}");
+        let remote = copy("laptop-downloads", "run2.tdms").unwrap_err();
+        assert!(remote.contains("is on laptop"), "{remote}");
+        assert!(!path.join("run2.tdms").exists());
     }
 }

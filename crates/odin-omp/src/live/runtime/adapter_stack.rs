@@ -2,7 +2,10 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use odin_adapter_core::dispatch::{AdapterBackends, AdapterExecutor, AdapterResultSink};
+use odin_adapter_core::dispatch::{
+    AdapterBackends, AdapterExecutor, AdapterResultSink, ProjectRecorder, ProjectValidator,
+    ValueRecorder, ValueValidator,
+};
 use odin_adapter_core::evidence::LedgerEffectReceiptSink;
 use odin_kernel::{Clock, OperationExecutor, SchemaCatalog};
 use odin_ledger::Ledger;
@@ -26,6 +29,11 @@ pub(in crate::live) struct AdapterStack {
 pub(in crate::live) struct AdapterStackConfig {
     pub adapters: Arc<DeclaredAdapterBackends>,
     pub status_ttl: Duration,
+    pub promotion_verifier: Option<ValueValidator>,
+    pub campaign_validator: Option<ValueValidator>,
+    pub spend_validator: Option<ProjectValidator>,
+    pub campaign_recorder: Option<ValueRecorder>,
+    pub spend_recorder: Option<ProjectRecorder>,
 }
 
 /// The single adapter-stack assembly. The dispatcher is always composed —
@@ -41,6 +49,11 @@ pub(in crate::live) fn compose_adapter_stack(
     let AdapterStackConfig {
         adapters,
         status_ttl,
+        promotion_verifier,
+        campaign_validator,
+        spend_validator,
+        campaign_recorder,
+        spend_recorder,
     } = config;
     let configured: BTreeSet<String> = adapters.ids().map(str::to_owned).collect();
     let status: Arc<dyn HostAdapterStatus> = Arc::new(SupervisedAdapterStatus::new(
@@ -73,7 +86,12 @@ pub(in crate::live) fn compose_adapter_stack(
         )),
         results,
         receipt_clock,
-    );
+    )
+    .with_promotion_verifier(promotion_verifier)
+    .with_campaign_validator(campaign_validator)
+    .with_spend_validator(spend_validator)
+    .with_campaign_recorder(campaign_recorder)
+    .with_spend_recorder(spend_recorder);
     Ok(AdapterStack {
         executor: Arc::new(composed),
         status,

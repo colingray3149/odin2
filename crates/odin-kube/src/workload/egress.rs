@@ -5,6 +5,8 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtectedEgress {
     pub endpoint: IpAddr,
+    /// Where the authority forwards the endpoint; a local pod's packets reach policy rewritten.
+    pub forwarded: Option<IpAddr>,
     pub port: u16,
     pub allow_hosts: Vec<String>,
 }
@@ -21,6 +23,8 @@ pub struct ResolvedEgress {
     pub open: bool,
     /// Set only for a protected plan. Cluster egress is then the tunnel and the gateway.
     pub protected: Option<ProtectedEgress>,
+    /// A script pod takes no inbound connections from any peer on the pod overlay.
+    pub deny_ingress: bool,
 }
 
 /// Resolve before admission; an unresolvable gateway prevents launch.
@@ -40,6 +44,7 @@ pub async fn resolve_declared_hosts(plan: &WorkloadPodPlan) -> Result<ResolvedEg
         let mut resolved = resolve_hosts(&[], &gateway).await?;
         resolved.protected = Some(ProtectedEgress {
             endpoint: vpn.endpoint,
+            forwarded: vpn.forwarded,
             port: vpn.port,
             allow_hosts: plan.allow_hosts.clone(),
         });
@@ -47,6 +52,7 @@ pub async fn resolve_declared_hosts(plan: &WorkloadPodPlan) -> Result<ResolvedEg
     }
     let mut resolved = resolve_hosts(&plan.allow_hosts, &gateway).await?;
     resolved.open = plan.network_open;
+    resolved.deny_ingress = plan.agent.is_none();
     Ok(resolved)
 }
 
@@ -79,6 +85,7 @@ pub async fn resolve_hosts(
     }))
     .await?;
     Ok(ResolvedEgress {
+        deny_ingress: false,
         sites,
         unresolved,
         pinned: targets,
@@ -166,10 +173,15 @@ fn host_missing(error: &std::io::Error) -> bool {
 /// A protected plan admits only the tunnel UDP endpoint and the pinned gateway.
 pub fn egress_rules(resolved: &ResolvedEgress) -> Vec<NetworkPolicyEgressRule> {
     if let Some(protected) = &resolved.protected {
-        let mut rules = vec![pinned_address_rule(
-            protected.endpoint,
-            vec![network_policy_port("UDP", i32::from(protected.port))],
-        )];
+        let mut rules: Vec<NetworkPolicyEgressRule> = std::iter::once(protected.endpoint)
+            .chain(protected.forwarded)
+            .map(|address| {
+                pinned_address_rule(
+                    address,
+                    vec![network_policy_port("UDP", i32::from(protected.port))],
+                )
+            })
+            .collect();
         for (target, addresses) in &resolved.pinned {
             for address in addresses {
                 rules.push(pinned_address_rule(
@@ -385,7 +397,7 @@ pub(super) fn declared_scope(resolved: &ResolvedEgress) -> Vec<String> {
     scope
 }
 
-/// Restrict egress without changing ingress; retain declared hosts for scope checks.
+/// Restrict egress, and deny all ingress for a script pod; retain declared hosts for scope checks.
 pub(crate) fn desired_egress_policy(run_id: &RunId, resolved: &ResolvedEgress) -> NetworkPolicy {
     NetworkPolicy {
         metadata: ObjectMeta {
@@ -402,8 +414,13 @@ pub(crate) fn desired_egress_policy(run_id: &RunId, resolved: &ResolvedEgress) -
                 match_labels: Some(run_claim_labels(run_id)),
                 ..Default::default()
             }),
-            policy_types: Some(vec!["Egress".to_owned()]),
+            policy_types: Some(if resolved.deny_ingress {
+                vec!["Egress".to_owned(), "Ingress".to_owned()]
+            } else {
+                vec!["Egress".to_owned()]
+            }),
             egress: Some(egress_rules(resolved)),
+            // Ingress listed with no rules admits nothing.
             ingress: None,
         }),
     }
@@ -414,10 +431,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn script_policies_deny_ingress() {
+        let run = RunId::new("run-ingress").unwrap();
+        let resolved = |deny_ingress| ResolvedEgress {
+            deny_ingress,
+            sites: BTreeMap::new(),
+            unresolved: BTreeMap::new(),
+            pinned: Vec::new(),
+            open: false,
+            protected: None,
+        };
+        let spec = desired_egress_policy(&run, &resolved(true)).spec.unwrap();
+        assert_eq!(
+            spec.policy_types.as_deref(),
+            Some(&["Egress".to_owned(), "Ingress".to_owned()][..])
+        );
+        assert!(spec.ingress.is_none(), "no ingress rule admits anything");
+        let agent = desired_egress_policy(&run, &resolved(false)).spec.unwrap();
+        assert_eq!(
+            agent.policy_types.as_deref(),
+            Some(&["Egress".to_owned()][..])
+        );
+    }
+
+    #[test]
     fn protected_egress_has_no_direct_site_or_cluster_dns_path() {
         let tunnel = "192.0.2.10".parse().unwrap();
         let gateway = "192.0.2.11".parse().unwrap();
         let resolved = ResolvedEgress {
+            deny_ingress: false,
             sites: BTreeMap::from([(
                 "example.com".to_owned(),
                 BTreeSet::from(["93.184.215.14".parse().unwrap()]),
@@ -433,6 +475,7 @@ mod tests {
             open: true,
             protected: Some(ProtectedEgress {
                 endpoint: tunnel,
+                forwarded: Some("192.168.15.1".parse().expect("forwarded")),
                 port: 8421,
                 allow_hosts: Vec::new(),
             }),
@@ -441,6 +484,11 @@ mod tests {
             egress_rules(&resolved),
             [
                 pinned_address_rule(tunnel, vec![network_policy_port("UDP", 8421)]),
+                // A pod on the authority meets policy after the host forwarded its tunnel there.
+                pinned_address_rule(
+                    "192.168.15.1".parse().unwrap(),
+                    vec![network_policy_port("UDP", 8421)]
+                ),
                 pinned_address_rule(gateway, vec![network_policy_port("TCP", 14000)]),
             ]
         );
@@ -450,6 +498,7 @@ mod tests {
     fn open_egress_is_public_tcp_only_and_keeps_the_gateway_pin() {
         let gateway = IpAddr::V4(Ipv4Addr::from_octets([100, 91, 122, 102]));
         let resolved = ResolvedEgress {
+            deny_ingress: false,
             sites: BTreeMap::new(),
             unresolved: BTreeMap::new(),
             pinned: vec![(

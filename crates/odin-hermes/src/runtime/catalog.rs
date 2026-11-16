@@ -35,6 +35,7 @@ pub fn hermes_host_tools(runtime: &Arc<HermesRuntime>) -> Vec<Arc<dyn HostTool>>
         tools.push(seat_ask_model_tool(runtime, contract));
     }
     vault_tools(runtime, &mut tools);
+    super::knowledge::knowledge_tools(runtime, &mut tools);
     discord_tools(runtime, &mut tools);
     read_tools(runtime, &mut tools);
     workload_tools(runtime, &mut tools);
@@ -53,11 +54,13 @@ pub fn hermes_host_tools(runtime: &Arc<HermesRuntime>) -> Vec<Arc<dyn HostTool>>
     super::routines::routine_tools(runtime, &mut tools);
     super::spend::spend_tools(runtime, &mut tools);
     super::run_stats::run_stats_tools(runtime, &mut tools);
+    super::simulation::simulation_tools(runtime, &mut tools);
     super::models::models_tools(runtime, &mut tools);
     super::local_models::local_models_tools(runtime, &mut tools);
     super::shared_files::shared_file_tools(runtime, &mut tools);
     super::registry_author::registry_author_tools(runtime, &mut tools);
     super::claude::claude_tools(runtime, &mut tools);
+    super::rental::rental_tools(runtime, &mut tools);
     super::desktop::desktop_tools(runtime, &mut tools);
     super::time_ops::time_tools(runtime, &mut tools);
 
@@ -85,10 +88,13 @@ pub fn hermes_capability_bindings(
         "claude_read",
         "claude_stop",
         "claude_review",
+        "compute_lease_create",
+        "compute_lease_destroy",
+        "compute_lease_enroll",
+        "compute_lease_list",
         "huginn_read",
         "vault_search",
         "vault_write_generated",
-        "memory_remember",
         "discord_intake",
         "terminal_read",
         "desktop_look",
@@ -120,6 +126,7 @@ pub fn hermes_capability_bindings(
         "files_list",
         "files_share",
         "files_save",
+        "intake_copy",
         "project_create",
         "seat_create",
         "seat_propose",
@@ -130,7 +137,6 @@ pub fn hermes_capability_bindings(
         "artifact_write",
         "artifact_read",
         "artifact_analyze",
-        "memory_forget",
         "build_run",
         "check_run",
         "code_navigate",
@@ -138,20 +144,41 @@ pub fn hermes_capability_bindings(
         "test_run",
         "code_review_request",
         "code_review_verdict",
+        "science_review_verdict",
         "git_patch_propose",
         "git_branch_merge",
         "spend_read",
         "run_stats",
+        "simulation_read",
+        "simulation_frame",
         "models_read",
         "local_models",
         "registry_skeleton_read",
         "registry_author",
         "registry_author_grant",
+        "registry_edit",
+        "registry_edit_grant",
         "journal_read",
         "model_consult",
         "model_complete",
         "odin_deploy",
         "odin_deploy_status",
+        "knowledge_search",
+        "knowledge_read",
+        "knowledge_dig",
+        "knowledge_add",
+        "knowledge_pull",
+        "knowledge_edit",
+        "knowledge_remember",
+        "knowledge_forget",
+        "knowledge_promote",
+        "knowledge_exile",
+        "knowledge_delete",
+        "knowledge_new",
+        "knowledge_status",
+        "knowledge_pause",
+        "knowledge_resume",
+        "knowledge_where",
     ];
     const EXTRACTORS: &[(&str, &str)] = &[
         ("odin_hermes_seat_ask_evidence", "seat_ask"),
@@ -160,13 +187,28 @@ pub fn hermes_capability_bindings(
         ("odin_hermes_claude_read_evidence", "claude_read"),
         ("odin_hermes_claude_stop_evidence", "claude_stop"),
         ("odin_hermes_claude_review_evidence", "claude_review"),
+        (
+            "odin_hermes_compute_lease_create_evidence",
+            "compute_lease_create",
+        ),
+        (
+            "odin_hermes_compute_lease_destroy_evidence",
+            "compute_lease_destroy",
+        ),
+        (
+            "odin_hermes_compute_lease_enroll_evidence",
+            "compute_lease_enroll",
+        ),
+        (
+            "odin_hermes_compute_lease_list_evidence",
+            "compute_lease_list",
+        ),
         ("odin_hermes_huginn_read_evidence", "huginn_read"),
         ("odin_hermes_vault_search_evidence", "vault_search"),
         (
             "odin_hermes_vault_write_generated_evidence",
             "vault_write_generated",
         ),
-        ("odin_hermes_memory_remember_evidence", "memory_remember"),
         ("odin_hermes_discord_intake_evidence", "discord_intake"),
         ("odin_hermes_seat_model_set_evidence", "seat_model_set"),
         ("odin_hermes_terminal_read_evidence", "terminal_read"),
@@ -209,6 +251,7 @@ pub fn hermes_capability_bindings(
         ("odin_hermes_files_list_evidence", "files_list"),
         ("odin_hermes_files_share_evidence", "files_share"),
         ("odin_hermes_files_save_evidence", "files_save"),
+        ("odin_hermes_intake_copy_evidence", "intake_copy"),
         ("odin_hermes_project_create_evidence", "project_create"),
         ("odin_hermes_seat_create_evidence", "seat_create"),
         ("odin_hermes_seat_propose_evidence", "seat_propose"),
@@ -219,7 +262,6 @@ pub fn hermes_capability_bindings(
         ("odin_hermes_artifact_write_evidence", "artifact_write"),
         ("odin_hermes_artifact_read_evidence", "artifact_read"),
         ("odin_hermes_artifact_analyze_evidence", "artifact_analyze"),
-        ("odin_hermes_memory_forget_evidence", "memory_forget"),
         ("odin_hermes_build_run_evidence", "build_run"),
         ("odin_hermes_check_run_evidence", "check_run"),
         ("odin_hermes_code_navigate_evidence", "code_navigate"),
@@ -234,12 +276,18 @@ pub fn hermes_capability_bindings(
             "code_review_verdict",
         ),
         (
+            "odin_hermes_science_review_verdict_evidence",
+            "science_review_verdict",
+        ),
+        (
             "odin_hermes_git_patch_propose_evidence",
             "git_patch_propose",
         ),
         ("odin_hermes_git_branch_merge_evidence", "git_branch_merge"),
         ("odin_hermes_spend_read_evidence", "spend_read"),
         ("odin_hermes_run_stats_evidence", "run_stats"),
+        ("odin_hermes_simulation_read_evidence", "simulation_read"),
+        ("odin_hermes_simulation_frame_evidence", "simulation_frame"),
         ("odin_hermes_models_read_evidence", "models_read"),
         ("odin_hermes_local_models_evidence", "local_models"),
         (
@@ -251,6 +299,11 @@ pub fn hermes_capability_bindings(
             "odin_hermes_registry_author_grant_evidence",
             "registry_author_grant",
         ),
+        ("odin_hermes_registry_edit_evidence", "registry_edit"),
+        (
+            "odin_hermes_registry_edit_grant_evidence",
+            "registry_edit_grant",
+        ),
         ("odin_hermes_journal_read_evidence", "journal_read"),
         ("odin_hermes_model_consult_evidence", "model_consult"),
         ("odin_hermes_model_complete_evidence", "model_complete"),
@@ -259,6 +312,28 @@ pub fn hermes_capability_bindings(
             "odin_hermes_odin_deploy_status_evidence",
             "odin_deploy_status",
         ),
+        ("odin_hermes_knowledge_search_evidence", "knowledge_search"),
+        ("odin_hermes_knowledge_read_evidence", "knowledge_read"),
+        ("odin_hermes_knowledge_dig_evidence", "knowledge_dig"),
+        ("odin_hermes_knowledge_add_evidence", "knowledge_add"),
+        ("odin_hermes_knowledge_pull_evidence", "knowledge_pull"),
+        ("odin_hermes_knowledge_edit_evidence", "knowledge_edit"),
+        (
+            "odin_hermes_knowledge_remember_evidence",
+            "knowledge_remember",
+        ),
+        ("odin_hermes_knowledge_forget_evidence", "knowledge_forget"),
+        (
+            "odin_hermes_knowledge_promote_evidence",
+            "knowledge_promote",
+        ),
+        ("odin_hermes_knowledge_exile_evidence", "knowledge_exile"),
+        ("odin_hermes_knowledge_delete_evidence", "knowledge_delete"),
+        ("odin_hermes_knowledge_new_evidence", "knowledge_new"),
+        ("odin_hermes_knowledge_status_evidence", "knowledge_status"),
+        ("odin_hermes_knowledge_pause_evidence", "knowledge_pause"),
+        ("odin_hermes_knowledge_resume_evidence", "knowledge_resume"),
+        ("odin_hermes_knowledge_where_evidence", "knowledge_where"),
     ];
     let mut by_name: BTreeMap<String, Arc<dyn HostTool>> = BTreeMap::new();
     for tool in hermes_host_tools(runtime) {

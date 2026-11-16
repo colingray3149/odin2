@@ -5,12 +5,15 @@ fn config(read_only: &[&str], server: Vec<String>) -> BridgeConfig {
         adapter: "mcp-time".to_owned(),
         kind_prefix: "time".to_owned(),
         read_only: read_only.iter().map(|tool| (*tool).to_owned()).collect(),
+        r1: Vec::new(),
         sequences: Vec::new(),
         expose: Vec::new(),
         load_check: None,
         window: None,
         pdf_text: None,
         article_text: None,
+        fingerprint_fetch: None,
+        call_bound: DEFAULT_CALL_BOUND,
         surface: PIN.to_owned(),
         server,
     }
@@ -301,6 +304,44 @@ fn browser_tools() -> Vec<Value> {
 }
 
 #[test]
+fn declared_r1_effects_are_bound_and_conflicting_reads_refused() {
+    let args = strings(&[
+        "--adapter",
+        "example",
+        "--kind-prefix",
+        "example",
+        "--r1",
+        "write",
+        "--",
+        "/bin/true",
+    ]);
+    let tools = vec![json!({"name":"write"}), json!({"name":"other"})];
+    let bridge = pinned(BridgeConfig::parse_unpinned(&args).unwrap(), &tools);
+    let descriptor = bridge.descriptor(&tools).unwrap();
+    assert_eq!(descriptor["operations"][0]["effect_class"], "R1");
+    assert_eq!(descriptor["operations"][1]["effect_class"], "R3");
+    let mut other = bridge.clone();
+    other.r1.clear();
+    assert_ne!(bridge.binding_digest(), other.binding_digest());
+    assert!(BridgeConfig::parse_unpinned(&strings(&[
+        "--adapter",
+        "example",
+        "--kind-prefix",
+        "example",
+        "--r1",
+        "write",
+        "--read-only",
+        "write",
+        "--",
+        "/bin/true"
+    ]))
+    .is_err());
+    let annotated = vec![json!({"name":"write", "annotations":{"readOnlyHint":true}})];
+    let bridge = pinned(bridge, &annotated);
+    assert!(bridge.descriptor(&annotated).is_err());
+}
+
+#[test]
 fn a_declared_sequence_is_the_only_operation_and_is_r0_when_every_step_reads() {
     let bridge = pinned(browser_bridge(strings(&["/bin/true"])), &browser_tools());
     let descriptor = bridge.descriptor(&browser_tools()).expect("descriptor");
@@ -422,15 +463,16 @@ fn read_page(server: &[String], url: &str) -> Result<Value, BridgeError> {
 fn a_page_that_did_not_load_is_a_typed_failure_never_content() {
     let directory = tempfile::tempdir().expect("tempdir");
     let server = obscura_like(directory.path());
-    let read = read_page(&server, "https://arxiv.org/abs/1609.07625").expect("a loaded page reads");
+    let read =
+        read_page(&server, "https://papers.example/abs/1609.07625").expect("a loaded page reads");
     assert_eq!(
         read["content"][0]["text"],
-        "# https://arxiv.org/abs/1609.07625"
+        "# https://papers.example/abs/1609.07625"
     );
     for url in [
-        "https://arxiv.org/abs/missing",
+        "https://papers.example/abs/missing",
         "about:blank",
-        "https://example.org/empty",
+        "https://papers.example/empty",
     ] {
         let error = read_page(&server, url).expect_err(url);
         assert!(
@@ -440,7 +482,8 @@ fn a_page_that_did_not_load_is_a_typed_failure_never_content() {
     }
 }
 
-/// PDF navigation can succeed while Markdown contains raw PDF bytes and echoes `max_chars`.
+/// PDF navigation can succeed while Markdown contains raw PDF bytes. An HTML page is 30000
+/// characters, cut short at `max_chars` the way Obscura marks it; each ask is logged beside the script.
 fn pdf_browser(directory: &std::path::Path) -> Vec<String> {
     let script = r##"page=none
 while IFS= read -r line; do
@@ -452,9 +495,14 @@ while IFS= read -r line; do
     *'"browser_network_requests"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"[200] GET %s (1134375B)"}]}}\n' "$id" "$page" ;;
     *'"browser_markdown"'*)
       asked=$(printf '%s' "$line" | sed -n 's/.*"max_chars":\([0-9]*\).*/\1/p')
+      printf '%s\n' "$asked" >> "$0.asked"
       case "$page" in
-        *pdf*) text="%PDF-1.7\\n%\\u00ef\\u00bf\\u00bd stream asked=$asked" ;;
-        *) text="0123456789abcdefghij asked=$asked" ;;
+        *pdf*) text="%PDF-1.7\\n%\\u00ef\\u00bf\\u00bd stream" ;;
+        *)
+          text="0123456789abcdefghij$(printf '%029980d' 0)"
+          if [ -n "$asked" ] && [ "$asked" -lt 30000 ]; then
+            text="$(printf '%s' "$text" | head -c "$asked")\\n...(truncated, $((30000 - asked)) more chars)"
+          fi ;;
       esac
       printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"%s"}]}}\n' "$id" "$text" ;;
   esac
@@ -503,7 +551,7 @@ fn read_with(
 fn a_pdf_page_reads_as_the_converters_text_never_its_bytes() {
     let directory = tempfile::tempdir().expect("tempdir");
     let server = pdf_browser(directory.path());
-    let input = json!({"url": "https://arxiv.org/pdf/2101.04749"});
+    let input = json!({"url": "https://papers.example/pdf/2101.04749"});
     let unconverted = read_with(
         &server,
         &input,
@@ -524,15 +572,16 @@ fn a_pdf_page_reads_as_the_converters_text_never_its_bytes() {
         window: None,
         pdf_text: Some(&script),
         article_text: None,
+        fingerprint_fetch: None,
     };
     let read = read_with(&server, &input, rules, Duration::from_secs(10)).expect("converted");
     assert_eq!(
         text_of(&read),
-        "ChemNODE: A Neural Ordinary Differential Equations Framework\nfrom https://arxiv.org/pdf/2101.04749\n"
+        "ChemNODE: A Neural Ordinary Differential Equations Framework\nfrom https://papers.example/pdf/2101.04749\n"
     );
     let html = read_with(
         &server,
-        &json!({"url": "https://arxiv.org/abs/2101.04749"}),
+        &json!({"url": "https://papers.example/abs/2101.04749"}),
         rules,
         Duration::from_secs(10),
     )
@@ -544,13 +593,14 @@ fn a_pdf_page_reads_as_the_converters_text_never_its_bytes() {
 fn a_converter_that_fails_or_hangs_is_a_typed_bounded_failure() {
     let directory = tempfile::tempdir().expect("tempdir");
     let server = pdf_browser(directory.path());
-    let input = json!({"url": "https://arxiv.org/pdf/2101.04749"});
+    let input = json!({"url": "https://papers.example/pdf/2101.04749"});
     let failing = converter(directory.path(), "echo partial; exit 3");
     let rules = Rules {
         load_check: Some("browser_network_requests"),
         window: None,
         pdf_text: Some(&failing),
         article_text: None,
+        fingerprint_fetch: None,
     };
     let error = read_with(&server, &input, rules, Duration::from_secs(10)).expect_err("exit 3");
     assert!(matches!(error, BridgeError::PdfText(_)), "{error:?}");
@@ -578,6 +628,7 @@ fn a_converter_that_fails_or_hangs_is_a_typed_bounded_failure() {
         Rules {
             pdf_text: Some(&blank),
             article_text: None,
+            fingerprint_fetch: None,
             ..rules
         },
         Duration::from_secs(10),
@@ -593,6 +644,7 @@ fn a_converter_that_fails_or_hangs_is_a_typed_bounded_failure() {
         Rules {
             pdf_text: Some(&hanging),
             article_text: None,
+            fingerprint_fetch: None,
             ..rules
         },
         Duration::from_millis(800),
@@ -603,7 +655,7 @@ fn a_converter_that_fails_or_hangs_is_a_typed_bounded_failure() {
 }
 
 #[test]
-fn a_windowed_read_asks_for_the_whole_page_and_serves_it_from_offset() {
+fn a_windowed_read_asks_for_its_window_and_serves_it_from_offset() {
     let directory = tempfile::tempdir().expect("tempdir");
     let server = pdf_browser(directory.path());
     let rules = Rules {
@@ -611,41 +663,33 @@ fn a_windowed_read_asks_for_the_whole_page_and_serves_it_from_offset() {
         window: Some("max_chars"),
         pdf_text: None,
         article_text: None,
+        fingerprint_fetch: None,
     };
-    let url = "https://arxiv.org/abs/2101.04749";
-    let first = read_with(
-        &server,
-        &json!({"url": url, "max_chars": 10}),
-        rules,
-        Duration::from_secs(10),
-    )
-    .expect("first window");
+    let url = "https://papers.example/abs/2101.04749";
+    let window = |input: Value| read_with(&server, &input, rules, Duration::from_secs(10));
+    let first = window(json!({"url": url, "max_chars": 10})).expect("first window");
     assert_eq!(
         text_of(&first),
-        "0123456789\n\n[characters 0-10 of 34; the rest follows from offset 10]"
+        "0123456789\n\n[characters 0-10 of 30000; the rest follows from offset 10]"
     );
-    let last = read_with(
-        &server,
-        &json!({"url": url, "max_chars": 500, "offset": 10}),
-        rules,
-        Duration::from_secs(10),
-    )
-    .expect("last window");
-    assert_eq!(text_of(&last), "abcdefghij asked=2000000");
-    let past = read_with(
-        &server,
-        &json!({"url": url, "offset": 34}),
-        rules,
-        Duration::from_secs(10),
-    )
-    .expect_err("past the end");
+    let later = window(json!({"url": url, "max_chars": 10, "offset": 20000})).expect("later");
+    assert_eq!(
+        text_of(&later),
+        "0000000000\n\n[characters 20000-20010 of 30000; the rest follows from offset 20010]"
+    );
+    let last = window(json!({"url": url, "max_chars": 500, "offset": 29990})).expect("last");
+    assert_eq!(text_of(&last), "0000000000");
+    let past = window(json!({"url": url, "offset": 30000})).expect_err("past the end");
     assert_eq!(
         past,
         BridgeError::OffsetPastEnd {
-            offset: 34,
-            total: 34
+            offset: 30000,
+            total: 30000
         }
     );
+    // Never less than the head a bot check reads, never the whole page for a window near its top.
+    let asked = std::fs::read_to_string(format!("{}.asked", server[1])).expect("asks logged");
+    assert_eq!(asked, "16384\n20010\n30490\n34000\n");
 }
 
 #[test]
@@ -737,4 +781,24 @@ fn a_blocked_page_retries_an_independent_engine_then_the_dated_archive() {
     )
     .unwrap_err();
     assert!(undated.to_string().contains("no archived copy was found"));
+}
+
+#[test]
+fn a_declared_call_bound_is_kept_and_one_over_300_is_refused() {
+    let argv = |bound: &str| {
+        let mut argv = strings(&["--adapter", "example", "--kind-prefix", "example"]);
+        if !bound.is_empty() {
+            argv.extend(strings(&["--call-bound", bound]));
+        }
+        argv.extend(strings(&["--surface", PIN, "--", "x"]));
+        argv
+    };
+    let parsed = |bound: &str| BridgeConfig::parse(&argv(bound)).map(|config| config.call_bound);
+    assert_eq!(parsed("").expect("default"), DEFAULT_CALL_BOUND);
+    assert_eq!(parsed("120").expect("kept"), Duration::from_secs(120));
+    assert_eq!(parsed("300").expect("the most"), Duration::from_secs(300));
+    let over = parsed("301").expect_err("over 300").to_string();
+    assert!(over.contains("over 300 seconds"), "{over}");
+    let zero = parsed("0").expect_err("zero").to_string();
+    assert!(zero.contains("--call-bound 0"), "{zero}");
 }

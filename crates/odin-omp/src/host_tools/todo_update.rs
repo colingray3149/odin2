@@ -37,7 +37,7 @@ impl TodoUpdateTool {
                 name: Cow::Borrowed(Self::NAME),
                 label: Cow::Borrowed("Todo Update"),
                 description: Cow::Borrowed(
-                    "Move one todo of the plan bound to this session to a new status. Pass the plan revision you currently observe; stale revisions, illegal transitions, and unknown fields are rejected without writing.",
+                    "Move one todo of the plan bound to this session to a new status. An omitted revision means the current one; illegal transitions and unknown fields are rejected without writing.",
                 ),
                 parameters: parameters(),
                 hidden: false,
@@ -60,13 +60,20 @@ impl TodoUpdateTool {
         HostToolError,
     > {
         let run_id = require_run_scope(Self::NAME, scope)?.clone();
-        let arguments = TodoUpdateArguments::deserialize(arguments).map_err(|error| {
+        let mut arguments = TodoUpdateArguments::deserialize(arguments).map_err(|error| {
             HostToolError::Arguments {
                 tool: Self::NAME,
                 detail: format!("arguments violate the odin_todo_update schema: {error}"),
             }
         })?;
-        let timestamp = parse_unix_milliseconds(Self::NAME, arguments.timestamp_ms)?;
+        let timestamp = match arguments.timestamp_ms {
+            Some(milliseconds) => parse_unix_milliseconds(Self::NAME, milliseconds)?,
+            None => time::OffsetDateTime::now_utc(),
+        };
+        if arguments.expected_revision.is_none() {
+            let plan = lock_ledger(Self::NAME, &self.ledger)?.plan(&run_id)?;
+            arguments.expected_revision = Some(plan.map_or(0, |plan| plan.revision));
+        }
         Ok((run_id, arguments, timestamp))
     }
 }
@@ -89,7 +96,7 @@ impl HostTool for TodoUpdateTool {
             &run_id,
             &arguments.todo_id,
             TodoStatus::from(arguments.status),
-            arguments.expected_revision,
+            arguments.expected_revision.unwrap_or_default(),
         )?;
         Ok(())
     }
@@ -98,17 +105,15 @@ impl HostTool for TodoUpdateTool {
         let (run_id, arguments, timestamp) =
             self.resolve(&invocation.scope, &invocation.arguments)?;
 
-        let plan = {
-            let mut ledger = lock_ledger(Self::NAME, &self.ledger)?;
-            ledger.transition_todo(
-                &run_id,
-                &arguments.todo_id,
-                TodoStatus::from(arguments.status),
-                arguments.expected_revision,
-                timestamp,
-            )?
-        };
-        response(Self::NAME, &PlanView::from_plan(&plan)?)
+        let mut ledger = lock_ledger(Self::NAME, &self.ledger)?;
+        let plan = ledger.transition_todo(
+            &run_id,
+            &arguments.todo_id,
+            TodoStatus::from(arguments.status),
+            arguments.expected_revision.unwrap_or_default(),
+            timestamp,
+        )?;
+        response(Self::NAME, &PlanView::from_plan(&ledger, &plan)?)
     }
 }
 
@@ -121,8 +126,10 @@ fn parameters() -> Value {
 struct TodoUpdateArguments {
     todo_id: TodoId,
     status: PlanTodoStatus,
-    expected_revision: i64,
-    timestamp_ms: i64,
+    #[serde(default)]
+    expected_revision: Option<i64>,
+    #[serde(default)]
+    timestamp_ms: Option<i64>,
 }
 
 #[cfg(test)]

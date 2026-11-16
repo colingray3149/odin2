@@ -600,11 +600,13 @@ fn message_body(
         live::LiveSessionState::Idle => Ok(live::LiveCommandBody::Prompt {
             message,
             owner_text,
+            wake: false,
         }),
         live::LiveSessionState::Running | live::LiveSessionState::RequiresAction => {
             Ok(live::LiveCommandBody::FollowUp {
                 message,
                 owner_text,
+                wake: false,
             })
         }
         other => Err(format!(

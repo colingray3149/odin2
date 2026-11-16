@@ -12,7 +12,22 @@
 //! - Its `ODIN-CHECKPOINT {json}` lines are checkpoints: the pod wrote its
 //!   state to its declared state volume (which survives pause and rehome),
 //!   and the board links the checkpoint chain.
+//! - Its `ODIN-RENDER {json}` lines are frames: a PNG or safe SVG the pod wrote under
+//!   its export dir, read back by pod exec, published durably and carried on
+//!   the mission's frames stream (eight kept per renderer). A frame completes
+//!   the running render request for its renderer, else it is recorded as the
+//!   pod's own. A requested render runs the profile's `render_command` in the
+//!   pod, which prints the same line.
+//! - Every Odin Job but a research pod is a mission, so any running pod shows
+//!   its counters, frames and exports; `[simulation]` only adds renderers.
+//! - A mission entering failed, aborted or paused, a failed render, or stale
+//!   telemetry is a stage event: the `simulation_stage` routines and the seats
+//!   watching `simulation` or `simulation:<project>` hear it. The project comes
+//!   from the workload's lane; an unknown lane matches only unscoped watches.
 //! - Pause, resume, and abort use kube approval; other commands use board revision checks.
+
+#[path = "simulation/desk.rs"]
+mod desk;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::num::{NonZeroU64, NonZeroUsize};
@@ -21,23 +36,21 @@ use std::time::Duration as StdDuration;
 
 use kube::api::{ListParams, LogParams};
 use odin_domain::huginn::{
-    self as live, ArtifactKind, ArtifactRef, CommandReceipt, HuginnProtocolError,
-    KubeResourceOwnership, KubeResourceRef, KubeWorkloadState, LiveStreamKind, LiveStreamMode,
-    ObjectDelta, RendererId, Sequence, SimulationCheckpointView, SimulationCommand,
-    SimulationMissionStage, SimulationMissionView, SimulationOutputId, SimulationTelemetryView,
-    StreamBackpressureLimits, StreamId,
+    self as live, ArtifactRef, CommandReceipt, HuginnProtocolError, KubeResourceOwnership,
+    KubeResourceRef, KubeWorkloadState, ObjectDelta, RenderId, RendererId, SimulationCommand,
+    SimulationMissionStage, SimulationRenderStatus, StreamBackpressureLimits, StreamId,
 };
-use odin_domain::{ArtifactId, CheckpointId, LaneId, NodeId, RunId};
+use odin_domain::{ArtifactId, LaneId, NodeId, RunId};
 use odin_huginn::kube::SurfaceArtifacts;
 use odin_huginn::read_model::MaterializedReadModel;
-use odin_huginn::simulation::{
-    checkpoint_delta, mission_delta, stage_transition_allowed, SimulationBoard, SimulationControl,
-    SimulationRenderBoard,
-};
+use odin_huginn::service::FsPublishedArtifactStore;
+use odin_huginn::simulation::{SimulationBoard, SimulationControl, SimulationRenderBoard};
 use odin_huginn::streams::BoundedMultiplexer;
 use odin_ledger::Ledger;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+
+use odin_registry::schema::WorkloadSimulationToml;
 
 use crate::huginn_conformance::{publish_frame, StreamFrameSpec};
 use crate::kube::KubeRuntimeCell;
@@ -53,19 +66,61 @@ const MAX_SAMPLES_PER_BATCH: usize = 256;
 /// Artifacts a run keeps on the board (telemetry batches, compact frames,
 /// checkpoint states); older ones are dropped from the store.
 const KEPT_ARTIFACTS_PER_RUN: usize = 48;
-const PUMP_TICK: StdDuration = StdDuration::from_secs(10);
+/// The line prefix of a frame a pod wrote under its export dir.
+pub(crate) const RENDER_PREFIX: &str = "ODIN-RENDER ";
+/// Frame paths are relative to the pod's export dir.
+const POD_EXPORT_ROOT: &str = "/export";
+const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
+/// Reading a frame or the export listing back may take this long.
+const READ_WAIT: StdDuration = StdDuration::from_secs(30);
+/// The export listing a read shows (the first entries, by path).
+const MAX_LISTED_EXPORTS: usize = 64;
+/// Points of each plot key the view's sparkline draws.
+const PLOT_POINTS: usize = 60;
+/// The Status object views read the board from.
+const STATUS_ID: &str = "missions";
 
-/// One observed Job of a profile that declares `[simulation]`.
+/// Run, stage, profile, most recent telemetry time, and start time for heartbeat checks.
+pub(crate) type HeartbeatMission = (
+    RunId,
+    SimulationMissionStage,
+    String,
+    Option<OffsetDateTime>,
+    Option<OffsetDateTime>,
+);
+
+/// The executor that produced a mission observation.
+#[derive(Clone, Debug)]
+pub(crate) enum ObservedWorkload {
+    Kube(KubeResourceRef),
+    Offload(KubeResourceRef),
+}
+
+impl ObservedWorkload {
+    fn resource(&self) -> &KubeResourceRef {
+        match self {
+            Self::Kube(resource) | Self::Offload(resource) => resource,
+        }
+    }
+}
+
+/// One observed workload mission, whether a Job or an offload run.
 #[derive(Clone, Debug)]
 pub(crate) struct ObservedRun {
     pub run_id: RunId,
+    pub lane: Option<LaneId>,
     pub profile: String,
     /// The profile declaration, as published (the mission's case).
     pub declaration: serde_json::Value,
-    pub renderers: Vec<RendererId>,
+    /// Its profile's `[simulation]` (renderers, render command, frame and stage tunables);
+    /// the defaults for a profile that declares none.
+    pub simulation: WorkloadSimulationToml,
+    /// Whether the profile declares `[simulation]`: only those runs have stage events
+    /// (any other pod's failure is already a workload finding).
+    pub declared: bool,
     pub state: KubeWorkloadState,
     pub node_id: Option<NodeId>,
-    pub workload: KubeResourceRef,
+    pub workload: ObservedWorkload,
     pub started_at: Option<OffsetDateTime>,
     pub finished_at: Option<OffsetDateTime>,
 }
@@ -79,11 +134,247 @@ struct RunCursor {
     artifacts: VecDeque<ArtifactId>,
     /// The newest status object and when it was printed.
     latest: Option<(OffsetDateTime, serde_json::Value)>,
+    /// Whether the current stale episode was already told.
+    stale_told: bool,
+    frame_sequence: u64,
+    /// Each renderer's kept frames, oldest first.
+    frames: BTreeMap<RendererId, VecDeque<KeptFrame>>,
+    profile: String,
+    lane: Option<LaneId>,
+    /// The `[simulation]` the run started with (a publication changes only new runs).
+    simulation: WorkloadSimulationToml,
+    /// The newest values of each plot key, oldest first.
+    series: BTreeMap<String, VecDeque<f64>>,
+    declared: bool,
+}
+
+/// One published frame of a mission and the render it completed.
+#[derive(Clone, Debug)]
+struct KeptFrame {
+    artifact: ArtifactRef,
+    render_id: RenderId,
+    seq: u64,
+    sim_time_us: Option<f64>,
+    at: OffsetDateTime,
+}
+
+/// One `ODIN-RENDER` line, checked: a declared renderer and an image path under the export dir.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FrameReport {
+    pub run_id: RunId,
+    pub renderer: RendererId,
+    pub seq: u64,
+    pub path: String,
+    pub sim_time_us: Option<f64>,
+    pub max_bytes: u64,
+}
+
+impl FrameReport {
+    /// The bounded in-pod read of the frame: one byte over the cap shows it is over.
+    pub(crate) fn read_argv(&self) -> Vec<String> {
+        vec![
+            "/bin/head".to_owned(),
+            "-c".to_owned(),
+            (self.max_bytes + 1).to_string(),
+            format!("{POD_EXPORT_ROOT}/{}", self.path),
+        ]
+    }
+}
+
+/// A render request odind starts: the argv to run in the pod.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RenderStart {
+    pub run_id: RunId,
+    pub render_id: RenderId,
+    pub renderer: RendererId,
+    pub argv: Vec<String>,
+    pub max_bytes: u64,
+    pub wait: StdDuration,
+}
+
+/// A mission moment the `simulation_stage` routines and `simulation` watchers hear.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct StageEvent {
+    pub run_id: RunId,
+    pub lane: Option<LaneId>,
+    pub profile: String,
+    /// `failed`, `aborted`, `paused`, `render-failed` or `stale`.
+    pub kind: &'static str,
+    /// Unique per occurrence (a replay fires nothing new).
+    pub key: String,
+    pub text: String,
+    pub at: OffsetDateTime,
+}
+
+fn frame_report(run: &ObservedRun, line: &serde_json::Value) -> Result<FrameReport, String> {
+    let renderer = line
+        .get("renderer")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("it names no renderer")?;
+    let renderer =
+        RendererId::new(renderer).map_err(|error| format!("renderer {renderer:?}: {error}"))?;
+    if !run.simulation.renderers.contains(&renderer) {
+        return Err(format!(
+            "renderer {renderer} is not declared by profile {}",
+            run.profile
+        ));
+    }
+    let seq = line
+        .get("seq")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("its seq is not a whole number")?;
+    let path = line
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("it names no path")?;
+    if path.starts_with('/')
+        || path.len() > 255
+        || path.chars().any(char::is_control)
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(format!(
+            "frame path {path:?} is not a plain path under {POD_EXPORT_ROOT}"
+        ));
+    }
+    let lower = path.to_ascii_lowercase();
+    if !lower.ends_with(".png") && !lower.ends_with(".svg") {
+        return Err(format!("frame {path} is not a PNG or SVG"));
+    }
+    Ok(FrameReport {
+        run_id: run.run_id.clone(),
+        renderer,
+        seq,
+        path: path.to_owned(),
+        sim_time_us: line.get("sim_time_us").and_then(serde_json::Value::as_f64),
+        max_bytes: run.simulation.max_frame_bytes(),
+    })
+}
+
+/// The frame bytes a report read back, checked against its cap and declared format.
+fn checked_frame(report: &FrameReport, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > report.max_bytes {
+        return Err(format!(
+            "frame {} is over the {}-byte frame cap",
+            report.path, report.max_bytes
+        ));
+    }
+    if report.path.to_ascii_lowercase().ends_with(".png") {
+        if !bytes.starts_with(PNG_MAGIC) {
+            return Err(format!("frame {} is not a PNG file", report.path));
+        }
+    } else if !safe_svg(&bytes) {
+        return Err(format!("frame {} is not a safe SVG file", report.path));
+    }
+    Ok(bytes)
+}
+
+/// Accept a deliberately passive SVG subset. No links, embedded resources, scripts,
+/// animation, foreign namespaces, stylesheets or CSS URL references reach a viewer.
+fn safe_svg(bytes: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let Ok(doc) = roxmltree::Document::parse(text) else {
+        return false;
+    };
+    if doc.descendants().any(|node| node.is_pi()) {
+        return false;
+    }
+    let root = doc.root_element();
+    const SVG: &str = "http://www.w3.org/2000/svg";
+    if root.tag_name().name() != "svg" || root.tag_name().namespace() != Some(SVG) {
+        return false;
+    }
+    doc.descendants()
+        .filter(|node| node.is_element())
+        .all(|node| {
+            if node.tag_name().namespace() != Some(SVG)
+                || !matches!(
+                    node.tag_name().name(),
+                    "svg"
+                        | "g"
+                        | "defs"
+                        | "path"
+                        | "rect"
+                        | "circle"
+                        | "ellipse"
+                        | "line"
+                        | "polyline"
+                        | "polygon"
+                        | "text"
+                        | "tspan"
+                        | "title"
+                        | "desc"
+                        | "clipPath"
+                        | "linearGradient"
+                        | "radialGradient"
+                        | "stop"
+                )
+            {
+                return false;
+            }
+            node.attributes().all(|attr| {
+                attr.namespace().is_none()
+                    && matches!(
+                        attr.name(),
+                        "id" | "version"
+                            | "width"
+                            | "height"
+                            | "viewBox"
+                            | "preserveAspectRatio"
+                            | "x"
+                            | "y"
+                            | "x1"
+                            | "y1"
+                            | "x2"
+                            | "y2"
+                            | "cx"
+                            | "cy"
+                            | "r"
+                            | "rx"
+                            | "ry"
+                            | "d"
+                            | "points"
+                            | "transform"
+                            | "fill"
+                            | "fill-opacity"
+                            | "fill-rule"
+                            | "stroke"
+                            | "stroke-width"
+                            | "stroke-opacity"
+                            | "stroke-linecap"
+                            | "stroke-linejoin"
+                            | "stroke-dasharray"
+                            | "stroke-dashoffset"
+                            | "opacity"
+                            | "font-family"
+                            | "font-size"
+                            | "font-weight"
+                            | "font-style"
+                            | "text-anchor"
+                            | "dominant-baseline"
+                            | "dx"
+                            | "dy"
+                            | "rotate"
+                            | "offset"
+                            | "stop-color"
+                            | "stop-opacity"
+                            | "gradientUnits"
+                            | "gradientTransform"
+                            | "clip-rule"
+                    )
+                    && !attr.value().contains('\\')
+                    && !attr.value().to_ascii_lowercase().contains("url")
+            })
+        })
 }
 
 struct Desk {
     control: SimulationControl,
     cursors: BTreeMap<RunId, RunCursor>,
+    events: Vec<StageEvent>,
 }
 
 /// What one locked pass produced, applied after the lock is released.
@@ -91,6 +382,10 @@ struct Desk {
 struct Publication {
     deltas: Vec<ObjectDelta>,
     frames: Vec<StreamFrameSpec>,
+    /// Frames the pod reported, to read back.
+    reads: Vec<FrameReport>,
+    /// Published frames that aged out.
+    retired: Vec<ArtifactRef>,
 }
 
 /// The daemon's one simulation board and its producer state.
@@ -100,6 +395,7 @@ pub(crate) struct SimulationDesk {
     streams: Arc<BoundedMultiplexer>,
     backpressure: StreamBackpressureLimits,
     approvals: LedgerApprovalGate,
+    published: Arc<FsPublishedArtifactStore>,
 }
 
 /// Interventions are consequential: the board consults the owner's decision on
@@ -168,6 +464,7 @@ fn is_terminal(stage: SimulationMissionStage) -> bool {
 enum Report {
     Status(OffsetDateTime, serde_json::Value),
     Checkpoint(OffsetDateTime, serde_json::Value),
+    Render(OffsetDateTime, serde_json::Value),
 }
 
 fn reports(log: &str, after: Option<OffsetDateTime>) -> Vec<Report> {
@@ -190,6 +487,9 @@ fn reports(log: &str, after: Option<OffsetDateTime>) -> Vec<Report> {
             if let Some(body) = text.strip_prefix(CHECKPOINT_PREFIX) {
                 return parse(body).map(|value| Report::Checkpoint(at, value));
             }
+            if let Some(body) = text.strip_prefix(RENDER_PREFIX) {
+                return parse(body).map(|value| Report::Render(at, value));
+            }
             None
         })
         .collect()
@@ -201,6 +501,7 @@ impl SimulationDesk {
         streams: Arc<BoundedMultiplexer>,
         backpressure: StreamBackpressureLimits,
         ledger: Arc<Mutex<Ledger>>,
+        published: Arc<FsPublishedArtifactStore>,
     ) -> Result<Self, String> {
         let session = live::LiveSessionId::new(derived_uuid(
             "board",
@@ -215,11 +516,13 @@ impl SimulationDesk {
             desk: Mutex::new(Desk {
                 control: SimulationControl::new(SimulationBoard::new(artifacts), renders),
                 cursors: BTreeMap::new(),
+                events: Vec::new(),
             }),
             read_model,
             streams,
             backpressure,
             approvals: LedgerApprovalGate { ledger },
+            published,
         })
     }
 
@@ -239,19 +542,259 @@ impl SimulationDesk {
         })
     }
 
-    /// One observation of a mission's Job and its timestamped log tail.
+    /// One observation of a mission's Job and its timestamped log tail;
+    /// returns the frames it reported, to read back from the pod.
     pub(crate) fn observe(
         &self,
         run: &ObservedRun,
         log: &str,
         at: OffsetDateTime,
-    ) -> Result<(), String> {
-        let publication = {
+    ) -> Result<Vec<FrameReport>, String> {
+        let mut publication = {
             let mut desk = self.lock().map_err(|error| error.to_string())?;
             desk.observe(run, log, &self.streams, self.backpressure, at)?
         };
+        let reads = std::mem::take(&mut publication.reads);
         self.publish(publication, at);
-        Ok(())
+        Ok(reads)
+    }
+
+    /// Takes one frame read back from the pod: publishes it, completes the
+    /// running render for its renderer (or records the pod's own), and carries
+    /// it on the mission's frames stream. A refused frame fails that render.
+    pub(crate) async fn take_frame(
+        &self,
+        report: &FrameReport,
+        read: Result<Vec<u8>, String>,
+        at: OffsetDateTime,
+    ) {
+        let published = match read.and_then(|bytes| checked_frame(report, bytes)) {
+            Ok(bytes) => {
+                let name = format!(
+                    "{}-{}-{}.{}",
+                    run_key(&report.run_id),
+                    report.renderer,
+                    report.seq,
+                    if report.path.to_ascii_lowercase().ends_with(".svg") {
+                        "svg"
+                    } else {
+                        "png"
+                    }
+                );
+                self.published
+                    .publish_simulation_frame(
+                        &name,
+                        if name.ends_with(".svg") {
+                            "image/svg+xml"
+                        } else {
+                            "image/png"
+                        },
+                        bytes,
+                    )
+                    .await
+                    .map_err(|error| format!("frame {} was not published: {error}", report.path))
+            }
+            Err(error) => Err(error),
+        };
+        let publication = match self.lock() {
+            Ok(mut desk) => match published {
+                Ok(artifact) => desk.record_frame(report, artifact, at),
+                Err(reason) => {
+                    tracing::error!(
+                        "simulation frame refused run={} reason={reason}",
+                        report.run_id
+                    );
+                    desk.fail_running(&report.run_id, Some(&report.renderer), &reason, at)
+                }
+            },
+            Err(error) => {
+                tracing::warn!("simulation frame skipped reason={error}");
+                return;
+            }
+        };
+        self.publish(publication, at);
+    }
+
+    /// The oldest requested render of a running mission, moved to running,
+    /// with the argv that renders it; a mission that cannot render fails it.
+    pub(crate) fn start_render(&self, run_id: &RunId, at: OffsetDateTime) -> Option<RenderStart> {
+        let (start, publication) = match self.lock() {
+            Ok(mut desk) => desk.start_render(run_id, at),
+            Err(error) => {
+                tracing::warn!("simulation render start skipped reason={error}");
+                return None;
+            }
+        };
+        self.publish(publication, at);
+        start
+    }
+
+    /// A started render whose command ended without a frame.
+    pub(crate) fn render_failed(
+        &self,
+        run_id: &RunId,
+        render_id: RenderId,
+        reason: &str,
+        at: OffsetDateTime,
+    ) {
+        let publication = match self.lock() {
+            Ok(mut desk) => desk.fail_render(run_id, render_id, reason, at),
+            Err(error) => {
+                tracing::warn!("simulation render failure not recorded reason={error}");
+                return;
+            }
+        };
+        self.publish(publication, at);
+    }
+
+    /// Stage events since the last drain.
+    pub(crate) fn drain_events(&self) -> Vec<StageEvent> {
+        self.lock()
+            .map(|mut desk| std::mem::take(&mut desk.events))
+            .unwrap_or_default()
+    }
+
+    /// Every mission, or the one `mission` names (a run id, its label or
+    /// workload name): stage, node, the last sample, checkpoints, renders
+    /// and kept frames.
+    pub(crate) fn read(&self, mission: Option<&str>) -> Result<serde_json::Value, String> {
+        let desk = self.lock().map_err(|error| error.to_string())?;
+        let missions = desk.matching(mission)?;
+        Ok(serde_json::json!({
+            "missions": missions.iter().map(|view| desk.describe(view)).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Stable mission control fields and the most recent telemetry time for heartbeat checks.
+    pub(crate) fn heartbeat_missions(&self) -> Result<Vec<HeartbeatMission>, String> {
+        let desk = self.lock().map_err(|error| error.to_string())?;
+        Ok(desk
+            .control
+            .board()
+            .missions()
+            .map(|view| {
+                let cursor = desk.cursors.get(&view.run_id);
+                (
+                    view.run_id.clone(),
+                    view.stage,
+                    cursor.map_or_else(|| view.label.clone(), |cursor| cursor.profile.clone()),
+                    cursor.and_then(|cursor| cursor.latest.as_ref().map(|(at, _)| *at)),
+                    view.started_at,
+                )
+            })
+            .collect())
+    }
+
+    /// The newest kept frame of one mission (of `renderer` when named):
+    /// the mission's run, the frame's reference and its bytes.
+    pub(crate) fn latest_frame(
+        &self,
+        mission: &str,
+        renderer: Option<&str>,
+    ) -> Result<(RunId, ArtifactRef), String> {
+        let desk = self.lock().map_err(|error| error.to_string())?;
+        let missions = desk.matching(Some(mission))?;
+        let [view] = missions.as_slice() else {
+            return Err(format!(
+                "{mission:?} names {} missions; name one by its run id",
+                missions.len()
+            ));
+        };
+        let newest = desk
+            .cursors
+            .get(&view.run_id)
+            .into_iter()
+            .flat_map(|cursor| cursor.frames.iter())
+            .filter(|(id, _)| renderer.is_none_or(|wanted| id.as_str() == wanted))
+            .filter_map(|(_, frames)| frames.back())
+            .max_by_key(|frame| frame.at)
+            .map(|frame| frame.artifact.clone());
+        newest
+            .map(|artifact| (view.run_id.clone(), artifact))
+            .ok_or_else(|| match renderer {
+                Some(renderer) => {
+                    format!("mission {} has no frame from {renderer} yet", view.label)
+                }
+                None => format!("mission {} has produced no frame yet", view.label),
+            })
+    }
+
+    /// The board as views draw it: one row per mission with its plot series and newest frame.
+    pub(crate) fn status(&self) -> Option<serde_json::Value> {
+        let desk = self.lock().ok()?;
+        let stamp = |at: OffsetDateTime| at.format(&Rfc3339).unwrap_or_default();
+        let rows: Vec<_> = desk
+            .control
+            .board()
+            .missions()
+            .map(|view| {
+                let cursor = desk.cursors.get(&view.run_id);
+                let frame = cursor
+                    .into_iter()
+                    .flat_map(|cursor| cursor.frames.iter())
+                    .filter_map(|(renderer, frames)| frames.back().map(|frame| (renderer, frame)))
+                    .max_by_key(|(_, frame)| frame.at);
+                serde_json::json!({
+                    "run": view.run_id,
+                    "label": view.label,
+                    "stage": view.stage,
+                    "node": view.node_id,
+                    "workload": view.workload.as_ref().map(|workload| &workload.name),
+                    "failure": view.failure,
+                    "updatedAt": stamp(view.updated_at),
+                    "sampleAt": cursor.and_then(|cursor| cursor.latest.as_ref()).map(|(at, _)| stamp(*at)),
+                    "lastSample": cursor.and_then(|cursor| cursor.latest.as_ref()).map(|(_, status)| status),
+                    "series": cursor.map(|cursor| &cursor.series),
+                    "checkpoints": desk.control.board().checkpoints_of(&view.run_id).count(),
+                    "renderers": view.supported_renderers,
+                    "openRenders": desk
+                        .control
+                        .renders()
+                        .of_run(&view.run_id)
+                        .filter(|render| matches!(render.status, SimulationRenderStatus::Requested | SimulationRenderStatus::Running))
+                        .count(),
+                    "frame": frame.map(|(renderer, frame)| serde_json::json!({
+                        "artifact": frame.artifact.artifact_id,
+                        "mediaType": frame.artifact.media_type,
+                        "renderer": renderer,
+                        "seq": frame.seq,
+                        "simTimeUs": frame.sim_time_us,
+                        "at": stamp(frame.at),
+                    })),
+                })
+            })
+            .collect();
+        Some(serde_json::json!({ "rows": rows }))
+    }
+
+    /// Publishes [`Self::status`] for views (unchanged boards publish nothing).
+    pub(crate) fn publish_status(
+        &self,
+        at: OffsetDateTime,
+        view_seconds: u32,
+        preview_max_side: u32,
+    ) {
+        let Some(mut value) = self.status() else {
+            return;
+        };
+        value["viewPollSeconds"] = serde_json::json!(view_seconds);
+        value["viewPreviewMaxSide"] = serde_json::json!(preview_max_side);
+        if let Err(error) = crate::huginn_spend::publish_status(
+            &self.read_model,
+            crate::huginn_spend::status_object(STATUS_ID),
+            value,
+            at,
+        ) {
+            tracing::error!("simulation status not published error={error}");
+        }
+    }
+
+    /// One frame's bytes, from the durable store.
+    pub(crate) async fn frame_bytes(&self, artifact: &ArtifactRef) -> Result<Vec<u8>, String> {
+        self.published
+            .read_bytes(&artifact.artifact_id, artifact.byte_len)
+            .await
+            .map_err(|error| format!("frame {} is unreadable: {error}", artifact.display_name))
     }
 
     /// Missions whose Job is gone end aborted (deleted or garbage-collected
@@ -363,7 +906,7 @@ impl SimulationDesk {
                 receipt,
                 Publication {
                     deltas,
-                    frames: Vec::new(),
+                    ..Publication::default()
                 },
             )
         };
@@ -381,429 +924,38 @@ impl SimulationDesk {
         for frame in publication.frames {
             let stream = frame.stream_id;
             if let Err(error) = publish_frame(&self.streams, frame, &self.backpressure, at) {
-                tracing::error!("simulation telemetry frame failed stream={stream} error={error}");
+                tracing::error!("simulation stream frame failed stream={stream} error={error}");
+            }
+        }
+        if !publication.retired.is_empty() {
+            if let Err(error) = self
+                .published
+                .retire_simulation_frames(&publication.retired)
+            {
+                tracing::error!("simulation frames not retired error={error}");
             }
         }
     }
 }
 
-impl Desk {
-    fn observe(
-        &mut self,
-        run: &ObservedRun,
-        log: &str,
-        streams: &BoundedMultiplexer,
-        backpressure: StreamBackpressureLimits,
-        at: OffsetDateTime,
-    ) -> Result<Publication, String> {
-        let mut publication = Publication::default();
-        let before = match self.control.board().mission(&run.run_id) {
-            Some(mission) => mission.revision,
-            None => {
-                self.register(run, at)?;
-                tracing::info!(
-                    "simulation mission registered run={} profile={} state={:?}",
-                    run.run_id,
-                    run.profile,
-                    run.state
-                );
-                0
-            }
-        };
-        self.follow(run, at);
-        let cursor = self.cursors.entry(run.run_id.clone()).or_default();
-        let new = reports(log, cursor.after);
-        if let Some(newest) = new
-            .iter()
-            .map(|report| match report {
-                Report::Status(at, _) | Report::Checkpoint(at, _) => *at,
-            })
-            .max()
-        {
-            cursor.after = Some(newest);
-        }
-        let mut samples = Vec::new();
-        for report in new {
-            match report {
-                Report::Status(stamp, status) => samples.push((stamp, status)),
-                Report::Checkpoint(stamp, checkpoint) => {
-                    match self
-                        .pod_checkpoint(run, stamp, checkpoint)
-                        .and_then(|view| checkpoint_delta(&view, 0))
-                    {
-                        Ok(delta) => publication.deltas.push(delta),
-                        Err(error) => tracing::error!(
-                            "simulation checkpoint refused run={} error={error}",
-                            run.run_id
-                        ),
-                    }
-                }
-            }
-        }
-        if !samples.is_empty() {
-            match self.telemetry(run, samples, streams, backpressure, at) {
-                Ok(frame) => publication.frames.push(frame),
-                Err(error) => tracing::error!(
-                    "simulation telemetry refused run={} error={error}",
-                    run.run_id
-                ),
-            }
-        }
-        if let Some(mission) = self.control.board().mission(&run.run_id) {
-            if mission.revision != before {
-                // Checkpoint objects precede the mission that links them.
-                publication
-                    .deltas
-                    .push(mission_delta(mission, before).map_err(|error| error.to_string())?);
-            }
-        }
-        self.prune(&run.run_id);
-        Ok(publication)
-    }
-
-    fn register(&mut self, run: &ObservedRun, at: OffsetDateTime) -> Result<(), String> {
-        let key = run_key(&run.run_id);
-        let artifacts = self.control.board_mut().artifacts_mut();
-        let mut publish = |name: &str, value: &serde_json::Value| {
-            let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
-            artifacts
-                .publish(
-                    ArtifactId::new(format!("sim-{name}-{key}"))
-                        .map_err(|error| error.to_string())?,
-                    ArtifactKind::File,
-                    &format!("{name}.json"),
-                    "application/json",
-                    &bytes,
-                )
-                .map_err(|error| error.to_string())
-        };
-        let case = publish(
-            "case",
-            &serde_json::json!({"profile": run.profile, "declaration": run.declaration}),
-        )?;
-        let obligations = publish(
-            "obligations",
-            &serde_json::json!({"profile": run.profile, "obligations": []}),
-        )?;
-        let stage = match stage_of(run.state) {
-            Some(SimulationMissionStage::Aborted) | None => SimulationMissionStage::Queued,
-            Some(stage) => stage,
-        };
-        let stream = |purpose: &str| {
-            StreamId::new(derived_uuid(purpose, &run.run_id)).map_err(|error| error.to_string())
-        };
-        self.control
-            .board_mut()
-            .register_mission(SimulationMissionView {
-                run_id: run.run_id.clone(),
-                revision: 1,
-                label: run.profile.clone(),
-                stage,
-                case,
-                geometry: None,
-                node_id: run.node_id.clone(),
-                workload: Some(run.workload.clone()),
-                telemetry_stream_id: stream("telemetry")?,
-                frame_stream_id: stream("frames")?,
-                current_checkpoint_id: None,
-                supported_renderers: run.renderers.clone(),
-                evidence_obligations: obligations,
-                started_at: run.started_at,
-                finished_at: run.finished_at,
-                updated_at: at,
-                stale: false,
-                failure: None,
-            });
-        Ok(())
-    }
-
-    /// Normalize a Job's queued-to-succeeded jump through the required running stage.
-    fn follow(&mut self, run: &ObservedRun, at: OffsetDateTime) {
-        let board = self.control.board_mut();
-        let Some(mission) = board.mission(&run.run_id) else {
-            return;
-        };
-        let (current, node_changed) = (
-            mission.stage,
-            run.node_id.is_some() && run.node_id != mission.node_id,
-        );
-        if node_changed || mission.workload.as_ref() != Some(&run.workload) {
-            // A rehome moves the run to another node (and Job object).
-            let _ = board.set_links(
-                &run.run_id,
-                run.node_id.clone(),
-                Some(run.workload.clone()),
-                at,
-            );
-        }
-        let Some(target) = stage_of(run.state) else {
-            return;
-        };
-        if target == current || is_terminal(current) {
-            return;
-        }
-        let result = if target == SimulationMissionStage::Aborted {
-            board.abort(&run.run_id, "the workload is terminating", at)
-        } else if stage_transition_allowed(current, target) {
-            board.transition_stage(&run.run_id, target, at)
-        } else if stage_transition_allowed(current, SimulationMissionStage::Running)
-            && stage_transition_allowed(SimulationMissionStage::Running, target)
-        {
-            board
-                .transition_stage(&run.run_id, SimulationMissionStage::Running, at)
-                .and_then(|_| board.transition_stage(&run.run_id, target, at))
-        } else {
-            Ok((0, 0))
-        };
-        if let Err(error) = result {
-            tracing::error!(
-                "simulation stage not followed run={} from={current:?} to={target:?} error={error}",
-                run.run_id
-            );
-        }
-    }
-
-    fn telemetry(
-        &mut self,
-        run: &ObservedRun,
-        mut samples: Vec<(OffsetDateTime, serde_json::Value)>,
-        streams: &BoundedMultiplexer,
-        backpressure: StreamBackpressureLimits,
-        at: OffsetDateTime,
-    ) -> Result<StreamFrameSpec, String> {
-        let truncated = samples.len() > MAX_SAMPLES_PER_BATCH;
-        if truncated {
-            samples.drain(..samples.len() - MAX_SAMPLES_PER_BATCH);
-        }
-        let mission = self
-            .control
-            .board()
-            .mission(&run.run_id)
-            .cloned()
-            .ok_or("mission is not registered")?;
-        let cursor = self.cursors.entry(run.run_id.clone()).or_default();
-        if cursor.sequence == 0 {
-            // The stream is durable and outlives this daemon: resume after
-            // what an earlier daemon published for the same run.
-            cursor.sequence = streams
-                .durable_head(&mission.telemetry_stream_id)
-                .map_err(|error| error.to_string())?
-                .get();
-        }
-        cursor.sequence += 1;
-        let sequence = cursor.sequence;
-        let recorded_at = samples.last().map_or(at, |(stamp, _)| *stamp);
-        cursor.latest = samples.last().cloned();
-        let document = serde_json::json!({
-            "run": run.run_id,
-            "samples": samples
-                .iter()
-                .map(|(stamp, status)| serde_json::json!({
-                    "at": stamp.format(&Rfc3339).unwrap_or_default(),
-                    "status": status,
-                }))
-                .collect::<Vec<_>>(),
-        });
-        let bytes = serde_json::to_vec(&document).map_err(|error| error.to_string())?;
-        let artifact_id =
-            ArtifactId::new(format!("sim-telemetry-{}-{sequence}", run_key(&run.run_id)))
-                .map_err(|error| error.to_string())?;
-        let content = self
-            .control
-            .board_mut()
-            .artifacts_mut()
-            .publish(
-                artifact_id.clone(),
-                ArtifactKind::File,
-                "telemetry.json",
-                "application/json",
-                &bytes,
-            )
-            .map_err(|error| error.to_string())?;
-        let cursor = self.cursors.entry(run.run_id.clone()).or_default();
-        cursor.artifacts.push_back(artifact_id);
-        let view = SimulationTelemetryView {
-            run_id: run.run_id.clone(),
-            output_id: SimulationOutputId::new(derived_uuid("output", &run.run_id))
-                .map_err(|error| error.to_string())?,
-            sequence: Sequence::new(sequence),
-            control_revision: mission.revision,
-            recorded_at,
-            sample_count: u64::try_from(samples.len()).unwrap_or(u64::MAX),
-            content,
-            truncated,
-        };
-        let bound = |value: u64| NonZeroU64::new(value).ok_or("zero ring bound");
-        self.control
-            .telemetry_ring_mut(
-                &run.run_id,
-                mission.telemetry_stream_id,
-                NonZeroUsize::new(16).ok_or("zero ring bound")?,
-                bound(4 << 20)?,
-                backpressure,
-            )
-            .push(view, &bytes)
-            .map_err(|error| error.to_string())?;
-        // The ring is drained at once into the compact frame the stream
-        // carries; the raw batch stays a board artifact.
-        let frame = self
-            .control
-            .next_model_frame(&run.run_id, mission.telemetry_stream_id, at)
-            .map_err(|error| error.to_string())?
-            .ok_or("the telemetry ring yielded no frame")?;
-        self.cursors
-            .entry(run.run_id.clone())
-            .or_default()
-            .artifacts
-            .push_back(frame.content.artifact_id.clone());
-        Ok(StreamFrameSpec {
-            stream_id: mission.telemetry_stream_id,
-            kind: LiveStreamKind::SimulationTelemetry,
-            mode: LiveStreamMode::Durable,
-            sequence,
-            control_revision: mission.revision,
-            content: frame.content,
-        })
-    }
-
-    /// The state artifact of a checkpoint: what the pod reported (if it
-    /// reported the checkpoint itself), its newest status, and the volume
-    /// its state lives on.
-    fn checkpoint_state(
-        &mut self,
-        run_id: &RunId,
-        label: &str,
-        reported: Option<&serde_json::Value>,
-        at: OffsetDateTime,
-    ) -> Result<ArtifactRef, HuginnProtocolError> {
-        let mission = self
-            .control
-            .board()
-            .mission(run_id)
-            .cloned()
-            .ok_or_else(|| HuginnProtocolError::NotFound {
-                object_kind: "simulationMission".to_owned(),
-                object_id: run_id.to_string(),
-            })?;
-        let cursor = self.cursors.entry(run_id.clone()).or_default();
-        cursor.checkpoints += 1;
-        let ordinal = cursor.checkpoints;
-        let latest = cursor.latest.clone();
-        let document = serde_json::json!({
-            "run": run_id,
-            "label": label,
-            "at": at.format(&Rfc3339).unwrap_or_default(),
-            "reported": reported,
-            "latestStatus": latest.map(|(stamp, status)| serde_json::json!({
-                "at": stamp.format(&Rfc3339).unwrap_or_default(),
-                "status": status,
-            })),
-            "stateVolume": mission.workload.as_ref().map(|workload| workload.name.clone()),
-        });
-        let bytes = serde_json::to_vec(&document)
-            .map_err(|error| invalid("simulationCheckpointState", error.to_string()))?;
-        let artifact_id = ArtifactId::new(format!("sim-checkpoint-{}-{ordinal}", run_key(run_id)))
-            .map_err(|error| invalid("simulationCheckpointState", error.to_string()))?;
-        let reference = self.control.board_mut().artifacts_mut().publish(
-            artifact_id.clone(),
-            ArtifactKind::File,
-            "checkpoint.json",
-            "application/json",
-            &bytes,
-        )?;
-        self.cursors
-            .entry(run_id.clone())
-            .or_default()
-            .artifacts
-            .push_back(artifact_id);
-        Ok(reference)
-    }
-
-    /// A checkpoint the pod reported: linked as the mission's current one.
-    fn pod_checkpoint(
-        &mut self,
-        run: &ObservedRun,
-        stamp: OffsetDateTime,
-        reported: serde_json::Value,
-    ) -> Result<SimulationCheckpointView, HuginnProtocolError> {
-        let label = reported
-            .get("label")
-            .and_then(serde_json::Value::as_str)
-            .map(|label| label.chars().take(80).collect::<String>());
-        let ordinal = self
-            .cursors
-            .get(&run.run_id)
-            .map_or(0, |cursor| cursor.checkpoints)
-            + 1;
-        let label = label.unwrap_or_else(|| format!("checkpoint {ordinal}"));
-        let state = self.checkpoint_state(&run.run_id, &label, Some(&reported), stamp)?;
-        let board = self.control.board_mut();
-        let parent = board
-            .mission(&run.run_id)
-            .and_then(|mission| mission.current_checkpoint_id.clone());
-        let view = SimulationCheckpointView {
-            checkpoint_id: CheckpointId::new(format!(
-                "sim-ckpt-{}-{ordinal}",
-                run_key(&run.run_id)
-            ))
-            .map_err(|error| invalid("simulationCheckpointIdentity", error.to_string()))?,
-            run_id: run.run_id.clone(),
-            revision: 1,
-            parent_checkpoint_id: parent,
-            label,
-            created_at: stamp,
-            state_digest: state.content_digest,
-            state,
-        };
-        board.add_checkpoint(view.clone())?;
-        board.set_current_checkpoint(&run.run_id, &view.checkpoint_id, stamp)?;
-        Ok(view)
-    }
-
-    fn retire_missing(&mut self, live_runs: &BTreeSet<RunId>, at: OffsetDateTime) -> Publication {
-        let gone: Vec<(RunId, u64)> = self
-            .control
-            .board()
-            .missions()
-            .filter(|mission| !is_terminal(mission.stage) && !live_runs.contains(&mission.run_id))
-            .map(|mission| (mission.run_id.clone(), mission.revision))
-            .collect();
-        let mut publication = Publication::default();
-        for (run_id, before) in gone {
-            let board = self.control.board_mut();
-            if board.abort(&run_id, "the workload is gone", at).is_ok() {
-                tracing::error!("simulation mission aborted run={run_id} reason=workload gone");
-                match board
-                    .mission(&run_id)
-                    .map(|mission| mission_delta(mission, before))
-                {
-                    Some(Ok(delta)) => publication.deltas.push(delta),
-                    Some(Err(error)) => {
-                        tracing::error!(
-                            "simulation mission delta refused run={run_id} error={error}"
-                        )
-                    }
-                    None => {}
-                }
-            }
-        }
-        publication
-    }
-
-    fn prune(&mut self, run_id: &RunId) {
-        let Some(cursor) = self.cursors.get_mut(run_id) else {
-            return;
-        };
-        let mut dropped = Vec::new();
-        while cursor.artifacts.len() > KEPT_ARTIFACTS_PER_RUN {
-            if let Some(id) = cursor.artifacts.pop_front() {
-                dropped.push(id);
-            }
-        }
-        let artifacts = self.control.board_mut().artifacts_mut();
-        for id in dropped {
-            artifacts.remove(&id);
-        }
+/// Retires one board object from the read model.
+fn remove_delta(id: String, revision: u64, at: OffsetDateTime) -> ObjectDelta {
+    use odin_domain::huginn::read_model as rm;
+    rm::ObjectDelta {
+        object: rm::ObjectRef {
+            kind: live::ObjectKind::Simulation,
+            id,
+        },
+        from_revision: live::Revision::new(revision),
+        to_revision: live::Revision::new(revision + 1),
+        revision_source: live::RevisionSource::Simulation,
+        freshness: rm::Freshness {
+            state: rm::FreshnessState::Fresh,
+            observed_at: at,
+            source_updated_at: Some(at),
+            stale_after_seconds: None,
+        },
+        body: rm::ObjectDeltaBody::Remove,
     }
 }
 
@@ -846,36 +998,156 @@ async fn read_log(client: &odin_kube::KubeClient, job: &str) -> Option<String> {
         .ok()
 }
 
-/// Every [`PUMP_TICK`] the board follows each Job of a `[simulation]`
-/// profile (read live from the pin) and ingests its new reports.
+/// The board as the `simulation.read` and `simulation.frame` tools see it.
+pub(crate) struct DaemonSimulationRoute {
+    pub desk: Arc<SimulationDesk>,
+    pub cell: Arc<KubeRuntimeCell>,
+    pub handle: tokio::runtime::Handle,
+}
+
+impl DaemonSimulationRoute {
+    fn block<F: std::future::Future>(&self, future: F) -> F::Output {
+        // Host tools run on runtime workers; plain threads use the composition handle.
+        match tokio::runtime::Handle::try_current() {
+            Ok(current) => tokio::task::block_in_place(|| current.block_on(future)),
+            Err(_) => self.handle.block_on(future),
+        }
+    }
+
+    /// A running mission's export files so far: `[{path, bytes}]`, first by path.
+    fn exports(&self, run_id: &RunId) -> Result<Vec<serde_json::Value>, String> {
+        let client = self
+            .cell
+            .control()
+            .map(|control| control.reconciler().exec_client())
+            .ok_or("the k3s API server is unreachable")?;
+        let argv = [
+            "/bin/find",
+            POD_EXPORT_ROOT,
+            "-type",
+            "f",
+            "-printf",
+            "%s %P\\0",
+        ]
+        .map(str::to_owned);
+        let listing = self.block(read_in_pod(&client, run_id, &argv, READ_WAIT, 256 * 1024))?;
+        let mut files: Vec<(String, u64)> = String::from_utf8_lossy(&listing)
+            .split_terminator('\0')
+            .filter_map(|entry| {
+                let (bytes, path) = entry.split_once(' ')?;
+                Some((path.to_owned(), bytes.parse().ok()?))
+            })
+            .collect();
+        files.sort();
+        files.truncate(MAX_LISTED_EXPORTS);
+        Ok(files
+            .into_iter()
+            .map(|(path, bytes)| serde_json::json!({"path": path, "bytes": bytes}))
+            .collect())
+    }
+}
+
+impl odin_hermes::runtime::SimulationRoute for DaemonSimulationRoute {
+    fn read(&self, mission: Option<&str>, exports: bool) -> Result<serde_json::Value, String> {
+        let mut read = self.desk.read(mission)?;
+        if exports {
+            if let Some(view) = read["missions"]
+                .as_array_mut()
+                .and_then(|all| all.first_mut())
+            {
+                let run = view["run"].as_str().map(RunId::new);
+                match run {
+                    Some(Ok(run_id)) => match self.exports(&run_id) {
+                        Ok(files) => view["exports"] = serde_json::Value::Array(files),
+                        Err(reason) => view["exportsUnavailable"] = reason.into(),
+                    },
+                    _ => view["exportsUnavailable"] = "the mission names no run".into(),
+                }
+            }
+        }
+        Ok(read)
+    }
+
+    fn frame(&self, mission: &str, renderer: Option<&str>) -> Result<(String, Vec<u8>), String> {
+        let (_, artifact) = self.desk.latest_frame(mission, renderer)?;
+        let bytes = self.block(self.desk.frame_bytes(&artifact))?;
+        let name = artifact
+            .display_name
+            .strip_prefix("frame-")
+            .unwrap_or(&artifact.display_name)
+            .to_owned();
+        Ok((name, bytes))
+    }
+}
+
+/// A research pod is never a mission: its own report path watches it.
+fn is_research(profile: &str) -> bool {
+    profile.starts_with("research")
+}
+
+/// On the authority node's simulation pump cadence, the board follows each Odin Job but
+/// research pods, ingests reports and frames, starts renders, and tells stage events.
 pub(crate) fn arm_simulation_pump(
     pumps: &mut tokio::task::JoinSet<Result<(), String>>,
     desk: Arc<SimulationDesk>,
     cell: Arc<KubeRuntimeCell>,
     snapshot: Arc<odin_registry::SnapshotHandle>,
+    offload: Option<Arc<crate::live::offload::Offload>>,
+    runtime: Option<Arc<odin_hermes::runtime::HermesRuntime>>,
 ) {
     pumps.spawn(async move {
-        let mut ticker = tokio::time::interval(PUMP_TICK);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut next = tokio::time::Instant::now();
         loop {
-            ticker.tick().await;
+            tokio::time::sleep_until(next).await;
+            let pin = snapshot.current();
+            let node = pin.objects.iter().find_map(|object| match &object.config {
+                odin_registry::ObjectConfig::Node(node)
+                    if node.enabled && node.authoritative_state =>
+                {
+                    Some(node)
+                }
+                _ => None,
+            });
+            let seconds = node
+                .and_then(|node| node.simulation_pump_seconds)
+                .map_or(10, |seconds| seconds.get());
+            let view_seconds = node
+                .and_then(|node| node.missions_view_seconds)
+                .map_or(5, |seconds| seconds.get());
+            let preview_max_side = node
+                .and_then(|node| node.missions_preview_max_side)
+                .map_or(2048, |side| side.get());
+            next = tokio::time::Instant::now() + StdDuration::from_secs(u64::from(seconds));
+            desk.publish_status(OffsetDateTime::now_utc(), view_seconds, preview_max_side);
             let Ok((_, client)) = cell.parts().await else {
+                publish_board(&desk, runtime.as_ref(), view_seconds, preview_max_side).await;
                 continue;
             };
-            let jobs = match client
-                .jobs()
-                .list(&ListParams::default().labels(odin_kube::workload::WORKLOAD_LABEL))
-                .await
+            // The job watch's cache, or one list while that watch is down.
+            let jobs = match cell
+                .job_cache()
+                .labelled(odin_kube::workload::WORKLOAD_LABEL)
             {
-                Ok(jobs) => jobs,
-                Err(error) => {
-                    tracing::warn!("simulation tick skipped reason=job list failed: {error}");
-                    continue;
-                }
+                Some(jobs) => jobs,
+                None => match client
+                    .jobs()
+                    .list(&ListParams::default().labels(odin_kube::workload::WORKLOAD_LABEL))
+                    .await
+                {
+                    Ok(jobs) => jobs.items,
+                    Err(error) => {
+                        tracing::warn!("simulation tick skipped reason=job list failed: {error}");
+                        publish_board(&desk, runtime.as_ref(), view_seconds, preview_max_side)
+                            .await;
+                        continue;
+                    }
+                },
             };
-            let pin = snapshot.current();
+            let exec = cell
+                .control()
+                .map(|control| control.reconciler().exec_client());
             let mut live_runs = BTreeSet::new();
-            for job in &jobs.items {
+            for job in &jobs {
                 let Ok(observed) =
                     odin_kube::status::observe_job(&cell.kube_config().cluster, job, 0)
                 else {
@@ -887,12 +1159,14 @@ pub(crate) fn arm_simulation_pump(
                 else {
                     continue;
                 };
+                if is_research(&profile_id) {
+                    continue;
+                }
                 let Ok(profile) = pin.workload_profile_ref(&profile_id) else {
                     continue;
                 };
-                let Some(simulation) = profile.profile.simulation.clone() else {
-                    continue;
-                };
+                let declared = profile.profile.simulation.is_some();
+                let simulation = profile.profile.simulation.clone().unwrap_or_default();
                 let declaration = serde_json::to_value(profile.profile).unwrap_or_default();
                 live_runs.insert(run_id.clone());
                 let log = if desk.wants_log(&run_id) {
@@ -904,25 +1178,202 @@ pub(crate) fn arm_simulation_pump(
                 };
                 let run = ObservedRun {
                     run_id,
+                    lane: match &workload.ownership {
+                        KubeResourceOwnership::Odin { lane_id, .. } => Some(lane_id.clone()),
+                        KubeResourceOwnership::Foreign => None,
+                    },
                     profile: profile_id,
                     declaration,
-                    renderers: simulation.renderers,
+                    simulation,
+                    declared,
                     state: workload.state,
                     node_id: workload.node_id.clone(),
-                    workload: workload.resource.clone(),
+                    workload: ObservedWorkload::Kube(workload.resource.clone()),
                     started_at: workload.started_at,
                     finished_at: workload.finished_at,
                 };
-                if let Err(error) = desk.observe(&run, &log, OffsetDateTime::now_utc()) {
-                    tracing::error!(
-                        "simulation observation failed run={} error={error}",
-                        run.run_id
-                    );
+                let reads = match desk.observe(&run, &log, OffsetDateTime::now_utc()) {
+                    Ok(reads) => reads,
+                    Err(error) => {
+                        tracing::error!(
+                            "simulation observation failed run={} error={error}",
+                            run.run_id
+                        );
+                        continue;
+                    }
+                };
+                let Some(exec) = &exec else {
+                    continue;
+                };
+                for report in reads {
+                    let read = read_in_pod(
+                        exec,
+                        &report.run_id,
+                        &report.read_argv(),
+                        READ_WAIT,
+                        report.max_bytes + 1,
+                    )
+                    .await;
+                    desk.take_frame(&report, read, OffsetDateTime::now_utc())
+                        .await;
+                }
+                if let Some(start) = desk.start_render(&run.run_id, OffsetDateTime::now_utc()) {
+                    // A render may take minutes; the pass does not wait for it.
+                    tokio::spawn(run_render(Arc::clone(&desk), exec.clone(), start));
                 }
             }
+            // Offload runs are followed by the offload pump, never retired as a missing Job.
+            live_runs.extend(
+                offload
+                    .iter()
+                    .flat_map(|offload| offload.runs())
+                    .map(|run| run.run_id),
+            );
             desk.retire_missing(&live_runs, OffsetDateTime::now_utc());
+            publish_board(&desk, runtime.as_ref(), view_seconds, preview_max_side).await;
         }
     });
+}
+
+/// Offload missions continue publishing status and stage events even when Kubernetes is down.
+async fn publish_board(
+    desk: &SimulationDesk,
+    runtime: Option<&Arc<odin_hermes::runtime::HermesRuntime>>,
+    view_seconds: u32,
+    preview_max_side: u32,
+) {
+    desk.publish_status(OffsetDateTime::now_utc(), view_seconds, preview_max_side);
+    let events = desk.drain_events();
+    if let Some(runtime) = runtime {
+        for event in events {
+            tell_stage(runtime, event).await;
+        }
+    }
+}
+
+/// One fixed argv in a pod's worker container: its stdout, or why not.
+async fn read_in_pod(
+    client: &odin_kube::KubeClient,
+    run_id: &RunId,
+    argv: &[String],
+    wait: StdDuration,
+    tail_bytes: u64,
+) -> Result<Vec<u8>, String> {
+    let tail = usize::try_from(tail_bytes).map_err(|error| error.to_string())?;
+    let run = odin_kube::exec::run_in_worker(client, run_id, argv, None, wait, tail)
+        .await
+        .map_err(|error| format!("{} in the pod failed: {error}", argv.join(" ")))?;
+    if run.exit_code != 0 {
+        return Err(format!(
+            "{} exited {}: {}",
+            argv.join(" "),
+            run.exit_code,
+            String::from_utf8_lossy(&run.stderr_tail).trim()
+        ));
+    }
+    Ok(run.stdout_tail)
+}
+
+/// Runs a requested render in the pod; the frame its `ODIN-RENDER` line
+/// names completes the request.
+async fn run_render(desk: Arc<SimulationDesk>, client: odin_kube::KubeClient, start: RenderStart) {
+    let output = read_in_pod(&client, &start.run_id, &start.argv, start.wait, 64 * 1024).await;
+    let line = output.and_then(|stdout| {
+        String::from_utf8_lossy(&stdout)
+            .lines()
+            .rev()
+            .find_map(|line| line.trim().strip_prefix(RENDER_PREFIX).map(str::to_owned))
+            .ok_or_else(|| "the render command printed no ODIN-RENDER line".to_owned())
+    });
+    let report = line.and_then(|line| {
+        let value = serde_json::from_str::<serde_json::Value>(&line)
+            .map_err(|error| format!("its ODIN-RENDER line is not JSON: {error}"))?;
+        let probe = ObservedRun {
+            run_id: start.run_id.clone(),
+            lane: None,
+            profile: String::new(),
+            declaration: serde_json::Value::Null,
+            simulation: WorkloadSimulationToml {
+                renderers: vec![start.renderer.clone()],
+                max_frame_bytes: Some(start.max_bytes),
+                ..WorkloadSimulationToml::default()
+            },
+            declared: true,
+            state: KubeWorkloadState::Running,
+            node_id: None,
+            workload: ObservedWorkload::Kube(KubeResourceRef {
+                cluster: String::new(),
+                api_version: String::new(),
+                kind: String::new(),
+                namespace: None,
+                name: String::new(),
+                uid: String::new(),
+            }),
+            started_at: None,
+            finished_at: None,
+        };
+        frame_report(&probe, &value)
+    });
+    match report {
+        Ok(report) => {
+            let read = read_in_pod(
+                &client,
+                &report.run_id,
+                &report.read_argv(),
+                READ_WAIT,
+                report.max_bytes + 1,
+            )
+            .await;
+            desk.take_frame(&report, read, OffsetDateTime::now_utc())
+                .await;
+        }
+        Err(reason) => desk.render_failed(
+            &start.run_id,
+            start.render_id,
+            &reason,
+            OffsetDateTime::now_utc(),
+        ),
+    }
+}
+
+/// A stage event fires the `simulation_stage` routines and wakes the seats watching `simulation`.
+async fn tell_stage(runtime: &Arc<odin_hermes::runtime::HermesRuntime>, event: StageEvent) {
+    let detail = serde_json::json!({
+        "run": event.run_id,
+        "profile": event.profile,
+        "kind": event.kind,
+        "text": event.text,
+    })
+    .to_string();
+    let at_ms = i64::try_from(event.at.unix_timestamp_nanos() / 1_000_000).unwrap_or(i64::MAX);
+    if let Err(error) = runtime.routine_event(
+        odin_registry::schema::RoutineEvent::SimulationStage,
+        Some(&event.profile),
+        &event.key,
+        &detail,
+        at_ms,
+    ) {
+        tracing::error!(
+            "simulation stage routine failed key={} error={error}",
+            event.key
+        );
+    }
+    let text = format!(
+        "[Odin simulation board] {} Read it with simulation_read; simulation_frame shows its latest frame.",
+        event.text
+    );
+    let project = event
+        .lane
+        .as_ref()
+        .and_then(|lane| runtime.workload_owner(lane).0);
+    crate::child_report::wake_declared(
+        runtime,
+        "simulation",
+        project.as_ref().map(odin_domain::ProjectId::as_str),
+        &format!("simulation-{}", event.key),
+        &text,
+    )
+    .await;
 }
 
 #[cfg(test)]

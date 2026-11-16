@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 
 use odin_domain::worker::InvocationId;
 use odin_types::WorkerId;
+use rustix::event::{poll, PollFd, PollFlags};
+use rustix::io::Errno;
 use rustix::process::{pidfd_send_signal, Signal};
 
 use crate::identity::read_process_identity;
@@ -18,6 +20,7 @@ use super::identity::{
     cgroup_directory, cgroup_tree_contains, leader_pidfd, process_is_zombie,
     prove_cgroup_membership, recursive_cgroup_process_count, scan_cgroup_residue,
 };
+use super::io::poll_timeout;
 use super::launch::{invocation_from_properties, property_string, WorkerChannel, WorkerIdentity};
 use super::{WorkerAuthority, WorkerError, WorkerErrorCode};
 
@@ -259,33 +262,35 @@ impl WorkerAuthority {
 
     /// Reap held children locally; systemd reaps recovered leaders.
     fn poll_exit(&mut self, deadline: Instant) -> bool {
-        if self.exited {
-            return true;
-        }
-        if self.leader.is_some() {
-            while Instant::now() < deadline {
-                match self.try_wait() {
-                    Ok(Some(_status)) => return true,
-                    Ok(None) => std::thread::sleep(REAP_POLL),
-                    Err(_) => return false,
+        while !self.exited {
+            if self.leader.is_some() {
+                if self.try_wait().is_err() {
+                    return false;
                 }
-            }
-            if matches!(self.try_wait(), Ok(Some(_))) {
+            } else if !self.recorded_leader_live() {
                 self.exited = true;
             }
-            return self.exited;
-        }
-        while Instant::now() < deadline {
-            if !self.recorded_leader_live() {
-                self.exited = true;
-                return true;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if self.exited || remaining.is_zero() {
+                break;
             }
-            std::thread::sleep(REAP_POLL);
-        }
-        if !self.recorded_leader_live() {
-            self.exited = true;
+            self.wait_leader_exit(remaining);
         }
         self.exited
+    }
+
+    /// The leader's pidfd turns readable when it exits; without one, sleep a reap tick.
+    fn wait_leader_exit(&self, timeout: Duration) {
+        let Some(pidfd) = &self.leader_pidfd else {
+            std::thread::sleep(REAP_POLL.min(timeout));
+            return;
+        };
+        let mut polled = [PollFd::new(pidfd, PollFlags::IN)];
+        match poll(&mut polled, Some(&poll_timeout(&timeout))) {
+            Ok(_) | Err(Errno::INTR) => {}
+            // The caller still checks exit; the sleep keeps a failing poll from spinning.
+            Err(_) => std::thread::sleep(REAP_POLL.min(timeout)),
+        }
     }
 
     fn recorded_leader_live(&self) -> bool {

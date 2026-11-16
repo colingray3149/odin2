@@ -4,6 +4,8 @@ use odin_kernel::{ApprovalDecision as KernelApprovalDecision, DecisionOutcome};
 
 #[path = "../../../tests/support/browser.rs"]
 mod browser_fixture;
+#[path = "root_consent_button.rs"]
+mod root_consent_button;
 
 #[test]
 fn kube_admission_refuses_second_device_before_touching_first_issuer_approval() {

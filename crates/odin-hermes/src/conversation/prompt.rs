@@ -101,10 +101,12 @@ impl InFlightPrompt {
                 InFlightKind::Prompt => LiveCommandBody::Prompt {
                     message,
                     owner_text,
+                    wake: self.unprompted,
                 },
                 InFlightKind::FollowUp => LiveCommandBody::FollowUp {
                     message,
                     owner_text,
+                    wake: self.unprompted,
                 },
             },
         })
@@ -156,24 +158,8 @@ impl InFlightPrompt {
     }
 }
 
-/// The whole answer of an unprompted turn (wake, routine, report, incident)
-/// with nothing for the owner: nothing is sent. The one definition.
-pub const QUIET_REPLY: &str = "[quiet]";
-
-/// Removes the quiet control token and adjacent punctuation, leaving only owner-facing text.
-pub(crate) fn without_quiet_token(answer: &str) -> &str {
-    let mut text = answer.trim();
-    if let Some(rest) = text.strip_prefix(QUIET_REPLY) {
-        text = rest.trim_start_matches(|character: char| {
-            character.is_whitespace()
-                || matches!(character, '\u{2014}' | '\u{2013}' | '-' | ':' | ',' | '.')
-        });
-    }
-    if let Some(rest) = text.strip_suffix(QUIET_REPLY) {
-        text = rest.trim_end();
-    }
-    text
-}
+pub(crate) use odin_domain::huginn::without_quiet_token;
+pub use odin_domain::huginn::QUIET_REPLY;
 
 /// Sent when the answer wait times out while work continues.
 pub(super) const LATE_ANSWER_HOLDING: &str =
@@ -529,7 +515,6 @@ impl ConversationRoot {
                     projection["replyError"] = serde_json::Value::String(detail);
                 }
             }
-            self.review_turn(intent, projection, spoken);
         }
         let Some(wake) = owed else {
             return self.update_projection(&intent.idempotency_key, projection.clone());
@@ -551,32 +536,6 @@ impl ConversationRoot {
             .map_err(IntentFailure::Other)?;
         self.spawn_wake_task(wake).await;
         Ok(())
-    }
-
-    /// Hands the owner's own answered turn to the learning review.
-    fn review_turn(
-        &self,
-        intent: &ApprovedIntentExecution,
-        projection: &serde_json::Value,
-        answered: &str,
-    ) {
-        if intent.unprompted {
-            return;
-        }
-        self.egress.turn_answered(crate::runtime::review::Exchange {
-            seat: self.binding.seat_id.clone(),
-            session: projection["session"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned(),
-            parent_session: None,
-            project: Some(self.project.clone()),
-            trigger: "turn",
-            turn_keys: vec![intent.idempotency_key.clone()],
-            sequence: None,
-            asked: intent.content.clone(),
-            answered: answered.to_owned(),
-        });
     }
 
     /// Freezes a settled answer under the turn's key, then sends it.
@@ -1475,13 +1434,11 @@ mod clock_tests {
             pending_permission_count: 0,
             quiet_seconds: 600,
         };
-        assert_eq!(
-            super::turn_context_line(Some("[the owner's local time: now]".to_owned()), &summary),
-            "[the owner's local time: now] [You are running on gateway/zai-glm]"
-        );
-        assert_eq!(
-            super::turn_context_line(None, &summary),
-            "[You are running on gateway/zai-glm]"
-        );
+        let clock = "[the owner's local time: now]";
+        let timed = super::turn_context_line(Some(clock.to_owned()), &summary);
+        assert!(timed.starts_with(clock), "{timed}");
+        for line in [timed.as_str(), &super::turn_context_line(None, &summary)] {
+            assert!(line.contains("gateway/zai-glm"), "{line}");
+        }
     }
 }

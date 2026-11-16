@@ -33,7 +33,10 @@ use crate::account::{
 use crate::conversation::Provenance;
 
 /// Desktop tools whose call takes no screenshot unless one is asked for.
-const QUIET_TOOLS: &[&str] = &["desktop_display"];
+const QUIET_TOOLS: &[&str] = &[
+    "desktop_display",
+    "desktop_device",
+];
 
 /// How long after the owner's message the seat may still use his desktop.
 const ASK_WINDOW: Duration = Duration::from_secs(15 * 60);
@@ -411,10 +414,15 @@ impl HermesRuntime {
             .ask()
             .map_err(|reason| HostToolError::Unavailable { tool, reason })?;
         let mut arguments = without_nulls(arguments.clone());
-        let steps = arguments
-            .get_mut("steps")
-            .map(Value::take)
-            .unwrap_or_else(|| json!([]));
+        // The one-call tools name the intent; the desk runs it as steps.
+        let steps = match tool {
+            "desktop_display" => json!([{ "do": "display", "on": arguments["on"] }]),
+            "desktop_device" => json!([{ "do": "device", "action": arguments["action"] }]),
+            _ => arguments
+                .get_mut("steps")
+                .map(Value::take)
+                .unwrap_or_else(|| json!([])),
+        };
         let shot = match arguments.get("shot").and_then(Value::as_str).unwrap_or(
             if QUIET_TOOLS.contains(&tool) {
                 "none"
@@ -447,6 +455,7 @@ impl HermesRuntime {
         })))
     }
 }
+
 
 /// Includes nested scene waits and bounded app/device discovery, not only pointer waits.
 fn bound(request: &Value) -> Duration {

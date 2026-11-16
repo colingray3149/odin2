@@ -323,11 +323,26 @@ mod tests {
             .expect("parses")
         };
         let mut objects = vec![
-            object(
+            odin_registry::schema::parse_object_toml(
                 odin_registry::RegistryKind::Harness,
                 "codex",
                 "harnesses/codex/harness.toml",
-            ),
+                r#"schema = "odin.registry.v1"
+kind = "harness"
+enabled = true
+description = "Process harness fixture."
+protocol = "process"
+governance = "observed"
+command = ["fixture-agent"]
+prompt = "argv"
+output = "text"
+account = "codex"
+[stop]
+signal = "SIGINT"
+grace_seconds = 10
+"#,
+            )
+            .expect("parses"),
             object(
                 odin_registry::RegistryKind::Environment,
                 "sandbox-authority",

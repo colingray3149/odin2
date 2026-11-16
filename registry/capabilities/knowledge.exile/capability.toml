@@ -1,0 +1,22 @@
+schema = "odin.registry.v1"
+toolset = "knowledge"
+expose = "on_demand"
+op = "exile"
+kind = "capability"
+enabled = true
+implementation = "builtin"
+version = 1
+description = "Moves content to exile/. A page, raw item or research run is kept but never indexed and its bytes are blocked; heading cuts one section. still_present lists copies it does not remove."
+handler = { id = "knowledge_exile" }
+input_schema = "schemas/capability/knowledge.exile.input.json"
+output_schema = "schemas/capability/knowledge.exile.output.json"
+effect_class = "R2"
+seat_tags = ["*"]
+timeout_seconds = 30
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_hermes_knowledge_exile_evidence" }
+tests = [
+  "odin-hermes runtime::knowledge::tests::each_declared_knowledge_tool_forwards_its_arguments_and_the_seat",
+]

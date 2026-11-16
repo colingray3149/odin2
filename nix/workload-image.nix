@@ -519,6 +519,10 @@ else
     # The declared CLI tools pod-exec capabilities run (nix/pod-tools.nix).
     podTools = import ./pod-tools.nix pkgs;
 
+    # The image python (/bin/python3: uv, exec capabilities) with openpyxl,
+    # so kubert-seated pods can read and save XLSX artifacts.
+    imagePython = pkgs.python3.withPackages (ps: [ ps.openpyxl ]);
+
     imageRoot = pkgs.buildEnv {
       name = "odin-workload-image-root";
       paths = [
@@ -526,7 +530,7 @@ else
         pkgs.bash
         pkgs.coreutils
         pkgs.cacert
-        pkgs.python3
+        imagePython
         pkgs.git
         pkgs.findutils
       ]

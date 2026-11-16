@@ -6,7 +6,6 @@ description = "Odin control plane, Huginn, registry, kernel, scheduler, and adap
 source_root = ""
 default_seat = "gungnir"
 memory_namespaces = ["atlas.code", "memory.project.odin"]
-artifact_policy = "standard"
 review_verdict = "code.review.verdict"
 # odin.deploy runs tools/ship.sh from this host and checkout (relative to home); tools/deploy.sh switches the targets.
 deploy = { host = "pc", checkout = "valhalla/odin", targets = ["mini", "laptop", "pc"] }

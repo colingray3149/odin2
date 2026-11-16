@@ -1,0 +1,20 @@
+schema = "odin.registry.v1"
+toolset = "world"
+kind = "capability"
+enabled = true
+implementation = "workflow"
+version = 1
+description = "Currency exchange at today's ECB rate."
+handler = { id = "odin_workflow.run" }
+input_schema = "schemas/capability/world.fx.input.json"
+output_schema = "schemas/capability/world.fx.output.json"
+effect_class = "R1"
+seat_tags = ["*"]
+timeout_seconds = 60
+idempotency = "required"
+retry = { max_attempts = 0 }
+approval_policy = "none"
+evidence_extractor = { id = "odin_workflow.receipt" }
+tests = [
+  "odin-workflows world::tests::home_is_a_geo_uri_with_its_name",
+]

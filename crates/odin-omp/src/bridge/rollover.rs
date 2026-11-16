@@ -41,6 +41,103 @@ impl Shared {
         }
     }
 
+    /// Pump-side note of one provider round (`turn_end`) of a pod: its
+    /// assistant message's usage is the context it holds now. Crossing the
+    /// checkpoint sends ONE steer per context epoch, asking for working notes
+    /// while the turn runs on. Seat sessions ignore provider rounds.
+    pub(super) fn note_pod_checkpoint(self: &Arc<Self>, value: &Value) {
+        let Some(usage) = crate::live::rollover::RolloverUsage::extract(value) else {
+            return;
+        };
+        let percent = {
+            let Ok(mut guard) = shared_lock(&self.rollover, "rollover") else {
+                return;
+            };
+            if guard
+                .config
+                .as_ref()
+                .is_none_or(|config| config.pod().is_none())
+            {
+                return;
+            }
+            guard.watermark = usage.watermark();
+            guard.last_usage = Some(usage);
+            let watermark = guard.watermark;
+            let epoch = guard.context_epoch;
+            let Some(threshold) = guard.effective_threshold() else {
+                return;
+            };
+            if watermark < threshold || guard.checkpoint_epoch == Some(epoch) {
+                return;
+            }
+            guard.checkpoint_epoch = Some(epoch);
+            watermark.saturating_mul(100) / guard.card_window.max(1)
+        };
+        let shared = Arc::clone(self);
+        drop(tokio::spawn(async move {
+            shared.send_pod_checkpoint(percent).await;
+        }));
+    }
+
+    /// Sends a pod's checkpoint steer into its running turn, when its rollover
+    /// budget still admits the rollover the notes are for. Failures are logged;
+    /// the window refusal stays the backstop.
+    async fn send_pod_checkpoint(&self, percent: u64) {
+        let config = shared_lock(&self.rollover, "rollover")
+            .ok()
+            .and_then(|guard| guard.config.clone());
+        let Some(config) = config else {
+            return;
+        };
+        if let Err(detail) = self.admit_pod_rollover(&config).await {
+            tracing::warn!("odind: pod checkpoint not sent: {detail}");
+            return;
+        }
+        let frame = json!({
+            "type": "steer",
+            "message": crate::live::rollover::pod_checkpoint_prompt(percent),
+        });
+        let _lifecycle = self.lifecycle.lock().await;
+        if let Err(error) = self
+            .dispatch(
+                "steer",
+                frame,
+                InFlightKind::Mutating,
+                ReplyDelivery::Observed,
+            )
+            .await
+        {
+            tracing::warn!("odind: pod checkpoint steer not sent: {error}");
+        }
+    }
+
+    /// Rollovers this session has begun, counted from the journal:
+    /// `rollover_triggered` is written before any respawn, so a crash cannot
+    /// reset the count.
+    async fn begun_rollovers(&self) -> Result<u32, String> {
+        let session = self
+            .binding_snapshot()
+            .map_err(|error| error.to_string())?
+            .session_id;
+        self.ledger_op(move |ledger| {
+            journaled_rollover_count(ledger, &session, "rollover_triggered")
+        })
+        .await
+        .map_err(|error| error.to_string())
+    }
+
+    /// Admits one rollover against a pod's declared budget and reports whether
+    /// it is the last one allowed. Seat sessions are never refused here.
+    async fn admit_pod_rollover(
+        &self,
+        config: &crate::live::rollover::RolloverRuntimeConfig,
+    ) -> Result<bool, String> {
+        match config.pod() {
+            Some(pod) => pod.admit(self.begun_rollovers().await?),
+            None => Ok(false),
+        }
+    }
+
     /// Pump-side note of one `auto_compaction_end` frame: the compacted
     /// session starts a new context epoch.
     pub(super) fn open_context_epoch(&self) {
@@ -123,7 +220,10 @@ impl Shared {
         // Turn-boundary conditions; the executor re-checks them under the
         // lifecycle gate before anything moves. The threshold is the
         // selected card's declared fraction when the seat declared one.
-        if watermark < threshold || settled_turns < rollover::ROLLOVER_MIN_SETTLED_TURNS {
+        if !config.rolls_at_settled_turns()
+            || watermark < threshold
+            || settled_turns < rollover::ROLLOVER_MIN_SETTLED_TURNS
+        {
             return Ok(());
         }
         match self.status() {
@@ -163,12 +263,14 @@ impl Shared {
             .map_err(|error| error.to_string())?;
             return Ok(());
         }
+        let pod_last = self.admit_pod_rollover(&config).await?;
         let executed = self
             .execute_rollover(
                 &RolloverTrigger::Threshold {
                     pre_watermark_tokens: watermark,
                 },
                 None,
+                pod_last,
             )
             .await?;
         self.commit_rollover_count().await?;
@@ -247,6 +349,7 @@ impl Shared {
         &self,
         trigger: &RolloverTrigger,
         selected_model: Option<(String, String)>,
+        pod_last: bool,
     ) -> Result<ExecutedRollover, String> {
         use crate::live::rollover;
         let (config, children) = {
@@ -301,57 +404,8 @@ impl Shared {
                 let row = ledger.live_session(&session_id).map_err(|error| {
                     LedgerError::invalid_data_caused_by("live session load failed", error)
                 })?;
-                let plan = match ledger.plan(&run_id).map_err(|error| {
-                    LedgerError::invalid_data_caused_by("plan load failed", error)
-                })? {
-                    Some(plan) => {
-                        let accepted = ledger.plan_is_accepted(&run_id).map_err(|error| {
-                            LedgerError::invalid_data_caused_by(
-                                "plan acceptance load failed",
-                                error,
-                            )
-                        })?;
-                        Some(rollover::RolloverPlanRecord {
-                            revision: plan.revision,
-                            objective: plan.objective.clone(),
-                            todos: plan
-                                .todos
-                                .iter()
-                                .map(|todo| {
-                                    json!({
-                                        "id": todo.id,
-                                        "ordinal": todo.ordinal,
-                                        "title": todo.title,
-                                        "status": todo.status,
-                                    })
-                                })
-                                .collect(),
-                            accepted,
-                        })
-                    }
-                    None => None,
-                };
-                let pending_approvals = ledger
-                    .approvals()
-                    .map_err(|error| {
-                        LedgerError::invalid_data_caused_by("approval load failed", error)
-                    })?
-                    .into_iter()
-                    .filter(|approval| {
-                        matches!(approval.status, odin_domain::ApprovalStatus::Requested)
-                            && approval.scope.target_kind == "session"
-                            && approval.scope.target_id == session_id.to_string()
-                    })
-                    .map(|approval| rollover::RolloverPendingApproval {
-                        approval_id: approval.approval_id.to_string(),
-                        capability_id: approval.scope.capability_id.to_string(),
-                        target_kind: approval.scope.target_kind.clone(),
-                        target_id: approval.scope.target_id.clone(),
-                        issuer: approval.issuer.clone(),
-                        requested_at_ms: unix_ms(approval.requested_at) as i64,
-                        expires_at_ms: unix_ms(approval.expires_at) as i64,
-                    })
-                    .collect::<Vec<_>>();
+                let (plan, pending_approvals) =
+                    rollover::durable_rows(ledger, &session_id, &run_id)?;
                 let events = live_history_tail(
                     ledger,
                     &session_id,
@@ -524,10 +578,19 @@ impl Shared {
                 tracing::warn!("odind: injected context not traced: {error}");
             }
         }
-        let message = if inputs.assignment.is_some() {
-            rollover::continuation_prompt(&header, &brief_text)
-        } else {
-            rollover::continuity_prompt(&header, &brief_text)
+        // A pod resumes its own unit from its notes; a delegated worker resumes
+        // its assignment; any other session absorbs the brief and waits.
+        let message = match config.pod() {
+            Some(pod) => rollover::pod_continuation_prompt(
+                &header,
+                &brief_text,
+                &pod.launch_inputs,
+                pod_last,
+            ),
+            None if inputs.assignment.is_some() => {
+                rollover::continuation_prompt(&header, &brief_text)
+            }
+            None => rollover::continuity_prompt(&header, &brief_text),
         };
         // The refusal trigger returns at the journaled dispatch admission,
         // so its reinjection owns no waiter: Observed delivery keeps a
@@ -586,25 +649,26 @@ impl Shared {
         refusal_event: u64,
         selected_model: Option<(String, String)>,
     ) -> Result<i64, BridgeError> {
-        {
+        let config = {
             let mut guard =
                 shared_lock(&self.rollover, "rollover").map_err(|error| BridgeError::Config {
                     detail: error.to_string(),
                 })?;
-            if guard.config.is_none() {
+            let Some(config) = guard.config.clone() else {
                 return Err(BridgeError::Config {
                     detail: "context-refusal rollover needs the session's declared \
                              [live.rollover] configuration"
                         .to_owned(),
                 });
-            }
+            };
             if guard.busy {
                 return Err(BridgeError::Config {
                     detail: "another rollover is in flight".to_owned(),
                 });
             }
             guard.busy = true;
-        }
+            config
+        };
         let _busy = RolloverBusyGuard {
             shared: Arc::clone(self),
         };
@@ -628,12 +692,17 @@ impl Shared {
                 detail: "another mutating transition is in flight".to_owned(),
             });
         }
+        let pod_last = self
+            .admit_pod_rollover(&config)
+            .await
+            .map_err(|detail| BridgeError::Config { detail })?;
         let executed = self
             .execute_rollover(
                 &RolloverTrigger::ContextRefusal {
                     event: refusal_event,
                 },
                 selected_model,
+                pod_last,
             )
             .await
             .map_err(|detail| BridgeError::ProcessDown { detail })?;
@@ -793,7 +862,11 @@ pub(super) fn restored_rollover_count(
         Err(LedgerError::NotFound { .. }) => 0,
         Err(error) => return Err(error),
     };
-    Ok(stored.max(journaled_rollover_count(ledger, session)?))
+    Ok(stored.max(journaled_rollover_count(
+        ledger,
+        session,
+        "rollover_completed",
+    )?))
 }
 
 fn write_rollover_count(
@@ -826,11 +899,12 @@ fn write_rollover_count(
 fn journaled_rollover_count(
     ledger: &Ledger,
     session: &odin_domain::SessionId,
+    kind: &str,
 ) -> Result<u32, LedgerError> {
     let count: i64 = ledger.connection().query_row(
         "SELECT COUNT(*) FROM live_events WHERE session_id=?1 \
-         AND json_extract(body_json,'$.kind')='rollover_completed'",
-        [session.to_string()],
+         AND json_extract(body_json,'$.kind')=?2",
+        [session.to_string(), kind.to_owned()],
         |row| row.get(0),
     )?;
     Ok(u32::try_from(count).unwrap_or(u32::MAX))
@@ -937,6 +1011,8 @@ pub(super) struct RolloverTracker {
     /// Counts the session's context epochs: compactions and rollovers each
     /// open one, so the next turn carries fresh brain context.
     pub(super) context_epoch: u64,
+    /// The context epoch a pod's checkpoint steer was sent in: one per epoch.
+    pub(super) checkpoint_epoch: Option<u64>,
 }
 
 impl RolloverTracker {
@@ -960,6 +1036,7 @@ impl RolloverTracker {
             last_usage: None,
             measuring: None,
             context_epoch: 0,
+            checkpoint_epoch: None,
         }
     }
 }
@@ -987,6 +1064,10 @@ impl RolloverTracker {
             && self.measuring.is_none()
             && self.watermark >= threshold
             && self.settled_turns >= crate::live::rollover::ROLLOVER_MIN_SETTLED_TURNS
+            && self
+                .config
+                .as_ref()
+                .is_some_and(|config| config.rolls_at_settled_turns())
     }
 
     /// Records the selected model card's window and the lane ceiling the

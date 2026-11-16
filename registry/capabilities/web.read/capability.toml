@@ -17,7 +17,7 @@ retry = { max_attempts = 0 }
 approval_policy = "none"
 evidence_extractor = { id = "odin_adapter.receipt" }
 tests = [
-  "odin-adapter-mcp tests::a_windowed_read_asks_for_the_whole_page_and_serves_it_from_offset",
+  "odin-adapter-mcp tests::a_windowed_read_asks_for_its_window_and_serves_it_from_offset",
   "odin-adapter-mcp tests::a_page_that_did_not_load_is_a_typed_failure_never_content",
   "odin-adapter-mcp tests::a_blocked_page_retries_an_independent_engine_then_the_dated_archive",
   "odin-omp host_tools::research::tests::a_refused_fetch_moves_to_the_next_region_and_retries",

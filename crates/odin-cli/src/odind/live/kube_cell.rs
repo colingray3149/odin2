@@ -29,6 +29,7 @@ pub(super) fn compose(
     config: &OdindConfig,
     manifest: &RuntimeManifest,
     snapshot: &Arc<Snapshot>,
+    snapshot_handle: &Arc<odin_registry::SnapshotHandle>,
     bridge_ledger: &Arc<Mutex<Ledger>>,
     huginn_root: &Path,
 ) -> Result<Option<Arc<KubeRuntimeCell>>, String> {
@@ -65,41 +66,61 @@ pub(super) fn compose(
                         format!("{}:{}", snapshot.revision, snapshot.hash).as_bytes(),
                     ),
                 });
-            Some(KubeRuntimeCell::new(CellInputs {
-                config: odin_kube::config::KubeConfig {
-                    kubeconfig: kube.kubeconfig.clone(),
-                    cluster: kube.cluster.clone(),
-                    namespace: kube.namespace.clone(),
-                    allowed_nodes: snapshot
-                        .objects
-                        .iter()
-                        .filter_map(|object| match &object.config {
-                            ObjectConfig::Node(node) if node.enabled && node.allow_workloads => {
-                                Some(object.id.clone())
+            Some(KubeRuntimeCell::new_published(
+                CellInputs {
+                    config: odin_kube::config::KubeConfig {
+                        kubeconfig: kube.kubeconfig.clone(),
+                        cluster: kube.cluster.clone(),
+                        namespace: kube.namespace.clone(),
+                        allowed_nodes: snapshot
+                            .objects
+                            .iter()
+                            .filter_map(|object| match &object.config {
+                                ObjectConfig::Node(node)
+                                    if node.enabled && node.allow_workloads =>
+                                {
+                                    Some(object.id.clone())
+                                }
+                                _ => None,
+                            })
+                            .collect(),
+                        node_data_roots: snapshot
+                            .objects
+                            .iter()
+                            .filter_map(|object| match &object.config {
+                                ObjectConfig::Node(node)
+                                    if node.enabled && node.allow_workloads =>
+                                {
+                                    Some((object.id.clone(), node.data_roots.clone()))
+                                }
+                                _ => None,
+                            })
+                            .collect(),
+                        request_timeout: StdDuration::from_secs(kube.request_timeout_seconds.get()),
+                        teardown_timeout: StdDuration::from_secs(
+                            kube.teardown_timeout_seconds.get(),
+                        ),
+                        vpn_transport: kube.vpn_transport.as_ref().map(|transport| {
+                            odin_kube::VpnTransportBinding {
+                                endpoint: transport.endpoint,
+                                port: transport.port,
+                                dns: transport.dns,
+                                launcher: transport.launcher.clone(),
+                                resolver: transport.resolver.clone(),
+                                forwarded: transport.forwarded,
                             }
-                            _ => None,
-                        })
-                        .collect(),
-                    request_timeout: StdDuration::from_secs(kube.request_timeout_seconds.get()),
-                    teardown_timeout: StdDuration::from_secs(kube.teardown_timeout_seconds.get()),
-                    vpn_transport: kube.vpn_transport.as_ref().map(|transport| {
-                        odin_kube::VpnTransportBinding {
-                            endpoint: transport.endpoint,
-                            port: transport.port,
-                            dns: transport.dns,
-                            launcher: transport.launcher.clone(),
-                            resolver: transport.resolver.clone(),
-                        }
-                    }),
+                        }),
+                    },
+                    ledger: Arc::clone(bridge_ledger),
+                    stops,
+                    artifact_root: huginn_root.join("artifacts"),
+                    snapshot: Arc::clone(snapshot),
+                    config_revision: config.revision,
+                    launch_binding,
+                    workload_identity,
                 },
-                ledger: Arc::clone(bridge_ledger),
-                stops,
-                artifact_root: huginn_root.join("artifacts"),
-                snapshot: Arc::clone(snapshot),
-                config_revision: config.revision,
-                launch_binding,
-                workload_identity,
-            }))
+                Arc::clone(snapshot_handle),
+            ))
         }
     })
 }

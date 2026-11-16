@@ -6,4 +6,3 @@ description = "the owner's NixOS and Home Manager declarative configuration repo
 source_root = ""
 default_seat = "architect"
 memory_namespaces = ["atlas.code", "memory.project.dotfiles"]
-artifact_policy = "standard"

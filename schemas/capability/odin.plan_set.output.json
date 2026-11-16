@@ -5,6 +5,8 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "revision": { "type": "integer" }
+    "revision": { "type": "integer" },
+    "accepted": { "type": "boolean" },
+    "acceptedBy": { "type": "string" }
   }
 }

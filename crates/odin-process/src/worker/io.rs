@@ -158,7 +158,7 @@ fn poll_stdin_writable(pipe: &mut File, deadline: Instant) -> Result<bool, Worke
     }
 }
 
-fn poll_timeout(remaining: &Duration) -> Timespec {
+pub(super) fn poll_timeout(remaining: &Duration) -> Timespec {
     let nanos = remaining.as_nanos();
     Timespec {
         tv_sec: (nanos / 1_000_000_000).try_into().unwrap_or(i64::MAX),

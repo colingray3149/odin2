@@ -16,6 +16,7 @@
         "new-environment",
         "new-harness",
         "enable-capability",
+        "edit-brain-role",
         "remove-environment"
       ]
     },
@@ -48,7 +49,8 @@
             "new-container",
             "new-environment",
             "new-harness",
-            "enable-capability"
+            "enable-capability",
+            "edit-brain-role"
           ]
         },
         "approvalId": {

@@ -52,6 +52,35 @@ fn registry_with(name: &'static str) -> HostToolRegistry {
 }
 
 #[test]
+fn workload_batch_and_drop_registry_tuples_are_admitted_for_production() {
+    let declarations = real_enabled_capabilities();
+    for id in ["kube.workload.create_many", "kube.workload.queue_drop"] {
+        let (_, capability) = declarations
+            .iter()
+            .find(|(name, _)| name == id)
+            .expect("enabled workload capability");
+        let admitted = odin_registry::relational::AdmittedBinding {
+            version: capability.version,
+            input_schema: capability.input_schema.clone().expect("input schema"),
+            output_schema: capability.output_schema.clone().expect("output schema"),
+            handler: capability.handler.clone().expect("handler"),
+            evidence_extractor: capability.evidence_extractor.clone().expect("extractor"),
+        };
+        for bindings in [
+            PRE_ADMITTED_BINDINGS,
+            crate::host_tools::production_bindings(),
+        ] {
+            assert!(
+                bindings
+                    .iter()
+                    .any(|binding| binding.to_admitted_binding() == admitted),
+                "{id} must match its complete declared tuple"
+            );
+        }
+    }
+}
+
+#[test]
 fn compiled_host_tool_binding_matches_real_enabled_registry_and_production_surface() {
     let declarations = real_enabled_capabilities();
     let catalog =
@@ -207,14 +236,12 @@ fn compiled_host_tool_binding_matches_real_enabled_registry_and_production_surfa
         definitions.iter().all(|definition| !definition.hidden),
         "every listed production definition must remain model-visible"
     );
-    // Memory tools must be available without a tool-discovery search.
-    for brain in ["brain_search", "brain_read"] {
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.name.as_ref() == brain)
-            .expect("brain tool listed");
-        assert_eq!(definition.load_mode, ToolLoadMode::Essential, "{brain}");
-    }
+    // The task note tool must be available without a tool-discovery search.
+    let note = definitions
+        .iter()
+        .find(|definition| definition.name.as_ref() == "task_note")
+        .expect("task note tool listed");
+    assert_eq!(note.load_mode, ToolLoadMode::Essential, "task_note");
     for binding in BrowserCapabilityBinding::ALL {
         assert!(
             !names.contains(&binding.id()),

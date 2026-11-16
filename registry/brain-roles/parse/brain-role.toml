@@ -1,0 +1,8 @@
+schema = "odin.registry.v1"
+kind = "brain-role"
+enabled = true
+description = "Born-digital documents to Markdown with kb-parse's built-in pdftotext, pandoc and XML readers; scans go to role ocr."
+role = "parse"
+engine = "local"
+[params]
+min_text_chars_per_page = 200

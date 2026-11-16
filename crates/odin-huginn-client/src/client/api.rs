@@ -58,6 +58,7 @@ pub trait HuginnTransport: Clone + Send + Sync + 'static {
 pub struct EndpointTransport {
     endpoint: url::Url,
     http: reqwest::Client,
+    ticket_http: reqwest::Client,
 }
 
 impl std::fmt::Debug for EndpointTransport {
@@ -99,13 +100,98 @@ impl EndpointTransport {
             .timeout(HTTP_REQUEST_TIMEOUT)
             .build()
             .map_err(|error| ClientError::Transport(error.to_string()))?;
-        Ok(Self { endpoint, http })
+        let ticket_http = reqwest::Client::builder()
+            .https_only(!local_http)
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(HTTP_CONNECT_TIMEOUT)
+            .timeout(HTTP_REQUEST_TIMEOUT)
+            .build()
+            .map_err(|error| ClientError::Transport(error.to_string()))?;
+        Ok(Self {
+            endpoint,
+            http,
+            ticket_http,
+        })
     }
 
     fn url(&self, path: &str) -> Result<url::Url, ClientError> {
         self.endpoint
             .join(path)
             .map_err(|error| ClientError::InvalidInput(error.to_string()))
+    }
+}
+
+impl<K: DeviceCredentialStore> RemoteClient<EndpointTransport, K> {
+    /// Issues a device-bound ticket and retrieves its bounded, digest-verified content.
+    pub async fn download_ticket(
+        &self,
+        request: odin_domain::huginn::ContentTicketRequest,
+    ) -> Result<Vec<u8>, ClientError> {
+        let mut connection = self.connect().await?;
+        let response = connection
+            .request(HuginnRequest::IssueContentTicket(request.clone()))
+            .await;
+        let close = connection.close().await;
+        let response = response?;
+        close?;
+        let HuginnResponse::ContentTicket(ticket) = response else {
+            return Err(ClientError::InvalidInput(
+                "expected a content ticket".to_owned(),
+            ));
+        };
+        if ticket.validate().is_err()
+            || ticket.source != request.source
+            || ticket.byte_len > request.max_bytes.get()
+            || ticket.expires_at <= time::OffsetDateTime::now_utc()
+        {
+            return Err(ClientError::InvalidInput(
+                "invalid content ticket binding".to_owned(),
+            ));
+        }
+        let url = self
+            .transport
+            .url(&format!("/colinremote/v1/content/{}", ticket.ticket()))?;
+        let mut response = self
+            .transport
+            .ticket_http
+            .get(url)
+            .bearer_auth(connection.credential.bearer_token())
+            .send()
+            .await
+            .map_err(|error| ClientError::Transport(error.without_url().to_string()))?;
+        if !response.status().is_success() {
+            return Err(ClientError::Transport(format!(
+                "content download returned HTTP {}",
+                response.status()
+            )));
+        }
+        if response
+            .content_length()
+            .is_some_and(|len| len != ticket.byte_len)
+        {
+            return Err(ClientError::InvalidInput(
+                "content length does not match ticket".to_owned(),
+            ));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| ClientError::Transport(error.without_url().to_string()))?
+        {
+            if chunk.len() as u64 > ticket.byte_len.saturating_sub(bytes.len() as u64) {
+                return Err(ClientError::InvalidInput(
+                    "content exceeds ticket length".to_owned(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        if bytes.len() as u64 != ticket.byte_len || Digest::hash(&bytes) != ticket.content_digest {
+            return Err(ClientError::InvalidInput(
+                "content does not match ticket".to_owned(),
+            ));
+        }
+        Ok(bytes)
     }
 }
 

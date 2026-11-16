@@ -31,7 +31,7 @@ pub struct DrainReport {
 }
 
 pub(crate) fn cordon_patch() -> serde_json::Value {
-    serde_json::json!({ "spec": { "unschedulable": true } })
+    serde_json::json!({ "spec": { "unschedulable": true }, "metadata": { "annotations": { (YIELD_CORDON_ANNOTATION): "false" } } })
 }
 
 /// Explicit `false` clears the scheduling hold in a merge patch.
@@ -80,6 +80,111 @@ pub(crate) fn drain_targets(pods: &[Pod]) -> Vec<String> {
 /// Unprocessed targets are reported as remaining when the deadline expires.
 pub(crate) fn fold_deadline_remained(targets: &[String], from: usize) -> Vec<String> {
     targets[from.min(targets.len())..].to_vec()
+}
+
+/// "<mode> since <time>" while the owner's mode holds the node; absent otherwise.
+pub const NODE_MODE_ANNOTATION: &str = "odin.dev/mode";
+
+/// Records (or with `None` clears) the owner's mode on the node, for every node view.
+pub async fn set_mode(
+    client: &KubeClient,
+    node_name: &str,
+    mode: Option<&str>,
+) -> Result<(), KubeError> {
+    let api: Api<Node> = Api::all(client.client.clone());
+    let patch = serde_json::json!({
+        "metadata": { "annotations": { (NODE_MODE_ANNOTATION): mode } }
+    });
+    tokio::time::timeout(
+        client.config.request_timeout,
+        api.patch(node_name, &PatchParams::default(), &Patch::Merge(patch)),
+    )
+    .await
+    .map_err(|error| {
+        KubeError::unavailable(format!("mode mark of node {node_name} timed out: {error}"))
+    })??;
+    Ok(())
+}
+
+/// Ownership marker written atomically with a yield cordon.
+pub const YIELD_CORDON_ANNOTATION: &str = "odin.dev/yield-cordon";
+
+/// Reconcile one node's yield hold using resource-version preconditions so a concurrent
+/// operator change cannot be overwritten on the strength of an earlier observation.
+pub async fn reconcile_yield_cordon(
+    client: &KubeClient,
+    node_name: &str,
+    mode: Option<&str>,
+) -> Result<bool, KubeError> {
+    let api: Api<Node> = Api::all(client.client.clone());
+    let node = tokio::time::timeout(client.config.request_timeout, api.get(node_name))
+        .await
+        .map_err(|error| {
+            KubeError::unavailable(format!("node {node_name} observation timed out: {error}"))
+        })??;
+    let annotations = node.metadata.annotations.as_ref();
+    let marker = annotations.and_then(|annotations| annotations.get(YIELD_CORDON_ANNOTATION));
+    // The deployed gaming marker predates ownership tracking; migrate that contract once.
+    let legacy_gaming = marker.is_none()
+        && annotations
+            .and_then(|annotations| annotations.get(NODE_MODE_ANNOTATION))
+            .is_some_and(|value| value.starts_with("gaming since "));
+    let owned = marker.is_some_and(|value| value == "true") || legacy_gaming;
+    let cordoned = node
+        .spec
+        .as_ref()
+        .is_some_and(|spec| spec.unschedulable == Some(true));
+    let acquire = mode.is_some() && !cordoned;
+    let release = mode.is_none() && owned && cordoned;
+    let wanted_marker = if mode.is_none() {
+        None
+    } else if owned || acquire {
+        Some("true")
+    } else {
+        Some("false")
+    };
+    let current_mode = annotations
+        .and_then(|values| values.get(NODE_MODE_ANNOTATION))
+        .map(String::as_str);
+    if !acquire && !release && current_mode == mode && marker.map(String::as_str) == wanted_marker {
+        return Ok(false);
+    }
+    let patch = serde_json::json!({
+        "metadata": {
+            "resourceVersion": node.metadata.resource_version,
+            "annotations": {
+                (NODE_MODE_ANNOTATION): mode,
+                (YIELD_CORDON_ANNOTATION): wanted_marker,
+            }
+        },
+        "spec": if acquire { serde_json::json!({"unschedulable": true}) }
+                else if release { serde_json::json!({"unschedulable": false}) }
+                else { serde_json::json!({}) },
+    });
+    let updated = tokio::time::timeout(
+        client.config.request_timeout,
+        api.patch(node_name, &PatchParams::default(), &Patch::Merge(patch)),
+    )
+    .await
+    .map_err(|error| {
+        KubeError::unavailable(format!(
+            "yield reconciliation of node {node_name} timed out: {error}"
+        ))
+    })??;
+    if acquire {
+        cordon_landed(&updated, node_name)?;
+    }
+    if release
+        && updated
+            .spec
+            .as_ref()
+            .is_some_and(|spec| spec.unschedulable == Some(true))
+    {
+        return Err(KubeError::unavailable(format!(
+            "node {node_name} remains cordoned after yield release"
+        )));
+    }
+    Ok(release)
 }
 
 /// A successful patch must also report the node as unschedulable.

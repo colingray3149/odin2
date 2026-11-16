@@ -8,7 +8,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use odin_domain::{Scope, SeatId};
+use odin_domain::{Scope, SeatId, SessionId};
 use odin_ledger::artifact::{AttachReference, NewArtifactReference, RetentionClass};
 use odin_ledger::Ledger;
 use serde_json::{json, Value};
@@ -37,21 +37,39 @@ fn json_size(value: &(impl serde::Serialize + ?Sized)) -> Result<u64, String> {
     Ok(count.0)
 }
 
+/// The tool-result ceiling a workload run declares, per live session.
+pub type SessionResultBudgets = Arc<Mutex<BTreeMap<SessionId, u32>>>;
+
+/// A session's ceiling applies on top of its seat's: the smaller one binds.
 pub fn transformer(
     budgets: BTreeMap<SeatId, u32>,
+    sessions: SessionResultBudgets,
     root: PathBuf,
     ledger: Arc<Mutex<Ledger>>,
 ) -> ResultTransformer {
     Arc::new(move |scope, tool, result| {
-        let Some(budget) = scope.seat.as_ref().and_then(|seat| budgets.get(seat)) else {
+        let seat = scope
+            .seat
+            .as_ref()
+            .and_then(|seat| budgets.get(seat))
+            .copied();
+        let session = match scope.session.as_ref() {
+            Some(session) => sessions
+                .lock()
+                .map_err(cannot("read the session's tool result budget"))?
+                .get(session)
+                .copied(),
+            None => None,
+        };
+        let Some(budget) = seat.into_iter().chain(session).min() else {
             return Ok(result);
         };
         let result = if tool == ARTIFACT_READ {
-            clamp_page(result, *budget)?
+            clamp_page(result, budget)?
         } else {
             result
         };
-        enforce(scope, result, *budget, &root, &ledger)
+        enforce(scope, result, budget, &root, &ledger)
     })
 }
 
@@ -103,6 +121,24 @@ fn clamp_page(mut page: Value, budget: u32) -> Result<Value, String> {
     Ok(page)
 }
 
+/// What `"head":` and its separating comma add to the reference beside the string itself.
+const HEAD_FIELD_BYTES: u64 = 8;
+
+/// The text a spilled result's head is cut from: its one long string when it has one (a page's
+/// markdown, a transcript), else the whole result as JSON.
+fn head_text(result: &Value) -> String {
+    result
+        .as_object()
+        .and_then(|fields| {
+            fields
+                .values()
+                .filter_map(Value::as_str)
+                .max_by_key(|text| text.len())
+        })
+        .filter(|text| text.len() * 2 >= json_size(result).unwrap_or(0) as usize)
+        .map_or_else(|| result.to_string(), str::to_owned)
+}
+
 /// The longest prefix of `text`, ending between characters, whose JSON string
 /// form (quotes and escapes included) fits in `room` bytes.
 fn fit_text(text: &str, room: u64) -> usize {
@@ -143,11 +179,46 @@ fn enforce(
     if size <= u64::from(budget) {
         return Ok(reattach_images(result, images));
     }
+    let artifact = spill(scope, &result, root, ledger)?;
+    let mut replacement = json!({
+        "artifact":artifact, "totalBytes":size, "spilled":true,
+        "mediaType":"application/json", "note":"head is the start of the result; the complete one pages with files {op: \"artifact\", artifactId, offset, limit}.",
+    });
+    // Transport acknowledgement still needs the existing delegation receipt
+    // identity after its large answer has moved out of the inline frame.
+    if result["status"] == "settled" {
+        for key in ["status", "session", "answer_key"] {
+            if let Some(value) = result.get(key).filter(|value| value.is_string()) {
+                replacement[key] = value.clone();
+            }
+        }
+    }
+    // The start of the answer rides inline, so a call that needed only its beginning (a page's
+    // first line, a quick check) is answered in this one call.
+    let text = head_text(&result);
+    let room = u64::from(budget).saturating_sub(json_size(&replacement)? + HEAD_FIELD_BYTES);
+    replacement["head"] = json!(&text[..fit_text(&text, room)]);
+    if json_size(&replacement)? > u64::from(budget) {
+        return Err(format!(
+            "tool_result_tokens={budget} cannot hold the spilled artifact reference {artifact}"
+        ));
+    }
+    Ok(reattach_images(replacement, images))
+}
+
+/// Stores `result` whole as a canonical artifact readable by the session's
+/// seat and project (`artifact.read` pages it back) and returns its id.
+pub(crate) fn spill(
+    scope: &Scope,
+    result: &Value,
+    root: &std::path::Path,
+    ledger: &Mutex<Ledger>,
+) -> Result<String, String> {
     let directory = root.join("tool-results");
     std::fs::create_dir_all(&directory).map_err(cannot("create the tool-results directory"))?;
     let mut staging =
         tempfile::NamedTempFile::new_in(&directory).map_err(cannot("stage the spilled result"))?;
-    serde_json::to_writer(staging.as_file_mut(), &result)
+    serde_json::to_writer(staging.as_file_mut(), result)
         .map_err(cannot("write the spilled result"))?;
     staging
         .as_file()
@@ -199,26 +270,7 @@ fn enforce(
             AttachReference::Added(metadata) | AttachReference::Existing(metadata) => metadata,
         };
     }
-    let mut replacement = json!({
-        "artifact":metadata.artifact_id.to_string(), "totalBytes":size, "spilled":true,
-        "mediaType":"application/json", "note":"Complete tool result; page it with files {op: \"artifact\", artifactId, offset, limit}.",
-    });
-    // Transport acknowledgement still needs the existing delegation receipt
-    // identity after its large answer has moved out of the inline frame.
-    if result["status"] == "settled" {
-        for key in ["status", "session", "answer_key"] {
-            if let Some(value) = result.get(key).filter(|value| value.is_string()) {
-                replacement[key] = value.clone();
-            }
-        }
-    }
-    if json_size(&replacement)? > u64::from(budget) {
-        return Err(format!(
-            "tool_result_tokens={budget} cannot hold the spilled artifact reference {}",
-            metadata.artifact_id
-        ));
-    }
-    Ok(reattach_images(replacement, images))
+    Ok(metadata.artifact_id.to_string())
 }
 
 /// Takes a result's `images` out for budgeting: an `images` array of image
@@ -283,6 +335,13 @@ mod tests {
         assert_eq!(spilled["status"], "settled");
         assert_eq!(spilled["session"], "child-session");
         assert_eq!(spilled["answer_key"], "receipt-key");
+        let head = spilled["head"].as_str().unwrap();
+        assert!(
+            head.starts_with("€😀€😀") && head.len() > 4000,
+            "{}",
+            head.len()
+        );
+        assert!(serde_json::to_vec(&spilled).unwrap().len() <= 6144);
         let id = odin_domain::ArtifactId::new(spilled["artifact"].as_str().unwrap()).unwrap();
         let metadata = ledger.lock().unwrap().artifact(&id).unwrap().unwrap();
         let bytes = std::fs::read(directory.path().join(metadata.storage_path)).unwrap();
@@ -307,6 +366,7 @@ mod tests {
         };
         let transform = transformer(
             BTreeMap::from([(SeatId::new("sinmara").unwrap(), 6144)]),
+            SessionResultBudgets::default(),
             directory.path().to_path_buf(),
             Arc::clone(&ledger),
         );
@@ -363,6 +423,7 @@ mod page_tests {
         let seat = SeatId::new("sinmara").unwrap();
         let transform = transformer(
             BTreeMap::from([(seat.clone(), BUDGET)]),
+            SessionResultBudgets::default(),
             directory.path().to_owned(),
             ledger,
         );
@@ -448,6 +509,3 @@ mod image_tests {
         assert_eq!(bytes.len() as u64, spilled["totalBytes"].as_u64().unwrap());
     }
 }
-
-#[cfg(test)]
-mod pod_tests {}

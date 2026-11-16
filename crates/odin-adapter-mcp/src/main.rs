@@ -16,9 +16,6 @@ use serde_json::{json, Value};
 /// Leave time to return before the host's 20-second probe timeout.
 const SESSION_BOUND: Duration = Duration::from_secs(15);
 
-/// Page navigation and a separate PDF fetch need longer than a status probe.
-const CALL_BOUND: Duration = Duration::from_secs(35);
-
 fn main() -> ExitCode {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
@@ -204,6 +201,19 @@ fn status(config: &BridgeConfig, request: &JsonRpcRequest) -> JsonRpcOutcome {
         ),
     }
 }
+/// Prepare the input passed to the configured backend.
+fn operation_input(
+    _config: &BridgeConfig,
+    request: &JsonRpcRequest,
+    _kind: &str,
+) -> Result<Value, &'static str> {
+    let input = request
+        .params
+        .get("input")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    Ok(input)
+}
 
 fn operate(config: &BridgeConfig, request: &JsonRpcRequest, kind: &str) -> JsonRpcOutcome {
     let Some(plan) = config.plan(kind) else {
@@ -214,18 +224,18 @@ fn operate(config: &BridgeConfig, request: &JsonRpcRequest, kind: &str) -> JsonR
             None,
         );
     };
-    let input = request
-        .params
-        .get("input")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let input = match operation_input(config, request, kind) {
+        Ok(input) => input,
+        Err(detail) => return failure(request, AdapterErrorCode::InvalidParams, detail, None),
+    };
     // A server may echo the document it was asked for on stderr; failures never carry the URL.
     let document = input.get("url").and_then(Value::as_str).unwrap_or_default();
-    let called =
-        McpSession::open_redacting(&config.server, CALL_BOUND, document).and_then(|mut session| {
+    let called = McpSession::open_redacting(&config.server, config.call_bound, document).and_then(
+        |mut session| {
             config.check_surface(&session.tools()?)?;
             session.call_plan(&plan, &input, config.rules(), Some(config))
-        });
+        },
+    );
     match called {
         Ok(result) => {
             note(&format!(
@@ -332,6 +342,7 @@ done
         std::fs::write(&path, script).expect("drifting server written");
         vec!["/bin/sh".to_owned(), path.to_string_lossy().into_owned()]
     }
+
 
     #[test]
     fn operate_refuses_a_drifted_surface_before_any_tool_call() {

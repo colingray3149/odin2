@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://odin.local/schemas/capability/knowledge.exile.input.json",
+  "title": "knowledge.exile input",
+  "properties": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "heading": {
+      "type": "string",
+      "maxLength": 200
+    }
+  },
+  "required": [
+    "path"
+  ]
+}

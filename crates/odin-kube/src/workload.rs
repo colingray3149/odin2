@@ -41,7 +41,9 @@ pub(crate) use egress::desired_egress_policy;
 use egress::{annotated_scope, declared_scope, inadmissible_gateway_addresses};
 pub use egress::{egress_rules, resolve_declared_hosts, resolve_hosts, ResolvedEgress};
 
+mod continuation;
 mod placement;
+pub use continuation::*;
 pub use placement::*;
 
 /// Shared by the staged provider config and the pod's SecretKeyRef environment entry.
@@ -152,6 +154,10 @@ pub struct WorkloadVpnTransportPlan {
     /// Absolute host lookup used for hostname pins. Absent with a hostname pin refuses launch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolver: Option<String>,
+    /// The address the authority forwards the endpoint to: a pod on the authority meets the
+    /// cluster's policy engine already forwarded, so its egress admits this address as well.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forwarded: Option<IpAddr>,
 }
 
 impl WorkloadVpnTransportPlan {
@@ -367,6 +373,12 @@ pub struct WorkloadPodPlan {
     /// `None` uses the cluster default, which need not support cross-node access.
     #[serde(default)]
     pub state_storage_class: Option<String>,
+    /// `false` when the profile declares `state.carry = false`: the state never leaves its node.
+    #[serde(
+        default = "carries_state",
+        skip_serializing_if = "carries_state_is_default"
+    )]
+    pub state_carry: bool,
     /// Site hosts allowed on HTTP/TLS/QUIC ports; excludes the gateway's separate port.
     /// A protected plan keeps these as tunnel pins and does not resolve them on the host.
     pub allow_hosts: Vec<String>,
@@ -401,6 +413,21 @@ pub struct WorkloadPodPlan {
     /// The worker container's declared reservation. Absent keeps the platform worker defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<WorkloadResources>,
+    /// Pod termination grace for every stop path; absent keeps the cluster default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub termination_grace_seconds: Option<u32>,
+    /// Read-only node-local directories; placement narrows to nodes declaring their roots.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data: Vec<WorkloadDataMount>,
+    /// How long the finished run is kept before reaping; absent keeps the platform default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_finished_seconds: Option<u32>,
+    /// What the run does when its node yields to its owner.
+    #[serde(default, skip_serializing_if = "odin_registry::OnYield::is_rehome")]
+    pub on_yield: odin_registry::OnYield,
+    /// The profile's control declaration as admitted: steers check against this copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<odin_registry::WorkloadControlToml>,
     /// A script pod's declared gateway lane. Absent unless `seat.gateway_lane` is set.
     /// Named apart from the flattened agent plan's `gateway`, which shares the JSON keys.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -410,18 +437,44 @@ pub struct WorkloadPodPlan {
     pub agent: Option<WorkloadAgentPlan>,
 }
 
+fn carries_state() -> bool {
+    true
+}
+
+fn carries_state_is_default(carry: &bool) -> bool {
+    *carry
+}
+
 /// The worker's declared CPU (whole cores) and memory (bytes) reservation.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WorkloadResources {
     pub cpu: u32,
     pub memory_bytes: u64,
+    /// Memory-backed `/dev/shm` size, charged inside `memory_bytes`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shm_bytes: Option<u64>,
 }
 
-/// A script pod's gateway lane: the same node gateway target and SecretKeyRef an
-/// agent pod receives, plus the lane name and the node's base URL.
+/// One declared read-only host directory and where the worker sees it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WorkloadDataMount {
+    pub name: String,
+    pub host_path: String,
+    pub pod_path: String,
+}
+
+/// A script pod's gateway: the same node gateway target and SecretKeyRef an
+/// agent pod receives, plus the node's base URL, the declared lane and the
+/// project's `[agents]` roles.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WorkloadScriptGateway {
-    pub lane: String,
+    /// The profile's `seat.gateway_lane`; absent when only the project's roles brought the gateway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<String>,
+    /// The project's `[agents]` role → lane pairs, exposed as `ODIN_GATEWAY_ROLES`
+    /// (`role=lane` joined by commas); the credential is then the project's own key.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub roles: BTreeMap<String, String>,
     /// The node's declared OpenAI-compatible base URL, exposed as `ODIN_GATEWAY_URL`.
     pub url: String,
     pub gateway: WorkloadGatewayTarget,
@@ -463,7 +516,8 @@ impl WorkloadPodPlan {
     }
 
     /// The container env a gateway-bearing pod receives. Agent pods get the key only;
-    /// script gateway lanes also get `ODIN_GATEWAY_URL` and `ODIN_GATEWAY_LANE`.
+    /// script pods also get `ODIN_GATEWAY_URL`, and `ODIN_GATEWAY_LANE` and
+    /// `ODIN_GATEWAY_ROLES` when declared.
     pub fn gateway_env(&self) -> Vec<EnvVar> {
         let credential = self.agent.as_ref().map(|agent| &agent.credential).or(self
             .script_gateway
@@ -491,7 +545,18 @@ impl WorkloadPodPlan {
         }
         if let Some(script) = &self.script_gateway {
             env.push(plain("ODIN_GATEWAY_URL", &script.url));
-            env.push(plain("ODIN_GATEWAY_LANE", &script.lane));
+            if let Some(lane) = &script.lane {
+                env.push(plain("ODIN_GATEWAY_LANE", lane));
+            }
+            if !script.roles.is_empty() {
+                let roles = script
+                    .roles
+                    .iter()
+                    .map(|(role, lane)| format!("{role}={lane}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                env.push(plain("ODIN_GATEWAY_ROLES", &roles));
+            }
         }
         env
     }
@@ -699,7 +764,19 @@ impl WorkloadPodPlan {
                     resources.cpu, resources.memory_bytes
                 ));
             }
+            if resources
+                .shm_bytes
+                .is_some_and(|shm| shm == 0 || shm >= resources.memory_bytes)
+            {
+                return Err(
+                    "workload shared memory must be nonzero and below its memory".to_owned(),
+                );
+            }
         }
+        if self.termination_grace_seconds == Some(0) {
+            return Err("workload stop grace must be at least one second".to_owned());
+        }
+        self.validate_data()?;
         if let Some(script) = &self.script_gateway {
             if self.agent.is_some() {
                 return Err(
@@ -708,8 +785,15 @@ impl WorkloadPodPlan {
                         .to_owned(),
                 );
             }
-            if script.lane.trim().is_empty() {
-                return Err("workload script gateway requires a nonempty lane".to_owned());
+            if script
+                .lane
+                .as_deref()
+                .is_some_and(|lane| lane.trim().is_empty())
+            {
+                return Err("workload script gateway lane is empty".to_owned());
+            }
+            if script.lane.is_none() && script.roles.is_empty() {
+                return Err("workload script gateway names neither a lane nor roles".to_owned());
             }
             script.gateway.validate()?;
             script.credential.validate()?;
@@ -733,6 +817,74 @@ impl WorkloadPodPlan {
         agent.credential.validate()
     }
 }
+
+impl WorkloadPodPlan {
+    // The same bounds the registry publishes, re-checked on replay.
+    fn validate_data(&self) -> Result<(), String> {
+        let mut taken = vec![self.state_mount.as_str(), self.export_mount.as_str()];
+        taken.extend(odin_registry::RESERVED_POD_PATHS);
+        taken.extend(
+            self.agent
+                .as_ref()
+                .and_then(|agent| agent.home_dir.as_deref()),
+        );
+        for (index, data) in self.data.iter().enumerate() {
+            if data.name.trim().is_empty() {
+                return Err("workload data mount requires a name".to_owned());
+            }
+            if !valid_pod_path(&data.host_path)
+                || odin_registry::FORBIDDEN_DATA_HOST_ROOTS
+                    .iter()
+                    .any(|root| std::path::Path::new(&data.host_path).starts_with(root))
+            {
+                return Err(format!(
+                    "workload data {:?} host path {:?} is not an allowed absolute host path",
+                    data.name, data.host_path
+                ));
+            }
+            if !valid_pod_path(&data.pod_path) {
+                return Err(format!(
+                    "workload data {:?} pod path {:?} is not a valid absolute in-pod path",
+                    data.name, data.pod_path
+                ));
+            }
+            let earlier = self.data[..index]
+                .iter()
+                .map(|other| other.pod_path.as_str());
+            if let Some(other) = taken
+                .iter()
+                .copied()
+                .chain(earlier)
+                .find(|other| paths_nest_or_collide(&data.pod_path, other))
+            {
+                return Err(format!(
+                    "workload data {:?} pod path {:?} collides or nests with {other:?}",
+                    data.name, data.pod_path
+                ));
+            }
+        }
+        // State, export and home may not sit in the memory-backed shared memory mount.
+        for path in [self.state_mount.as_str(), self.export_mount.as_str()]
+            .into_iter()
+            .chain(
+                self.agent
+                    .as_ref()
+                    .and_then(|agent| agent.home_dir.as_deref()),
+            )
+        {
+            if paths_nest_or_collide(SHM_MOUNT, path) {
+                return Err(format!(
+                    "workload mount {path:?} collides or nests with {SHM_MOUNT:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Where a declared `shm` is mounted on the worker.
+pub const SHM_MOUNT: &str = "/dev/shm";
+const SHM_VOLUME: &str = "odin-shm";
 
 const COMPANY_MAX_CHARS: usize = 80;
 
@@ -822,6 +974,41 @@ pub fn inject_pod_volumes(
         sub_path: Some(export_subfolder(run_id)),
         ..Default::default()
     });
+    if let Some(shm) = plan.resources.and_then(|resources| resources.shm_bytes) {
+        volumes.push(Volume {
+            name: SHM_VOLUME.to_owned(),
+            empty_dir: Some(EmptyDirVolumeSource {
+                medium: Some("Memory".to_owned()),
+                size_limit: Some(k8s_openapi::apimachinery::pkg::api::resource::Quantity(
+                    shm.to_string(),
+                )),
+            }),
+            ..Default::default()
+        });
+        mounts.push(VolumeMount {
+            name: SHM_VOLUME.to_owned(),
+            mount_path: SHM_MOUNT.to_owned(),
+            ..Default::default()
+        });
+    }
+    for data in &plan.data {
+        let name = format!("odin-data-{}", data.name);
+        volumes.push(Volume {
+            name: name.clone(),
+            host_path: Some(HostPathVolumeSource {
+                path: data.host_path.clone(),
+                type_: Some("Directory".to_owned()),
+            }),
+            ..Default::default()
+        });
+        mounts.push(VolumeMount {
+            name,
+            mount_path: data.pod_path.clone(),
+            read_only: Some(true),
+            recursive_read_only: Some("IfPossible".to_owned()),
+            ..Default::default()
+        });
+    }
 }
 
 /// The run's own folder under the declared export host folder: the run's
@@ -1115,9 +1302,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_stored_plan_without_the_new_fields_replays_unchanged() {
+        let plan = declared_plan();
+        let mut stored = serde_json::to_value(&plan).expect("plan json");
+        for key in ["termination_grace_seconds", "data"] {
+            assert!(stored.get(key).is_none(), "{key} is omitted when unset");
+        }
+        stored["resources"] = serde_json::json!({"cpu": 1, "memory_bytes": 1024});
+        let replayed: WorkloadPodPlan = serde_json::from_value(stored).expect("replay");
+        assert_eq!(replayed.resources.and_then(|r| r.shm_bytes), None);
+        assert_eq!(replayed.termination_grace_seconds, None);
+        assert!(replayed.data.is_empty());
+    }
+
     fn declared_plan() -> WorkloadPodPlan {
         let plan = WorkloadPodPlan {
             resources: None,
+            termination_grace_seconds: None,
+            data: Vec::new(),
+            control: None,
+            keep_finished_seconds: None,
+            on_yield: Default::default(),
             script_gateway: None,
             profile: "continuity-fixture".to_owned(),
             state_mount: "/state".to_owned(),
@@ -1125,6 +1331,7 @@ mod tests {
             export_host_folder: "/srv/odin/export".to_owned(),
             state_storage: "2Gi".to_owned(),
             state_storage_class: None,
+            state_carry: true,
             allow_hosts: vec!["example.com".to_owned()],
             network_open: false,
             transport: odin_registry::WorkloadTransport::Direct,
@@ -1179,7 +1386,14 @@ mod tests {
         assert!(
             refused_with(|plan| plan.state_storage_class = Some("Bad_Class".to_owned())).is_some()
         );
-        for home in ["/state/home", "/export", "/export/home", BROWSER_SOCKET_DIR] {
+        for home in [
+            "/state/home",
+            "/export",
+            "/export/home",
+            BROWSER_SOCKET_DIR,
+            "/dev/shm",
+            "/dev/shm/agent",
+        ] {
             assert!(
                 refused_with(|plan| agent_of(plan).home_dir = Some(home.to_owned())).is_some(),
                 "home {home} collides with a mount"
@@ -1223,6 +1437,7 @@ mod tests {
 
     fn resolved_egress() -> ResolvedEgress {
         ResolvedEgress {
+            deny_ingress: false,
             sites: BTreeMap::from([(
                 "example.com".to_owned(),
                 BTreeSet::from(["93.184.216.34".parse::<IpAddr>().expect("ip")]),

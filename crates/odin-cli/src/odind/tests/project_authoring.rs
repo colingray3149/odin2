@@ -133,6 +133,54 @@ fn real_registry_with_lender(narrow_lender: bool) -> RealRegistry {
     }
 }
 
+#[test]
+fn seat_model_noop_uses_synced_declaration_without_publication() {
+    use crate::test_support::{commit_all, git};
+    let real = real_registry();
+    let seat = real.repository.join("registry/seats/sinmara/seat.toml");
+    let original = std::fs::read_to_string(&seat).unwrap();
+    let declaration: toml::Table = toml::from_str(&original).unwrap();
+    let models = declaration["models"].as_array().unwrap();
+    let lead = models[0].as_str().unwrap();
+    let other = models
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .find(|model| *model != lead && !model.ends_with("/*"))
+        .unwrap();
+    let (other_provider, other_model) = other.split_once('/').unwrap();
+    let (lead_provider, lead_model) = lead.split_once('/').unwrap();
+    let changed = crate::seat_model::models_led_by(&original, other).unwrap();
+    std::fs::write(&seat, changed).unwrap();
+    commit_all(&real.repository, "change declared model externally");
+    git(&real.repository, &["push", "--quiet", "origin", "main"]);
+    let head = git(&real.origin, &["rev-parse", "main"]);
+
+    real.route
+        .declare_seat_model("sinmara", other_provider, other_model, "test")
+        .unwrap();
+    assert_eq!(git(&real.origin, &["rev-parse", "main"]), head);
+    assert_eq!(
+        odin_registry::SnapshotStore::new(&real.store)
+            .load_verified()
+            .unwrap()
+            .revision,
+        1
+    );
+
+    // The pinned snapshot still has the original lead; the synced source wins.
+    real.route
+        .declare_seat_model("sinmara", lead_provider, lead_model, "test")
+        .unwrap();
+    assert_ne!(git(&real.origin, &["rev-parse", "main"]), head);
+    assert_eq!(
+        odin_registry::SnapshotStore::new(&real.store)
+            .load_verified()
+            .unwrap()
+            .revision,
+        2
+    );
+}
+
 fn request(project: &str, seats: &[&str]) -> odin_hermes::runtime::projects::ProjectCreateRequest {
     odin_hermes::runtime::projects::ProjectCreateRequest {
         project: project.to_owned(),
@@ -162,6 +210,7 @@ fn a_seat_declares_replaces_and_removes_its_own_routine_and_no_one_elses() {
         matches: None,
         lead_minutes: None,
         account: None,
+        project: None,
         action: "brief".to_owned(),
         text: text.to_owned(),
     };
@@ -629,7 +678,7 @@ fn the_coordinator_authors_a_lane_a_pod_watchdog_and_an_environment() {
         "new-lane",
         "rig-authoring-fixture",
         "enabled = true\ndescription = \"reginn work on rig\"\nproject = \"rig\"\n\
-         family = \"engine\"\ndefault_seat = \"reginn\"\nqueue = \"interactive\"\n\
+         default_seat = \"reginn\"\n\
          independent_review = false\n",
     )
     .expect("the lane is authored");
@@ -714,16 +763,16 @@ watchdogs = [{ id = "existing-alert", condition = "residual > 1e-2", consecutive
     let unknown_project = author(
         "new-lane",
         "reginn-nowhere",
-        "enabled = true\ndescription = \"x\"\nproject = \"nowhere\"\nfamily = \"engine\"\n\
-         default_seat = \"reginn\"\nqueue = \"interactive\"\nindependent_review = false\n",
+        "enabled = true\ndescription = \"x\"\nproject = \"nowhere\"\n\
+         default_seat = \"reginn\"\nindependent_review = false\n",
     )
     .unwrap_err();
     assert!(unknown_project.contains("nowhere"), "{unknown_project}");
     let untyped = author(
         "new-lane",
         "reginn-x",
-        "enabled = \"yes\"\ndescription = \"x\"\nproject = \"rig\"\nfamily = \"engine\"\n\
-         default_seat = \"reginn\"\nqueue = \"interactive\"\nindependent_review = false\n",
+        "enabled = \"yes\"\ndescription = \"x\"\nproject = \"rig\"\n\
+         default_seat = \"reginn\"\nindependent_review = false\n",
     )
     .unwrap_err();
     assert!(untyped.contains("enabled"), "{untyped}");
@@ -867,12 +916,12 @@ fn a_publication_carries_only_its_own_change_when_main_is_ahead() {
     // Another worker pushes a registry edit; no deploy publishes it.
     let capability = real
         .repository
-        .join("registry/capabilities/brain.search/capability.toml");
+        .join("registry/capabilities/task.note/capability.toml");
     let text = std::fs::read_to_string(&capability).expect("capability");
     let edited = text.replacen("description = \"", "description = \"Unreleased. ", 1);
     assert_ne!(edited, text, "the fixture edit applies");
     std::fs::write(&capability, edited).expect("edit");
-    commit_all(&real.repository, "brain.search (unreleased)");
+    commit_all(&real.repository, "task.note (unreleased)");
     git(&real.repository, &["push", "--quiet", "origin", "main"]);
     let before = git(&real.origin, &["rev-parse", "main"]);
     let hook = real.origin.join("hooks/pre-receive");
@@ -965,7 +1014,7 @@ fn a_publication_carries_only_its_own_change_when_main_is_ahead() {
         &real.origin,
         &[
             "show",
-            &format!("{main}:registry/capabilities/brain.search/capability.toml"),
+            &format!("{main}:registry/capabilities/task.note/capability.toml"),
         ],
     );
     assert!(on_main.contains("Unreleased."), "main keeps the other edit");
@@ -975,7 +1024,7 @@ fn a_publication_carries_only_its_own_change_when_main_is_ahead() {
             &real.origin,
             &[
                 "show",
-                &format!("{before}:registry/capabilities/brain.search/capability.toml")
+                &format!("{before}:registry/capabilities/task.note/capability.toml")
             ]
         ),
         "main retains the exact unpublished capability bytes"
@@ -1028,7 +1077,7 @@ fn a_publication_carries_only_its_own_change_when_main_is_ahead() {
             &real.origin,
             &[
                 "show",
-                &format!("{removed_main}:registry/capabilities/brain.search/capability.toml")
+                &format!("{removed_main}:registry/capabilities/task.note/capability.toml")
             ]
         ),
         on_main,
@@ -1311,4 +1360,165 @@ fn synced_authority_changes_cannot_publish_a_helpers_stale_plan() {
             crate::project_authoring::ReloadDecision::CompositionUnchanged(_)
         ));
     }
+}
+
+#[test]
+fn the_coordinator_edits_a_lane_limit_and_a_seat_scope_in_place() {
+    use crate::test_support::git;
+    use odin_hermes::runtime::registry_author::{EditRequest, RegistryAuthorRoute};
+    let real = real_registry();
+    let sinmara: odin_domain::SeatId = "sinmara".parse().unwrap();
+    let edit =
+        |kind: &str, id: &str, set: Vec<(&str, serde_json::Value)>, add: Vec<(&str, &str)>| {
+            real.route.edit(
+                &sinmara,
+                EditRequest {
+                    kind: kind.to_owned(),
+                    id: id.to_owned(),
+                    operation: None,
+                    declaration: None,
+                    set: set.into_iter().map(|(k, v)| (k.to_owned(), v)).collect(),
+                    add: add
+                        .into_iter()
+                        .map(|(k, item)| (k.to_owned(), vec![item.to_owned()]))
+                        .collect(),
+                    remove: Vec::new(),
+                    unset: Vec::new(),
+                    expected: Vec::new(),
+                    personal: false,
+                    reason: "fixture".to_owned(),
+                    approval: Some("approval:fixture".to_owned()),
+                },
+            )
+        };
+    let declaration: toml::Value = toml::from_str(&git(
+        &real.origin,
+        &["show", "main:registry/lanes/kubert-odin/lane.toml"],
+    ))
+    .unwrap();
+    let changed_pods = declaration
+        .get("limits")
+        .and_then(|limits| limits.get("pods"))
+        .and_then(toml::Value::as_integer)
+        .unwrap_or(0)
+        + 1;
+    let lane = edit(
+        "lane",
+        "kubert-odin",
+        vec![("limits.pods", changed_pods.into())],
+        vec![],
+    )
+    .expect("a lane limit is edited");
+    assert_eq!(lane.path, "registry/lanes/kubert-odin/lane.toml");
+    assert_eq!(lane.published_revision, 2);
+    assert!(
+        lane.diff.contains(&format!("+pods = {changed_pods}")),
+        "{}",
+        lane.diff
+    );
+    assert_eq!(lane.commit, git(&real.origin, &["rev-parse", "main"]));
+
+    let seat = edit(
+        "seat",
+        "scribe",
+        vec![],
+        vec![("read_project_scope", "odin")],
+    )
+    .expect("a seat scope gains a project");
+    assert_eq!(seat.published_revision, 3);
+
+    // A change the whole registry refuses is never pushed.
+    let refused = edit(
+        "seat",
+        "scribe",
+        vec![],
+        vec![("read_project_scope", "no-such-project")],
+    )
+    .unwrap_err();
+    assert!(refused.contains("does not validate"), "{refused}");
+    assert_eq!(seat.commit, git(&real.origin, &["rev-parse", "main"]));
+}
+
+#[test]
+fn seat_lifecycle_binds_the_complete_declaration_and_validates_the_candidate() {
+    use crate::test_support::git;
+    use odin_hermes::runtime::approval_card::{ApprovalCardSource, CardChange};
+    use odin_hermes::runtime::registry_author::{
+        admit_edit, edit_request, AuthorTier, RegistryAuthorRoute,
+    };
+    use serde_json::json;
+    use std::sync::Arc;
+
+    let real = real_registry();
+    let declaration =
+        std::fs::read_to_string(real.repository.join("registry/seats/scribe/seat.toml"))
+            .unwrap()
+            .replacen(
+                "kind = \"seat\"",
+                "kind = \"seat\"\nslice = \"gungnir-build\"",
+                1,
+            );
+    let caller: odin_domain::SeatId = "sinmara".parse().unwrap();
+    let route = Arc::new(real.route);
+    let card = crate::registry_edit::EditCard(Arc::clone(&route));
+    let unbound = json!({
+        "kind": "seat", "id": "scribe", "reason": "fixture",
+        "add": {"read_project_scope": ["example-project"]}, "expected": {}
+    });
+    assert!(card
+        .card(&unbound)
+        .unwrap_err()
+        .contains("expected must include the current value of read_project_scope"));
+    let args = |operation: &str, text: &str| {
+        json!({
+            "kind": "seat", "id": "lifecycle-fixture", "operation": operation,
+            "declaration": text, "reason": "fixture"
+        })
+    };
+    let create = args("create", &declaration);
+    let request = edit_request(&create).unwrap();
+    assert!(admit_edit(AuthorTier::Open, &request).is_err());
+    admit_edit(AuthorTier::Grant, &request).unwrap();
+    let preview = card.card(&create).unwrap();
+    assert!(preview.rows.iter().any(|row| matches!(&row.change,
+        CardChange::Set { old: None, new } if new == &declaration)));
+
+    let before = git(&real.origin, &["rev-parse", "main"]);
+    let invalid = declaration.replace("\"registry.read\"", "\"nonexistent.capability\"");
+    let invalid_request = edit_request(&args("create", &invalid)).unwrap();
+    assert!(route.edit(&caller, invalid_request).is_err());
+    assert_eq!(git(&real.origin, &["rev-parse", "main"]), before);
+
+    let created = route.edit(&caller, request).unwrap();
+    let active = odin_registry::SnapshotStore::new(&real.store)
+        .load_verified()
+        .unwrap();
+    let candidate =
+        super::super::projection::future_brain_config(&route.admission_config, &active.objects)
+            .unwrap();
+    assert!(candidate
+        .seats
+        .iter()
+        .any(|binding| binding.seat.as_str() == "lifecycle-fixture"
+            && binding.runtime
+            && binding.slice.as_str() == "gungnir-build"));
+    assert_eq!(created.path, "registry/seats/lifecycle-fixture/seat.toml");
+    assert_eq!(created.published_revision, 2);
+    assert!(route.edit(&caller, edit_request(&create).unwrap()).is_err());
+    let delete = args("delete", &declaration);
+    let preview = card.card(&delete).unwrap();
+    assert!(preview.rows.iter().any(|row| matches!(&row.change,
+        CardChange::Remove(old) if old == &declaration)));
+    let stale = args("delete", &(declaration.clone() + "# stale\n"));
+    assert!(card.card(&stale).is_err());
+    assert!(route.edit(&caller, edit_request(&stale).unwrap()).is_err());
+    let whitespace_stale = args("delete", declaration.trim_end());
+    assert!(card.card(&whitespace_stale).is_err());
+    assert!(route
+        .edit(&caller, edit_request(&whitespace_stale).unwrap())
+        .is_err());
+    assert_eq!(git(&real.origin, &["rev-parse", "main"]), created.commit);
+    let deleted = route.edit(&caller, edit_request(&delete).unwrap()).unwrap();
+    assert_eq!(deleted.published_revision, 3);
+    assert_eq!(git(&real.origin, &["rev-parse", "main"]), deleted.commit);
 }

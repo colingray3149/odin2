@@ -1,15 +1,14 @@
 //! The kernel's workload watch: a code-only cycle over the kube read model
 //! that turns Odin-owned workload state into findings — finished, failed,
-//! crash-looping — and routes each finding once to the seat session that
-//! launched the workload (the declared monitor of its own work). A settled
+//! crash-looping — and routes each finding once to its project's standing
+//! workload owner when declared, otherwise to the launching session. A settled
 //! agent pod's finished/failed outcome is withheld: the pod-report pump
-//! delivers the pod's answer (or its failure) once and releases the Job,
-//! so a finding here would only invite the launcher to poll. Script pods
-//! and every crash-loop still reach the seat. That seat decides; its answer
-//! climbs to the conversation through the delegated report path. Healthy
-//! workloads cost no model call at all.
+//! delivers the pod's answer (or its failure) once and releases the Job.
+//! Script pods and every crash-loop still reach the responsible seat.
+//! Healthy workloads cost no model call at all.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
@@ -33,6 +32,256 @@ const REPORT_WINDOW: time::Duration = time::Duration::minutes(15);
 /// The most of a finished pod's output kept as its artifact.
 const MAX_OUTPUT_BYTES: i64 = 1024 * 1024;
 
+#[derive(Clone, Copy)]
+struct WatchPolicy {
+    tick: StdDuration,
+    crash_loop_restarts: u32,
+    report_window: time::Duration,
+    max_output_bytes: i64,
+}
+
+impl Default for WatchPolicy {
+    fn default() -> Self {
+        Self {
+            tick: WATCH_TICK,
+            crash_loop_restarts: CRASH_LOOP_RESTARTS,
+            report_window: REPORT_WINDOW,
+            max_output_bytes: MAX_OUTPUT_BYTES,
+        }
+    }
+}
+
+fn watch_policy(runtime: &odin_hermes::runtime::HermesRuntime) -> WatchPolicy {
+    let declared = runtime.registry_pin().and_then(|pin| {
+        pin.current()
+            .objects
+            .iter()
+            .find_map(|object| match &object.config {
+                odin_registry::ObjectConfig::Node(node)
+                    if node.enabled && node.authoritative_state =>
+                {
+                    node.workload_watch
+                }
+                _ => None,
+            })
+    });
+    policy_from_declaration(declared)
+}
+
+fn policy_from_declaration(
+    declared: Option<odin_registry::schema::WorkloadWatchToml>,
+) -> WatchPolicy {
+    let mut policy = WatchPolicy::default();
+    if let Some(declared) = declared {
+        if let Some(value) = declared.tick_seconds {
+            policy.tick = StdDuration::from_secs(value.get().into());
+        }
+        if let Some(value) = declared.crash_loop_restarts {
+            policy.crash_loop_restarts = value.get();
+        }
+        if let Some(value) = declared.report_window_seconds {
+            policy.report_window = time::Duration::seconds(value.get().into());
+        }
+        if let Some(value) = declared.max_output_bytes {
+            policy.max_output_bytes = value.get().into();
+        }
+    }
+    policy
+}
+
+/// The daemon's authority and brain bindings for opening a project owner.
+/// Serializing wake-or-open prevents concurrent findings from creating two
+/// standing sessions for the same project.
+struct OwnerOpener {
+    config: odin_huginn::OdindConfig,
+    brains: BTreeMap<SeatId, Arc<odin_brain::service::BrainService>>,
+    lock: tokio::sync::Mutex<()>,
+}
+
+static OWNER_OPENER: std::sync::OnceLock<OwnerOpener> = std::sync::OnceLock::new();
+
+pub(super) fn install_owner_opener(
+    config: odin_huginn::OdindConfig,
+    brains: BTreeMap<SeatId, Arc<odin_brain::service::BrainService>>,
+) {
+    let _ = OWNER_OPENER.set(OwnerOpener {
+        config,
+        brains,
+        lock: tokio::sync::Mutex::new(()),
+    });
+}
+
+fn owner_brief(
+    project: &odin_domain::ProjectId,
+    gathered: odin_brain::service::fresh_sources::FreshKnowledge,
+    policy: &odin_omp::live::rollover::RolloverPolicy,
+) -> Result<String, String> {
+    use odin_omp::live::rollover::{
+        FreshBriefMemory, FreshBriefNote, FreshBriefRepo, FreshBriefSources,
+    };
+    let sources = FreshBriefSources {
+        notes: gathered
+            .notes
+            .into_iter()
+            .map(|n| FreshBriefNote {
+                task: n.task,
+                seat: n.seat,
+                noted_at: n.noted_at,
+                note: n.note,
+            })
+            .collect(),
+        project_memory: gathered
+            .project_memory
+            .into_iter()
+            .map(|m| FreshBriefMemory {
+                source: m.source,
+                text: m.text,
+            })
+            .collect(),
+        repos: gathered
+            .repos
+            .into_iter()
+            .map(|r| FreshBriefRepo {
+                project: r.project,
+                summary: r.summary,
+            })
+            .collect(),
+        reason: format!(
+            "standing workload owner for {project}; sources unavailable: {}",
+            gathered.unavailable.join("; ")
+        ),
+        owner_text: String::new(),
+    };
+    let (_, brief) = odin_omp::live::rollover::render_fresh_brief(&sources, policy)?;
+    String::from_utf8(brief).map_err(|error| error.to_string())
+}
+
+/// A failed wake is not evidence that no session exists: only an explicit
+/// `false` may open another owner.
+async fn wake_or_open<W, O, WF, OF>(wake: W, open: O) -> Result<(), String>
+where
+    W: FnOnce() -> WF,
+    O: FnOnce() -> OF,
+    WF: Future<Output = Result<bool, String>>,
+    OF: Future<Output = Result<(), String>>,
+{
+    if !wake().await? {
+        open().await?;
+    }
+    Ok(())
+}
+
+async fn wake_or_open_owner(
+    live: &odin_omp::live::service::OmpLiveService,
+    seat: &SeatId,
+    project: &odin_domain::ProjectId,
+    id: &str,
+    text: &str,
+) -> Result<(), String> {
+    let opener = OWNER_OPENER
+        .get()
+        .ok_or("workload owner opener unavailable")?;
+    let _guard = opener.lock.lock().await;
+    let route = odin_omp::live::service::WakeRoute::Project(project.clone());
+    wake_or_open(
+        || async {
+            live.wake_seat(seat, id, text, Some(&route))
+                .await
+                .map_err(|error| error.to_string())
+        },
+        || open_owner(opener, live, seat, project, text),
+    )
+    .await
+}
+
+async fn open_owner(
+    opener: &OwnerOpener,
+    live: &odin_omp::live::service::OmpLiveService,
+    seat: &SeatId,
+    project: &odin_domain::ProjectId,
+    text: &str,
+) -> Result<(), String> {
+    use odin_domain::huginn::{LiveContentBlock, LiveMessage, OmpLivePlane, OpenSessionRequest};
+    let binding = opener
+        .config
+        .seats
+        .iter()
+        .find(|binding| binding.seat == *seat)
+        .ok_or_else(|| format!("workload owner {seat} has no seat binding"))?;
+    let launch = binding
+        .launch_options
+        .first()
+        .ok_or_else(|| format!("workload owner {seat} has no launch option"))?;
+    let brain = opener
+        .brains
+        .get(seat)
+        .ok_or_else(|| format!("workload owner {seat} has no brain"))?;
+    let gathered = brain
+        .fresh_knowledge(Some(project))
+        .map_err(|error| error.to_string())?;
+    let command = odin_domain::CommandId::new(format!("workload-owner:{}", uuid::Uuid::new_v4()))
+        .map_err(|e| e.to_string())?;
+    let composition = odin_cli::authority_provision::compose(
+        &opener.config,
+        seat.as_str(),
+        project.as_str(),
+        &command,
+        odin_cli::authority_provision::LaunchSelection::new(
+            launch.provider.as_str(),
+            launch.model.as_str(),
+        ),
+    )?;
+    let (snapshot, _) = odin_registry::SnapshotStore::new(&opener.config.paths.registry_snapshot)
+        .publication_at(composition.snapshot_revision)
+        .map_err(|error| format!("workload owner publication unavailable: {error}"))?;
+    let owns_workloads = snapshot.objects.iter().any(|object| {
+        object.id == composition.lane.as_str()
+            && matches!(&object.config, odin_registry::ObjectConfig::Lane(lane)
+                if lane.enabled && lane.owns_workloads && lane.project == *project && lane.default_seat == *seat)
+    });
+    if !owns_workloads {
+        return Err(format!(
+            "workload owner {seat} project {project} composes lane {}, not its owned lane",
+            composition.lane
+        ));
+    }
+    let inputs =
+        odin_cli::runtime_bindings::RuntimeInputs::parse(&opener.config, &snapshot.objects)?;
+    let policy = inputs
+        .rollover_seats
+        .get(seat)
+        .map(|declared| declared.policy())
+        .unwrap_or_else(|| odin_omp::live::rollover::RolloverPolicy {
+            max_brief_bytes: odin_registry::schema::SeatRolloverToml::default().max_brief_bytes,
+            ..Default::default()
+        });
+    let brief = owner_brief(project, gathered, &policy)?;
+    odin_cli::authority_provision::mint_for_child_session(
+        &opener.config,
+        &composition,
+        odin_cli::authority_provision::DEFAULT_TOKEN_TTL_SECONDS,
+    )?;
+    live.open_session(OpenSessionRequest {
+        command_id: command,
+        seat_id: composition.seat,
+        project_id: composition.project,
+        slice_id: composition.slice,
+        provider: launch.provider.clone(),
+        model: launch.model.clone(),
+        title: Some(format!("workload owner {project}")),
+        target_node: odin_domain::NodeId::new(&opener.config.identity.node).map_err(|e| e.to_string())?,
+        open_tab: false,
+        initial_prompt: Some(LiveMessage {
+            content: vec![LiveContentBlock::Text(format!(
+                "You are the standing workload owner for project {project}. Use this project context to handle the finding.\n\n{brief}\n\n{text}"
+            ))],
+        }),
+        workload: None,
+        served_revision: Some(composition.snapshot_revision),
+    }).await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Finding {
     /// Stable identity: the workload uid plus the finding kind.
@@ -42,25 +291,41 @@ pub(crate) struct Finding {
     /// Who raised it, in the line that tells the seat this is not the owner speaking.
     pub(crate) source: &'static str,
     pub(crate) text: String,
+    /// The workload's lane: its project's `owns_workloads` lane takes the
+    /// finding first, and `<watch>:<project>` seats hear it.
+    pub(crate) lane: Option<odin_domain::LaneId>,
 }
 
 /// Agent terminal outcomes belong to the pod-report pump; crash loops do not.
-pub(super) fn findings(
+#[cfg(test)]
+fn findings(
     views: &[KubeWorkloadView],
     now: time::OffsetDateTime,
+    is_agent_run: impl FnMut(&odin_domain::RunId) -> bool,
+) -> Vec<Finding> {
+    findings_with_policy(views, now, &WatchPolicy::default(), is_agent_run)
+}
+
+fn findings_with_policy(
+    views: &[KubeWorkloadView],
+    now: time::OffsetDateTime,
+    policy: &WatchPolicy,
     mut is_agent_run: impl FnMut(&odin_domain::RunId) -> bool,
 ) -> Vec<Finding> {
     let mut found = Vec::new();
     for view in views {
         let KubeResourceOwnership::Odin {
-            run_id, seat_id, ..
+            run_id,
+            seat_id,
+            lane_id,
+            ..
         } = &view.ownership
         else {
             continue;
         };
         let recent = view
             .finished_at
-            .is_none_or(|finished| now - finished <= REPORT_WINDOW);
+            .is_none_or(|finished| now - finished <= policy.report_window);
         let restarts = view
             .containers
             .iter()
@@ -75,7 +340,7 @@ pub(super) fn findings(
             KubeWorkloadState::Failed if recent => {
                 ("failed", format!("workload {} FAILED", view.resource.name))
             }
-            KubeWorkloadState::Running if restarts >= CRASH_LOOP_RESTARTS => (
+            KubeWorkloadState::Running if restarts >= policy.crash_loop_restarts => (
                 "crash-loop",
                 format!(
                     "workload {} is crash-looping ({restarts} restarts)",
@@ -99,6 +364,7 @@ pub(super) fn findings(
                  tools, act within your declared capabilities if something is wrong, and report \
                  the outcome plainly."
             ),
+            lane: Some(lane_id.clone()),
         });
     }
     found
@@ -106,10 +372,11 @@ pub(super) fn findings(
 
 /// Odin pods that finished within the report window, with the routine
 /// event each outcome is and when it happened.
-fn outcomes(
-    views: &[KubeWorkloadView],
+fn outcomes<'a>(
+    views: &'a [KubeWorkloadView],
     now: time::OffsetDateTime,
-) -> Vec<(RoutineEvent, &KubeWorkloadView, time::OffsetDateTime)> {
+    policy: &WatchPolicy,
+) -> Vec<(RoutineEvent, &'a KubeWorkloadView, time::OffsetDateTime)> {
     views
         .iter()
         .filter(|view| matches!(view.ownership, KubeResourceOwnership::Odin { .. }))
@@ -120,7 +387,7 @@ fn outcomes(
                 _ => return None,
             };
             let finished = view.finished_at?;
-            (now - finished <= REPORT_WINDOW).then_some((event, view, finished))
+            (now - finished <= policy.report_window).then_some((event, view, finished))
         })
         .collect()
 }
@@ -143,6 +410,7 @@ async fn capture_output(
     state_root: &std::path::Path,
     view: &KubeWorkloadView,
     conversation_seat: &SeatId,
+    max_output_bytes: i64,
 ) -> PodOutput {
     let KubeResourceOwnership::Odin {
         seat_id, run_id, ..
@@ -200,7 +468,7 @@ async fn capture_output(
                     .containers
                     .first()
                     .map(|container| container.name.clone()),
-                limit_bytes: Some(MAX_OUTPUT_BYTES),
+                limit_bytes: Some(max_output_bytes),
                 ..LogParams::default()
             },
         )
@@ -461,11 +729,10 @@ fn exports_clause(artifact: Option<&str>) -> String {
     })
 }
 
-/// Arms the watch: each finding is delivered once to the launching seat's
-/// session; when that session is gone, the conversation seat is woken with
-/// it instead so nothing is silently dropped. A finished pod's output is
-/// kept as an artifact first, and both the finding and the routine event
-/// name it.
+/// Arms the watch: owned-project findings go to their standing owner; other
+/// findings go to the launching session or the conversation seat. A finished
+/// pod's output is kept as an artifact first, and both the finding and the
+/// routine event name it.
 pub(super) fn arm_workload_watch(
     pumps: &mut tokio::task::JoinSet<Result<(), String>>,
     read_model: Arc<odin_huginn::read_model::MaterializedReadModel>,
@@ -476,8 +743,6 @@ pub(super) fn arm_workload_watch(
     conversation_seat: SeatId,
 ) {
     pumps.spawn(async move {
-        let mut ticker = tokio::time::interval(WATCH_TICK);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut delivered: BTreeSet<String> = BTreeSet::new();
         let mut routed: BTreeSet<String> = BTreeSet::new();
         let mut outputs: BTreeMap<String, String> = BTreeMap::new();
@@ -486,26 +751,51 @@ pub(super) fn arm_workload_watch(
         // pump: the stored launch is read once, then answered from here
         // (a stored launch never changes once admitted).
         let mut deferred: BTreeSet<String> = BTreeSet::new();
+        // The views parsed at the kube objects' last change: an idle tick
+        // reuses them and only re-judges them against the clock.
+        let mut views: Vec<KubeWorkloadView> = Vec::new();
+        let mut views_revision = None;
+        let mut first = true;
         loop {
-            ticker.tick().await;
-            let Ok(capture) = read_model.capture_kinds(&[ObjectKind::KubeResource]) else {
+            if first {
+                first = false;
+            } else {
+                tokio::time::sleep(watch_policy(&runtime).tick).await;
+            }
+            let policy = watch_policy(&runtime);
+            let Ok(revision) = read_model.kinds_revision(&[ObjectKind::KubeResource]) else {
                 continue;
             };
-            let views: Vec<KubeWorkloadView> = capture
-                .objects
-                .iter()
-                .filter_map(|object| serde_json::from_value(object.value.clone()).ok())
-                .collect();
+            if views_revision != Some(revision) {
+                let Ok(capture) = read_model.capture_kinds(&[ObjectKind::KubeResource]) else {
+                    continue;
+                };
+                views = capture
+                    .objects
+                    .iter()
+                    .filter_map(|object| serde_json::from_value(object.value.clone()).ok())
+                    .collect();
+                views_revision = Some(revision);
+            }
             let now = time::OffsetDateTime::now_utc();
             nodes.observe(&views);
             runtime.set_running_jobs(running_agent_pods(&views, kube.as_deref()));
             // Routines that follow pod outcomes.
-            for (event, view, finished) in outcomes(&views, now) {
+            for (event, view, finished) in outcomes(&views, now, &policy) {
                 if !routed.insert(view.resource.uid.clone()) {
                     continue;
                 }
                 let output = match &kube {
-                    Some(cell) => capture_output(cell, &state_root, view, &conversation_seat).await,
+                    Some(cell) => {
+                        capture_output(
+                            cell,
+                            &state_root,
+                            view,
+                            &conversation_seat,
+                            policy.max_output_bytes,
+                        )
+                        .await
+                    }
                     None => PodOutput::default(),
                 };
                 let exports = match &kube {
@@ -571,7 +861,7 @@ pub(super) fn arm_workload_watch(
                     Err(error) => tracing::error!("routine event not queued: {error}"),
                 }
             }
-            for mut finding in findings(&views, now, |run_id| {
+            for mut finding in findings_with_policy(&views, now, &policy, |run_id| {
                 if deferred.contains(run_id.as_str()) {
                     return true;
                 }
@@ -653,9 +943,9 @@ fn running_agent_pods(
         .collect()
 }
 
-/// Delivers one finding once: to the launching seat's live session, or —
-/// when that session is gone — as a conversation wake, so nothing is
-/// silently dropped. Returns the finding key.
+/// Delivers a finding to its project's workload owner when one is declared;
+/// otherwise it goes to the launching session or the conversation seat.
+/// Returns the finding key only after delivery succeeds.
 pub(crate) async fn route_finding(
     owner: &Arc<odin_omp::host_tools::delegation::GovernedTaskOwner>,
     runtime: &Arc<odin_hermes::runtime::HermesRuntime>,
@@ -670,36 +960,52 @@ pub(crate) async fn route_finding(
         ),
         ..finding
     };
+    let (project, owning_seat) = finding
+        .lane
+        .as_ref()
+        .map_or((None, None), |lane| runtime.workload_owner(lane));
     let (key, text) = (finding.key.clone(), finding.text.clone());
-    let owner = Arc::clone(owner);
-    let wake_runtime = Arc::clone(runtime);
-    tokio::task::spawn_blocking(move || {
-        let to_seat = finding
-            .session
-            .map(|session| owner.notify_child(session, &finding.text));
-        match to_seat {
-            Some(Ok(())) => Ok(finding.key),
-            _ => {
-                let (workload, kind) = finding.key.rsplit_once(':').unwrap_or((&finding.key, ""));
-                wake_runtime
-                    .wake_event(
-                        &format!("workload-{}", finding.key),
-                        &finding.text,
-                        &format!("workload:{workload}"),
-                        kind,
-                    )
-                    .map(|_| finding.key)
+    if let (Some(project), Some(seat)) = (&project, &owning_seat) {
+        let live = odin_omp::live::service::OmpLiveService::installed()
+            .ok_or_else(|| format!("live service unavailable for workload owner {seat}"))?;
+        wake_or_open_owner(&live, seat, project, &format!("workload-{key}"), &text)
+            .await
+            .map_err(|error| format!("owned-lane finding for {seat} not delivered: {error}"))?;
+    } else {
+        let owner = Arc::clone(owner);
+        let wake_runtime = Arc::clone(runtime);
+        let wake_text = text.clone();
+        tokio::task::spawn_blocking(move || {
+            let to_seat = finding
+                .session
+                .map(|session| owner.notify_child(session, &finding.text));
+            match to_seat {
+                Some(Ok(())) => Ok(finding.key),
+                _ => {
+                    let (workload, kind) =
+                        finding.key.rsplit_once(':').unwrap_or((&finding.key, ""));
+                    wake_runtime
+                        .wake_event(
+                            &format!("workload-{}", finding.key),
+                            &wake_text,
+                            &format!("workload:{workload}"),
+                            kind,
+                        )
+                        .map(|_| finding.key)
+                }
             }
-        }
-    })
-    .await
-    .map_err(|error| error.to_string())
-    .and_then(|result| result)?;
-    crate::child_report::wake_declared(
+        })
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|result| result)?;
+    }
+    crate::child_report::wake_declared_except(
         runtime,
         "workload_watch",
+        project.as_ref().map(odin_domain::ProjectId::as_str),
         &format!("workload-{key}"),
         &text,
+        owning_seat.as_ref(),
     )
     .await;
     Ok(key)
@@ -721,6 +1027,70 @@ mod tests {
     use odin_domain::huginn::RelativePath;
     use odin_domain::huginn::{KubeContainerView, KubeResourceRef, KubeResources};
     use odin_domain::{LaneId, RunId, SeatId};
+
+    #[tokio::test]
+    async fn missing_owner_session_opens_but_an_existing_one_does_not() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let opens = AtomicUsize::new(0);
+        for present in [false, true] {
+            wake_or_open(
+                || async { Ok(present) },
+                || async {
+                    opens.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(opens.load(Ordering::SeqCst), 1);
+        let refused = wake_or_open(
+            || async { Err("wake refused".to_owned()) },
+            || async {
+                opens.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await;
+        assert_eq!(refused.unwrap_err(), "wake refused");
+        assert_eq!(opens.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn fresh_owner_brief_carries_project_notes_and_memory() {
+        use odin_brain::service::fresh_sources::{FreshKnowledge, GatheredMemory, GatheredNote};
+        let gathered = FreshKnowledge {
+            notes: vec![GatheredNote {
+                task: "campaign".into(),
+                seat: "kubert".into(),
+                noted_at: "now".into(),
+                note: "watch batch 7".into(),
+            }],
+            project_memory: vec![GatheredMemory {
+                source: "memory.project.example".into(),
+                text: "campaign limits".into(),
+            }],
+            unavailable: vec!["state.repos unavailable".into()],
+            ..Default::default()
+        };
+        let brief = owner_brief(
+            &odin_domain::ProjectId::new("example").unwrap(),
+            gathered,
+            &odin_omp::live::rollover::RolloverPolicy::default(),
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&brief).unwrap();
+        assert_eq!(json["task_notes"][0]["note"], "watch batch 7");
+        assert_eq!(
+            json["project_memory"][0]["source"],
+            "memory.project.example"
+        );
+        assert_eq!(json["project_memory"][0]["text"], "campaign limits");
+        assert!(json["reason"]
+            .as_str()
+            .unwrap()
+            .contains("state.repos unavailable"));
+    }
 
     /// Rebinds the fixture workload to a run named like the given pod run.
     fn on_run(run: &str, mut view: KubeWorkloadView) -> KubeWorkloadView {
@@ -776,6 +1146,49 @@ mod tests {
             observed_at: now,
             stale: false,
         }
+    }
+
+    #[test]
+    fn watch_policy_falls_back_and_uses_each_new_declaration() {
+        let defaults = policy_from_declaration(None);
+        let first = odin_registry::schema::WorkloadWatchToml {
+            tick_seconds: std::num::NonZeroU32::new(7),
+            crash_loop_restarts: std::num::NonZeroU32::new(4),
+            report_window_seconds: None,
+            max_output_bytes: None,
+        };
+        let resolved = policy_from_declaration(Some(first));
+        assert_eq!(resolved.tick, StdDuration::from_secs(7));
+        assert_eq!(resolved.crash_loop_restarts, 4);
+        assert_eq!(resolved.report_window, defaults.report_window);
+        assert_eq!(resolved.max_output_bytes, defaults.max_output_bytes);
+        let refreshed = policy_from_declaration(Some(odin_registry::schema::WorkloadWatchToml {
+            tick_seconds: std::num::NonZeroU32::new(11),
+            report_window_seconds: std::num::NonZeroU32::new(60),
+            ..first
+        }));
+        assert_eq!(refreshed.tick, StdDuration::from_secs(11));
+        assert_eq!(refreshed.report_window, time::Duration::seconds(60));
+        assert_eq!(policy_from_declaration(None).tick, defaults.tick);
+    }
+
+    #[test]
+    fn findings_obey_the_configured_restart_and_report_bounds() {
+        let now = time::OffsetDateTime::now_utc();
+        let policy = WatchPolicy {
+            crash_loop_restarts: 5,
+            report_window: time::Duration::minutes(1),
+            ..WatchPolicy::default()
+        };
+        let running = view(KubeWorkloadState::Running, 4, None, now);
+        assert!(findings_with_policy(&[running], now, &policy, |_| false).is_empty());
+        let looping = view(KubeWorkloadState::Running, 5, None, now);
+        assert_eq!(
+            findings_with_policy(&[looping], now, &policy, |_| false)[0].key,
+            "uid-1:crash-loop"
+        );
+        let old = view(KubeWorkloadState::Failed, 0, Some(2), now);
+        assert!(findings_with_policy(&[old], now, &policy, |_| false).is_empty());
     }
 
     #[test]

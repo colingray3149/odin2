@@ -51,6 +51,14 @@ fn arguments(detail: impl ToString) -> HostToolError {
     }
 }
 
+// A capacity refusal happens before any Claude resource is created, so it is unavailable, not uncertain.
+fn claude_room_error(error: odin_kube::KubeError) -> HostToolError {
+    if odin_kube::placement::is_capacity_refusal(&error) {
+        return unavailable(error);
+    }
+    uncertain(error)
+}
+
 fn parallel_run_error(error: odin_kube::KubeError) -> HostToolError {
     match error {
         odin_kube::KubeError::Rejected { reason } => arguments(reason),
@@ -442,6 +450,10 @@ impl ClaudeSessionBackend for ClaudePodBackend {
             cell.admit_lane_pod_budget(&client, &lane)
                 .await
                 .map_err(parallel_run_error)?;
+            // Before the intent is saved: a refused launch must not reserve its branch name.
+            claude_pod::check_room(&client, &plan)
+                .await
+                .map_err(claude_room_error)?;
             self.save(&journal)?;
             let grant =
                 publication_authority::mint(effect, session, &journal.branch).map_err(uncertain)?;
@@ -455,7 +467,7 @@ impl ClaudeSessionBackend for ClaudePodBackend {
                 &plan,
             )
             .await
-            .map_err(uncertain)?;
+            .map_err(claude_room_error)?;
             journal.receipt = Some(receipt.clone());
             self.save(&journal)?;
             let version_reply = transport::request(&client, &receipt, json!({"op":"version"}))

@@ -44,6 +44,15 @@ fn exact_arguments(request: &serde_json::Value) -> String {
     serde_json::to_string_pretty(&arguments).unwrap_or_else(|_| arguments.to_string())
 }
 
+fn safe_question(question: String, tokens: &BTreeSet<String>) -> Result<String, DeliveryError> {
+    if crate::egress::scrub_sensitive(&question, tokens) != question {
+        return Err(DeliveryError::SnapshotUnavailable(
+            "the approval contains sensitive values that cannot be displayed safely".into(),
+        ));
+    }
+    Ok(question)
+}
+
 fn incomplete_snapshot(cause: impl std::fmt::Display) -> DeliveryError {
     DeliveryError::SnapshotUnavailable(format!(
         "the exact effect snapshot is missing or incomplete: {cause}"
@@ -175,6 +184,9 @@ impl HermesRuntime {
             }
             odin_registry::schema::PreviewKindToml::Plan => self
                 .workflow_plan(capability, request)
+                .map_err(DeliveryError::SnapshotUnavailable),
+            odin_registry::schema::PreviewKindToml::Card => self
+                .approval_card(capability, request)
                 .map_err(DeliveryError::SnapshotUnavailable),
         }
     }
@@ -466,6 +478,7 @@ impl HermesRuntime {
         if self.notify.is_none() {
             return Err(NO_DISCORD.to_owned());
         }
+        self.pump_root_plan_consents()?;
         let batch = self.bus.drain_batch(crate::egress::EGRESS_SUBJECTS, max);
         if batch.is_empty() {
             return Ok(0);
@@ -475,6 +488,68 @@ impl HermesRuntime {
             .commit_batch(&batch)
             .map_err(|error| error.to_string())?;
         Ok(committed)
+    }
+
+    /// Deliver durable root-plan questions even when no conversation turn is active.
+    fn pump_root_plan_consents(&self) -> Result<(), String> {
+        let Some(discord) = self.settings.discord.as_ref() else {
+            return Ok(());
+        };
+        let now = OffsetDateTime::now_utc();
+        {
+            let mut ledger = self.adapter_ledger.lock();
+            for (id, plan) in ledger
+                .root_plan_consents()
+                .map_err(|error| error.to_string())?
+            {
+                if plan.applied {
+                    continue;
+                }
+                let Some(approval) = ledger.approval(&id).map_err(|error| error.to_string())?
+                else {
+                    continue;
+                };
+                if approval.status == ApprovalStatus::Approved {
+                    if let Some(actor) = approval.decided_by.as_deref() {
+                        if let Err(error) = ledger.apply_root_plan_consent(&id, actor, now) {
+                            tracing::warn!(approval = %id, %error, "root plan consent not applied");
+                        }
+                    } else {
+                        tracing::warn!(approval = %id, "root plan consent has no decision actor");
+                    }
+                }
+            }
+        }
+        let pending = self
+            .adapter_ledger
+            .lock()
+            .pending_root_plan_consents()
+            .map_err(|error| error.to_string())?;
+        let asked: BTreeSet<_> = self
+            .delivered_pending_approvals(
+                &self.adapter_ledger,
+                &discord.notify_channel_id,
+                &discord.owner_user_id,
+                now,
+            )
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|item| item.approval_id)
+            .collect();
+        for id in pending {
+            if !asked.contains(&id) {
+                if let Err(error) = self.deliver_approval_question(
+                    &self.adapter_ledger,
+                    &id,
+                    &discord.notify_channel_id,
+                    &discord.owner_user_id,
+                    now,
+                ) {
+                    tracing::warn!(approval = %id, %error, "root plan question delivery deferred");
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Records the exact request and recipient only after the question is delivered.
@@ -501,7 +576,16 @@ impl HermesRuntime {
         // and the exact journaled command body. A capability the pinned
         // snapshot does not admit with a usable declared description
         // refuses — no invented generic consent.
-        let (description, journaled, approval_id, revision, session, capability) = {
+        let (
+            description,
+            journaled,
+            approval_id,
+            revision,
+            session,
+            capability,
+            root_plan,
+            root_todos,
+        ) = {
             let guard = ledger.lock();
             let approval = guard
                 .approval(approval_id)
@@ -514,32 +598,77 @@ impl HermesRuntime {
                 return Err(DeliveryError::Expired(approval_id.clone()));
             }
             let capability = approval.scope.capability_id.clone();
-            let contract = self
-                .contracts
-                .get(&capability)
-                .ok_or_else(|| DeliveryError::Undeclared(capability.clone()))?;
-            if crate::natural::declared_action_phrase(&contract.description).is_empty() {
-                return Err(DeliveryError::Undeclared(capability.clone()));
-            }
-            let journaled = durable_retry_arguments(&guard, &approval);
-            // A previewed question shows the call itself, so it cannot be asked without it.
-            if journaled.is_none() && self.declares_owner_preview(&capability) {
+            let root_plan = guard
+                .root_plan_consent(&approval.approval_id)
+                .map_err(|error| DeliveryError::Evidence(error.to_string()))?;
+            if capability.as_str() == "plan.root-consent" && root_plan.is_none() {
                 return Err(DeliveryError::SnapshotUnavailable(
-                    "the journaled call this approval covers is missing".into(),
+                    "the root plan consent record is missing".into(),
                 ));
             }
-            if journaled.is_none() {
-                tracing::warn!(
-                    "odin-hermes: no journaled call matches approval {approval_id}; its question names {capability} only"
-                );
+            if let Some(plan) = &root_plan {
+                let mut bound = plan.clone();
+                bound.applied = false;
+                let body = serde_json::to_string(&bound)
+                    .map_err(|error| DeliveryError::Evidence(error.to_string()))?;
+                if plan.applied
+                    || capability.as_str() != "plan.root-consent"
+                    || approval.scope.target_kind != "run"
+                    || approval.scope.target_id != plan.run.as_str()
+                    || approval.issuer != plan.seat
+                    || plan.run.as_str() != format!("run:live:{}", plan.session)
+                    || approval.scope.arguments_digest != odin_domain::Digest::hash(body.as_bytes())
+                {
+                    return Err(DeliveryError::SnapshotUnavailable(
+                        "the root plan consent binding is invalid".into(),
+                    ));
+                }
             }
+            let root_todos = if let Some(plan) = &root_plan {
+                let current = guard
+                    .plan(&plan.run)
+                    .map_err(|error| DeliveryError::Evidence(error.to_string()))?
+                    .ok_or_else(|| {
+                        DeliveryError::SnapshotUnavailable(
+                            "the reviewed root plan is missing".into(),
+                        )
+                    })?;
+                if current.revision != plan.revision || current.objective != plan.objective {
+                    return Err(DeliveryError::SnapshotUnavailable(
+                        "the reviewed root plan changed".into(),
+                    ));
+                }
+                Some(current.todos)
+            } else {
+                None
+            };
+            let (description, journaled) = if root_plan.is_some() {
+                ("accept this root plan".to_owned(), None)
+            } else {
+                let contract = self
+                    .contracts
+                    .get(&capability)
+                    .ok_or_else(|| DeliveryError::Undeclared(capability.clone()))?;
+                if crate::natural::declared_action_phrase(&contract.description).is_empty() {
+                    return Err(DeliveryError::Undeclared(capability.clone()));
+                }
+                let journaled = durable_retry_arguments(&guard, &approval);
+                if journaled.is_none() && self.declares_owner_preview(&capability) {
+                    return Err(DeliveryError::SnapshotUnavailable(
+                        "the journaled call this approval covers is missing".into(),
+                    ));
+                }
+                (contract.description.clone(), journaled)
+            };
             (
-                contract.description.clone(),
+                description,
                 journaled,
                 approval.approval_id.clone(),
                 approval.revision,
                 approval.scope.target_id.clone(),
                 capability,
+                root_plan,
+                root_todos,
             )
         };
         let ledger_path = ledger
@@ -555,26 +684,49 @@ impl HermesRuntime {
         let surface_project = discord.project.clone();
         // The email adapter may share this authority ledger. Resolve its
         // authoritative snapshot only after releasing the journal read lock.
-        let exact = self.declares_owner_preview(&capability);
-        let detail = match journaled {
-            // A preview that cannot run leaves the owner the exact arguments and the cause;
-            // the question is asked either way.
-            Some((_, request)) if exact => Some(
-                match self.exact_question_detail(capability.as_str(), &request) {
-                    Ok(detail) => detail,
-                    Err(cause) => format!("(no preview: {cause})\n{}", exact_arguments(&request)),
-                },
-            ),
-            Some((arguments_json, request)) => Some(
-                crate::natural::detail_from_request_json(&arguments_json)
-                    .unwrap_or_else(|| exact_arguments(&request)),
-            ),
-            None => None,
+        let exact = root_plan.is_some() || self.declares_owner_preview(&capability);
+        let detail = if let Some(plan) = root_plan {
+            let mut detail = format!(
+                "Run: {}\nSession: {}\nSeat: {}\nPlan revision: {}\nObjective:\n{}\nTodos:",
+                plan.run, plan.session, plan.seat, plan.revision, plan.objective
+            );
+            let todos = root_todos.expect("root plan snapshot has todos");
+            if todos.is_empty() {
+                detail.push_str("\n(none)");
+            }
+            for todo in todos {
+                use std::fmt::Write;
+                write!(
+                    &mut detail,
+                    "\n- {} ({}): {} [{:?}]",
+                    todo.ordinal, todo.id, todo.title, todo.status
+                )
+                .expect("writing to a string cannot fail");
+            }
+            Some(detail)
+        } else {
+            match journaled {
+                // A preview that cannot run leaves the owner the exact arguments and the cause;
+                // the question is asked either way.
+                Some((_, request)) if exact => Some(
+                    match self.exact_question_detail(capability.as_str(), &request) {
+                        Ok(detail) => detail,
+                        Err(cause) => {
+                            format!("(no preview: {cause})\n{}", exact_arguments(&request))
+                        }
+                    },
+                ),
+                Some((arguments_json, request)) => Some(
+                    crate::natural::detail_from_request_json(&arguments_json)
+                        .unwrap_or_else(|| exact_arguments(&request)),
+                ),
+                None => None,
+            }
         };
-        let question = crate::egress::scrub_sensitive(
-            &crate::natural::approval_question(&description, detail.as_deref()),
+        let question = safe_question(
+            crate::natural::approval_question(&description, detail.as_deref()),
             &self.scrub_tokens(),
-        );
+        )?;
 
         let binding = serde_json::to_string(&(
             "kernel-approval",
@@ -760,7 +912,7 @@ impl HermesRuntime {
         }
         let guard = ledger.lock();
         let deliveries = latest_deliveries(&guard, channel_id, owner_user_id, |id| {
-            self.preview_kind(id).is_some()
+            id == "plan.root-consent" || self.preview_kind(id).is_some()
         })?;
         let mut pending = Vec::new();
         let mut listed = BTreeSet::new();
@@ -780,7 +932,15 @@ impl HermesRuntime {
             if approval.status != ApprovalStatus::Requested || approval.expires_at <= now {
                 continue;
             }
-            let Some(contract) = self.contracts.get(&approval.scope.capability_id) else {
+            let label = if guard
+                .root_plan_consent(&approval.approval_id)
+                .map_err(|error| DecisionRefusal::Evidence(error.to_string()))?
+                .is_some()
+            {
+                "root plan".to_owned()
+            } else if let Some(contract) = self.contracts.get(&approval.scope.capability_id) {
+                crate::natural::approval_label(&contract.description)
+            } else {
                 continue;
             };
             pending.push(DeliveredApproval {
@@ -788,7 +948,7 @@ impl HermesRuntime {
                 revision: approval.revision,
                 capability_id: approval.scope.capability_id,
                 session: approval.scope.target_id,
-                label: crate::natural::approval_label(&contract.description),
+                label,
             });
         }
         Ok(pending)
@@ -807,7 +967,7 @@ impl HermesRuntime {
     ) -> Result<Option<String>, DecisionRefusal> {
         let guard = ledger.lock();
         let deliveries = latest_deliveries(&guard, channel_id, owner_user_id, |id| {
-            self.preview_kind(id).is_some()
+            id == "plan.root-consent" || self.preview_kind(id).is_some()
         })?;
         for (payload, asked_at) in deliveries {
             let Ok(approval_id) = ApprovalId::new(&payload.approval_id) else {
@@ -816,10 +976,17 @@ impl HermesRuntime {
             let Ok(Some(approval)) = guard.approval(&approval_id) else {
                 continue;
             };
-            let Some(contract) = self.contracts.get(&approval.scope.capability_id) else {
+            let label = if guard
+                .root_plan_consent(&approval.approval_id)
+                .map_err(|error| DecisionRefusal::Evidence(error.to_string()))?
+                .is_some()
+            {
+                "root plan".to_owned()
+            } else if let Some(contract) = self.contracts.get(&approval.scope.capability_id) {
+                crate::natural::approval_label(&contract.description)
+            } else {
                 continue;
             };
-            let label = crate::natural::approval_label(&contract.description);
             let (at, sentence) = match approval.status {
                 ApprovalStatus::Requested if approval.expires_at <= now => (
                     approval.expires_at,
@@ -875,7 +1042,7 @@ impl HermesRuntime {
         let mut guard = ledger.lock();
         let mut copies =
             latest_deliveries(&guard, &message.channel_id, &message.owner_user_id, |id| {
-                self.preview_kind(id).is_some()
+                id == "plan.root-consent" || self.preview_kind(id).is_some()
             })?
             .into_iter()
             .filter(|(payload, _)| payload.approval_id == approval_id.as_str());
@@ -918,7 +1085,8 @@ impl HermesRuntime {
         let intake = odin_ledger::approval::DecisionIntake {
             consumer_id: format!("discord-owner:{}", message.owner_user_id),
             message_id: message.message_id.clone(),
-            owner_preview: self.declares_owner_preview(&approval.scope.capability_id),
+            owner_preview: approval.scope.capability_id.as_str() == "plan.root-consent"
+                || self.declares_owner_preview(&approval.scope.capability_id),
         };
         match odin_kernel::ApprovalGate::new(&mut guard).decide_consuming_intake(
             approval_id,
@@ -932,5 +1100,21 @@ impl HermesRuntime {
             Ok(None) => Err(DecisionRefusal::IntakeConsumed(approval_id.clone())),
             Err(error) => Err(DecisionRefusal::Ledger(error.to_string())),
         }
+    }
+}
+
+#[cfg(test)]
+mod exact_question_tests {
+    use super::*;
+
+    #[test]
+    fn sensitive_questions_are_never_delivered_as_altered_previews() {
+        let tokens = BTreeSet::from(["secret-value".to_owned()]);
+        assert!(safe_question("change secret-value".to_owned(), &tokens).is_err());
+        assert!(safe_question("change cred:provider:token".to_owned(), &tokens).is_err());
+        assert_eq!(
+            safe_question("change value".to_owned(), &tokens).unwrap(),
+            "change value"
+        );
     }
 }

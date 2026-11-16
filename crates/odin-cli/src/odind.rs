@@ -111,14 +111,28 @@ mod live;
 mod mismatch_recovery_tests;
 #[path = "odind/model_catalog.rs"]
 mod model_catalog;
+#[path = "odind/plans_watch.rs"]
+mod plans_watch;
+#[path = "odind/private_tmp.rs"]
+mod private_tmp;
 #[path = "odind/project_authoring.rs"]
 mod project_authoring;
+#[path = "odind/project_event.rs"]
+mod project_event;
 #[path = "odind/projection.rs"]
 mod projection;
+#[path = "odind/provider_transport.rs"]
+mod provider_transport;
 #[path = "odind/pumps.rs"]
 mod pumps;
 #[path = "odind/registry_authoring.rs"]
 mod registry_authoring;
+#[path = "odind/rental_enrollment.rs"]
+mod rental_enrollment;
+#[path = "odind/rental_reaper.rs"]
+mod rental_reaper;
+#[path = "odind/rental_route.rs"]
+mod rental_route;
 #[path = "odind/report_completion.rs"]
 mod report_completion;
 #[path = "odind/report_settle.rs"]
@@ -131,6 +145,8 @@ mod routine_authoring;
 mod seat_model;
 #[path = "odind/simulation.rs"]
 mod simulation;
+#[path = "odind/stage_transport.rs"]
+mod stage_transport;
 #[path = "odind/state_knowledge.rs"]
 mod state_knowledge;
 #[cfg(test)]

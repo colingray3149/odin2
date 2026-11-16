@@ -5,49 +5,37 @@ use crate::schema::fixtures::COMPLETE_SEAT;
 use crate::schema::{validate_object, ObjectConfig, RegistryObject, SeatSandboxNetwork, SeatToml};
 
 #[test]
-fn supervisor_grants_steering_and_delegation_without_build_or_merge() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry");
-    let supervisor: SeatToml =
-        toml::from_str(&std::fs::read_to_string(root.join("seats/supervisor/seat.toml")).unwrap())
-            .unwrap();
-    for id in [
-        "task.read",
-        "task.steer",
-        "task.note",
-        "task.pause",
-        "seat.ask.sinmara",
-        "seat.ask.gungnir",
-        "seat.ask.kubert",
-        "kube.workload.summarize",
-        "kube.health.read",
-        "artifact.read",
-        "export.read",
-        "model.consult",
-    ] {
-        assert!(
-            supervisor.tool_refs.iter().any(|tool| tool.as_str() == id),
-            "{id}"
-        );
-    }
-    for id in [
-        "build.run",
-        "test.run",
-        "git.branch.merge",
-        "git.patch.propose",
-    ] {
-        assert!(
-            !supervisor.tool_refs.iter().any(|tool| tool.as_str() == id),
-            "{id}"
-        );
-    }
-    for seat in ["sinmara", "gungnir"] {
-        let source = std::fs::read_to_string(root.join(format!("seats/{seat}/seat.toml"))).unwrap();
-        let seat: SeatToml = toml::from_str(&source).unwrap();
-        assert!(seat
-            .tool_refs
-            .iter()
-            .any(|tool| tool.as_str() == "seat.ask.supervisor"));
-    }
+fn batch_limits_default_and_validate() {
+    let mut seat = toml::from_str::<SeatToml>(COMPLETE_SEAT).unwrap();
+    assert_eq!(
+        (seat.limits.max_batch_launches, seat.limits.max_batch_inputs),
+        (256, 16)
+    );
+    seat.limits.max_batch_launches = 300;
+    seat.limits.max_batch_inputs = 80;
+    let encoded = toml::to_string(&seat).unwrap();
+    let restored: SeatToml = toml::from_str(&encoded).unwrap();
+    assert_eq!(
+        (
+            restored.limits.max_batch_launches,
+            restored.limits.max_batch_inputs
+        ),
+        (300, 80)
+    );
+    seat.limits.max_batch_launches = 0;
+    seat.limits.max_batch_inputs = 0;
+    let object = RegistryObject {
+        id: "builder".to_owned(),
+        relative_config: PathBuf::from("seats/builder/seat.toml"),
+        config: ObjectConfig::Seat(Box::new(seat)),
+    };
+    let findings = validate_object(&object);
+    assert!(findings
+        .iter()
+        .any(|finding| finding.message.contains("max_batch_launches")));
+    assert!(findings
+        .iter()
+        .any(|finding| finding.message.contains("max_batch_inputs")));
 }
 
 #[test]

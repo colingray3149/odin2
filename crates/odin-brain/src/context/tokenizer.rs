@@ -13,6 +13,10 @@
 //!   embedded in this crate and applies its declared semantics — NFC
 //!   normalization, byte-level BPE, and `encode_ordinary` (declared
 //!   special tokens in the input are plain content, never matched).
+//! - [`ESTIMATE_TOKENIZER_ID`] (`odin.tokenizer.estimate.v1`): one token per
+//!   four UTF-8 bytes, rounded up. A hosted lane whose provider tokenizer is
+//!   not pinned here counts this way; the extension calibrates it per lane
+//!   from provider usage, so this is the uncalibrated bound.
 //!
 //! The qwen3 engine is parsed once per process and shared by every call.
 
@@ -28,6 +32,13 @@ pub const PINNED_TOKENIZER_ID: &str = "odin.tokenizer.utf8-bytes.v1";
 /// charges context with exact Qwen3 tokens instead of the conservative
 /// byte bound.
 pub const QWEN3_TOKENIZER_ID: &str = "odin.tokenizer.qwen3.v1";
+
+/// The declared identity of the estimate counter: one token per four UTF-8
+/// bytes, rounded up, before any provider usage calibrates the lane.
+pub const ESTIMATE_TOKENIZER_ID: &str = "odin.tokenizer.estimate.v1";
+
+/// UTF-8 bytes per estimated token (the estimate counter's uncalibrated ratio).
+const ESTIMATE_BYTES_PER_TOKEN: usize = 4;
 
 /// Pinned tokenizer identity gate plus declared-semantics counting.
 pub struct PinnedTokenizer;
@@ -68,22 +79,25 @@ enum Identity {
     Bytes,
     /// Pinned Qwen3-family tokenizer ([`QWEN3_TOKENIZER_ID`]).
     Qwen3,
+    /// Uncalibrated bytes-per-token bound ([`ESTIMATE_TOKENIZER_ID`]).
+    Estimate,
 }
 
 impl ContextTokenizer {
     /// Resolves a declared tokenizer identity to its counter. The
-    /// conservative byte identity and the pinned qwen3 identity are
-    /// supported; anything else is a typed unavailable failure — never an
-    /// approximation and never an inference from a model name.
+    /// conservative byte identity, the pinned qwen3 identity and the estimate
+    /// identity are supported; anything else is a typed unavailable failure —
+    /// never an approximation and never an inference from a model name.
     pub fn for_id(id: &TokenizerId) -> BrainResult<Self> {
         match id.as_str() {
             PINNED_TOKENIZER_ID => Ok(Self(Identity::Bytes)),
             QWEN3_TOKENIZER_ID => Ok(Self(Identity::Qwen3)),
+            ESTIMATE_TOKENIZER_ID => Ok(Self(Identity::Estimate)),
             _ => Err(BrainError::Unavailable {
                 component: "context_tokenizer",
                 reason: format!(
                     "declared tokenizer {id} has no implementation; supported identities are \
-                     {PINNED_TOKENIZER_ID} and {QWEN3_TOKENIZER_ID}"
+                     {PINNED_TOKENIZER_ID}, {QWEN3_TOKENIZER_ID} and {ESTIMATE_TOKENIZER_ID}"
                 ),
             }),
         }
@@ -93,6 +107,7 @@ impl ContextTokenizer {
         match self.0 {
             Identity::Bytes => PinnedTokenizer::id(),
             Identity::Qwen3 => qwen3_id(),
+            Identity::Estimate => estimate_id(),
         }
     }
 
@@ -102,6 +117,13 @@ impl ContextTokenizer {
         match self.0 {
             Identity::Bytes => PinnedTokenizer::count_text(text),
             Identity::Qwen3 => qwen3::count(text),
+            Identity::Estimate => u32::try_from(text.len().div_ceil(ESTIMATE_BYTES_PER_TOKEN))
+                .map_err(|error| {
+                    BrainError::InvalidRequest(format!(
+                        "context text of {} bytes exceeds the estimate counting range: {error}",
+                        text.len()
+                    ))
+                }),
         }
     }
 
@@ -117,6 +139,11 @@ impl ContextTokenizer {
         match self.0 {
             Identity::Bytes => Ok(byte_fit_prefix(text, max_tokens)),
             Identity::Qwen3 => qwen3::fit_prefix(text, max_tokens),
+            // At most four bytes per token, so a byte prefix of that size counts within budget.
+            Identity::Estimate => Ok(byte_fit_prefix(
+                text,
+                max_tokens.saturating_mul(ESTIMATE_BYTES_PER_TOKEN as u32),
+            )),
         }
     }
 }
@@ -125,6 +152,13 @@ fn qwen3_id() -> BrainResult<TokenizerId> {
     TokenizerId::new(QWEN3_TOKENIZER_ID).map_err(|error| BrainError::Unavailable {
         component: "context_tokenizer",
         reason: format!("declared tokenizer id {QWEN3_TOKENIZER_ID} is invalid: {error}"),
+    })
+}
+
+fn estimate_id() -> BrainResult<TokenizerId> {
+    TokenizerId::new(ESTIMATE_TOKENIZER_ID).map_err(|error| BrainError::Unavailable {
+        component: "context_tokenizer",
+        reason: format!("declared tokenizer id {ESTIMATE_TOKENIZER_ID} is invalid: {error}"),
     })
 }
 
@@ -303,6 +337,10 @@ mod tests {
             .unwrap_or_else(|error| panic!("declared qwen3 identity must resolve: {error}"));
         assert_eq!(bytes.id().unwrap(), PinnedTokenizer::id().unwrap());
         assert_eq!(qwen3.id().unwrap().as_str(), QWEN3_TOKENIZER_ID);
+        let estimate = ContextTokenizer::for_id(&TokenizerId::new(ESTIMATE_TOKENIZER_ID).unwrap())
+            .unwrap_or_else(|error| panic!("declared estimate identity must resolve: {error}"));
+        assert_eq!(estimate.id().unwrap().as_str(), ESTIMATE_TOKENIZER_ID);
+        assert_eq!(estimate.count_text("abcdefghi").unwrap(), 3);
 
         // The byte counter stays byte-identical to PinnedTokenizer through
         // the dispatch.

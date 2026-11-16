@@ -1,5 +1,5 @@
 {
-  "generated": "2026-11-04T15:03:27.192913043Z",
+  "generated": "2026-11-16T21:15:49.278601971Z",
   "models": [
     {
       "contextWindow": 131072,
@@ -557,6 +557,27 @@
     {
       "contextWindow": 1000000,
       "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "Qwen/Qwen4-Max",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Qwen 4 Max",
+      "pricingStatus": "unknown",
+      "provider": "commandcode",
+      "reasoning": false,
+      "selector": "commandcode/Qwen/Qwen4-Max",
+      "thinking": null
+    },
+    {
+      "contextWindow": 1000000,
+      "cost": {
         "cacheRead": 1,
         "cacheWrite": 12.5,
         "input": 10,
@@ -609,6 +630,27 @@
         "xhigh",
         "max"
       ]
+    },
+    {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "claude-fable-5-2",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Claude Fable 5.2",
+      "pricingStatus": "unknown",
+      "provider": "commandcode",
+      "reasoning": false,
+      "selector": "commandcode/claude-fable-5-2",
+      "thinking": null
     },
     {
       "contextWindow": 200000,
@@ -1000,6 +1042,27 @@
       ]
     },
     {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "deepseek/deepseek-v4.1-flash-ultrafast",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "DeepSeek V4.1 Flash Ultrafast",
+      "pricingStatus": "unknown",
+      "provider": "commandcode",
+      "reasoning": false,
+      "selector": "commandcode/deepseek/deepseek-v4.1-flash-ultrafast",
+      "thinking": null
+    },
+    {
       "contextWindow": 1000000,
       "cost": {
         "cacheRead": 0.03,
@@ -1174,6 +1237,27 @@
       "provider": "commandcode",
       "reasoning": false,
       "selector": "commandcode/google/gemini-4-argon",
+      "thinking": null
+    },
+    {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "google/gemini-4-carbon",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Gemini 4 Carbon",
+      "pricingStatus": "unknown",
+      "provider": "commandcode",
+      "reasoning": false,
+      "selector": "commandcode/google/gemini-4-carbon",
       "thinking": null
     },
     {
@@ -1581,6 +1665,27 @@
         "medium",
         "high"
       ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "meta/muse-ember",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Muse Ember",
+      "pricingStatus": "unknown",
+      "provider": "commandcode",
+      "reasoning": false,
+      "selector": "commandcode/meta/muse-ember",
+      "thinking": null
     },
     {
       "contextWindow": 1048576,
@@ -2006,53 +2111,6 @@
       "thinking": null
     },
     {
-      "contextWindow": 256000,
-      "cost": {
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "input": 0,
-        "output": 0
-      },
-      "id": "poolside/laguna-s-2.1-free",
-      "input": [
-        "text"
-      ],
-      "kind": "chat",
-      "maxTokens": 32768,
-      "name": "Laguna S 2.1",
-      "pricingStatus": "unknown",
-      "provider": "commandcode",
-      "reasoning": true,
-      "selector": "commandcode/poolside/laguna-s-2.1-free",
-      "thinking": [
-        "minimal",
-        "low",
-        "medium",
-        "high"
-      ]
-    },
-    {
-      "contextWindow": 1048576,
-      "cost": {
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "input": 0,
-        "output": 0
-      },
-      "id": "reflection/beam:free",
-      "input": [
-        "text"
-      ],
-      "kind": "chat",
-      "maxTokens": 65536,
-      "name": "Beam 1.0",
-      "pricingStatus": "unknown",
-      "provider": "commandcode",
-      "reasoning": false,
-      "selector": "commandcode/reflection/beam:free",
-      "thinking": null
-    },
-    {
       "contextWindow": 1000000,
       "cost": {
         "cacheRead": 0.5,
@@ -2076,27 +2134,6 @@
         "high",
         "xhigh"
       ]
-    },
-    {
-      "contextWindow": 1048576,
-      "cost": {
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "input": 0,
-        "output": 0
-      },
-      "id": "stealth/crouton-alpha",
-      "input": [
-        "text"
-      ],
-      "kind": "chat",
-      "maxTokens": 65536,
-      "name": "Crouton Alpha",
-      "pricingStatus": "unknown",
-      "provider": "commandcode",
-      "reasoning": false,
-      "selector": "commandcode/stealth/crouton-alpha",
-      "thinking": null
     },
     {
       "contextWindow": 256000,
@@ -2220,6 +2257,27 @@
       ]
     },
     {
+      "contextWindow": 1024000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "tencent/hy4-flash",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Tencent Hy4 Flash",
+      "pricingStatus": "unknown",
+      "provider": "commandcode",
+      "reasoning": false,
+      "selector": "commandcode/tencent/hy4-flash",
+      "thinking": null
+    },
+    {
       "contextWindow": 1048576,
       "cost": {
         "cacheRead": 0.042,
@@ -2270,6 +2328,27 @@
         "medium",
         "high"
       ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "thinkingmachines/inkling-2-small:free",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Inkling 2 Small",
+      "pricingStatus": "unknown",
+      "provider": "commandcode",
+      "reasoning": false,
+      "selector": "commandcode/thinkingmachines/inkling-2-small:free",
+      "thinking": null
     },
     {
       "contextWindow": 1000000,
@@ -3644,6 +3723,60 @@
       "reasoning": true,
       "selector": "google/gemini-4-argon",
       "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.1,
+        "cacheWrite": 0,
+        "input": 2,
+        "output": 10
+      },
+      "id": "gemini-4-carbon",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 32768,
+      "name": "Gemini 4 Carbon",
+      "pricingStatus": "fixed",
+      "provider": "google",
+      "reasoning": true,
+      "selector": "google/gemini-4-carbon",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.075,
+        "cacheWrite": 0,
+        "input": 1.5,
+        "output": 7.5
+      },
+      "id": "gemini-4-hydrogen",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Gemini 4 Hydrogen",
+      "pricingStatus": "fixed",
+      "provider": "google",
+      "reasoning": true,
+      "selector": "google/gemini-4-hydrogen",
+      "thinking": [
+        "minimal",
         "low",
         "medium",
         "high"
@@ -5034,7 +5167,7 @@
       ],
       "kind": "chat",
       "maxTokens": 384000,
-      "name": "DeepSeek V4.1 Flash",
+      "name": "DeepSeek V4.1 Flash 1017",
       "pricingStatus": "fixed",
       "provider": "opencode-go",
       "reasoning": true,
@@ -5261,6 +5394,62 @@
       ]
     },
     {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.042,
+        "cacheWrite": 0,
+        "input": 0.834,
+        "output": 2.501
+      },
+      "id": "hy4",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Hy4",
+      "pricingStatus": "fixed",
+      "provider": "opencode-go",
+      "reasoning": true,
+      "selector": "opencode-go/hy4",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "hy4-flash-free",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Hy4 flash Free",
+      "pricingStatus": "unknown",
+      "provider": "opencode-go",
+      "reasoning": true,
+      "selector": "opencode-go/hy4-flash-free",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
       "contextWindow": 1024000,
       "cost": {
         "cacheRead": 0.042,
@@ -5382,7 +5571,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 131072,
+      "maxTokens": 1048576,
       "name": "Kimi K3.1 Pro",
       "pricingStatus": "fixed",
       "provider": "opencode-go",
@@ -5413,6 +5602,34 @@
       "provider": "opencode-go",
       "reasoning": true,
       "selector": "opencode-go/longcat-2.0",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "longcat-2.5-free",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 262144,
+      "name": "LongCat 2.5 Free",
+      "pricingStatus": "unknown",
+      "provider": "opencode-go",
+      "reasoning": true,
+      "selector": "opencode-go/longcat-2.5-free",
       "thinking": [
         "minimal",
         "low",
@@ -5697,6 +5914,33 @@
     {
       "contextWindow": 1000000,
       "cost": {
+        "cacheRead": 0.075,
+        "cacheWrite": 1.875,
+        "input": 1.5,
+        "output": 4.5
+      },
+      "id": "qwen4-max",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 262144,
+      "name": "Qwen4 Max",
+      "pricingStatus": "fixed",
+      "provider": "opencode-go",
+      "reasoning": true,
+      "selector": "opencode-go/qwen4-max",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 1000000,
+      "cost": {
         "cacheRead": 0.1,
         "cacheWrite": 0,
         "input": 1,
@@ -5800,6 +6044,34 @@
       ]
     },
     {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.2,
+        "cacheWrite": 10,
+        "input": 8,
+        "output": 40
+      },
+      "id": "claude-fable-5-2",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 128000,
+      "name": "Claude Fable 5.2",
+      "pricingStatus": "fixed",
+      "provider": "opencode-zen",
+      "reasoning": true,
+      "selector": "opencode-zen/claude-fable-5-2",
+      "thinking": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
       "contextWindow": 100000,
       "cost": {
         "cacheRead": 0.01,
@@ -5891,34 +6163,6 @@
       ]
     },
     {
-      "contextWindow": 1048576,
-      "cost": {
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "input": 0,
-        "output": 0
-      },
-      "id": "crouton-alpha-free",
-      "input": [
-        "text",
-        "image"
-      ],
-      "kind": "chat",
-      "maxTokens": 270000,
-      "name": "Crouton Alpha Free",
-      "pricingStatus": "unknown",
-      "provider": "opencode-zen",
-      "reasoning": true,
-      "selector": "opencode-zen/crouton-alpha-free",
-      "thinking": [
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ]
-    },
-    {
       "contextWindow": 1000000,
       "cost": {
         "cacheRead": 0.145,
@@ -5958,7 +6202,7 @@
       ],
       "kind": "chat",
       "maxTokens": 384000,
-      "name": "DeepSeek V4.1 Flash",
+      "name": "DeepSeek V4.1 Flash 1017",
       "pricingStatus": "fixed",
       "provider": "opencode-zen",
       "reasoning": true,
@@ -6099,6 +6343,62 @@
         "low",
         "medium",
         "high"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.1,
+        "cacheWrite": 0,
+        "input": 2,
+        "output": 10
+      },
+      "id": "gemini-4-carbon",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Gemini 4 Carbon",
+      "pricingStatus": "fixed",
+      "provider": "opencode-zen",
+      "reasoning": true,
+      "selector": "opencode-zen/gemini-4-carbon",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.075,
+        "cacheWrite": 0,
+        "input": 1.5,
+        "output": 7.5
+      },
+      "id": "gemini-4-hydrogen",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Gemini 4 Hydrogen",
+      "pricingStatus": "fixed",
+      "provider": "opencode-zen",
+      "reasoning": true,
+      "selector": "opencode-zen/gemini-4-hydrogen",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
       ]
     },
     {
@@ -6510,6 +6810,89 @@
       ]
     },
     {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "hy4-flash-free",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Hy4 flash Free",
+      "pricingStatus": "unknown",
+      "provider": "opencode-zen",
+      "reasoning": true,
+      "selector": "opencode-zen/hy4-flash-free",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "contextWindow": 262144,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "iceman-free",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 131072,
+      "name": "Iceman Free",
+      "pricingStatus": "unknown",
+      "provider": "opencode-zen",
+      "reasoning": true,
+      "selector": "opencode-zen/iceman-free",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "inkling-2-small-free",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 131072,
+      "name": "Inkling 2 Small Free",
+      "pricingStatus": "unknown",
+      "provider": "opencode-zen",
+      "reasoning": true,
+      "selector": "opencode-zen/inkling-2-small-free",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
       "contextWindow": 262144,
       "cost": {
         "cacheRead": 0.19,
@@ -6561,6 +6944,34 @@
         "low",
         "high",
         "max"
+      ]
+    },
+    {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "longcat-2.5-free",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 262144,
+      "name": "LongCat 2.5 Free",
+      "pricingStatus": "unknown",
+      "provider": "opencode-zen",
+      "reasoning": true,
+      "selector": "opencode-zen/longcat-2.5-free",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
       ]
     },
     {
@@ -6618,6 +7029,34 @@
       ]
     },
     {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "minimax-m3.1-flash-free",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 512000,
+      "name": "MiniMax M3.1 Flash Free",
+      "pricingStatus": "unknown",
+      "provider": "opencode-zen",
+      "reasoning": true,
+      "selector": "opencode-zen/minimax-m3.1-flash-free",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
       "contextWindow": 524288,
       "cost": {
         "cacheRead": 0.07,
@@ -6637,6 +7076,34 @@
       "provider": "opencode-zen",
       "reasoning": true,
       "selector": "opencode-zen/mistral-large-4",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.004,
+        "cacheWrite": 0,
+        "input": 0.1,
+        "output": 0.5
+      },
+      "id": "muse-ember-1.0",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 270000,
+      "name": "Muse Ember 1.0",
+      "pricingStatus": "fixed",
+      "provider": "opencode-zen",
+      "reasoning": true,
+      "selector": "opencode-zen/muse-ember-1.0",
       "thinking": [
         "minimal",
         "low",
@@ -6721,34 +7188,6 @@
       "provider": "opencode-zen",
       "reasoning": true,
       "selector": "opencode-zen/nemotron-3.5-super-vl-free",
-      "thinking": [
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ]
-    },
-    {
-      "contextWindow": 1048576,
-      "cost": {
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "input": 0,
-        "output": 0
-      },
-      "id": "pulse-alpha-free",
-      "input": [
-        "text",
-        "image"
-      ],
-      "kind": "chat",
-      "maxTokens": 131072,
-      "name": "Pulse Alpha Free",
-      "pricingStatus": "unknown",
-      "provider": "opencode-zen",
-      "reasoning": true,
-      "selector": "opencode-zen/pulse-alpha-free",
       "thinking": [
         "minimal",
         "low",
@@ -7291,6 +7730,62 @@
       "provider": "openrouter",
       "reasoning": true,
       "selector": "openrouter/anthropic/claude-fable-5.1:batch",
+      "thinking": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.2,
+        "cacheWrite": 10,
+        "input": 8,
+        "output": 40
+      },
+      "id": "anthropic/claude-fable-5.2",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 128000,
+      "name": "Claude Fable 5.2",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/anthropic/claude-fable-5.2",
+      "thinking": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.1,
+        "cacheWrite": 5,
+        "input": 4,
+        "output": 20
+      },
+      "id": "anthropic/claude-fable-5.2:batch",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 128000,
+      "name": "Claude Fable 5.2 (batch)",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/anthropic/claude-fable-5.2:batch",
       "thinking": [
         "low",
         "medium",
@@ -8517,6 +9012,54 @@
       ]
     },
     {
+      "contextWindow": 1024000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "baidu/ernie-5.5-flash-preview:free",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 921600,
+      "name": "ERNIE-5.5-Flash-Preview (free)",
+      "pricingStatus": "unknown",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/baidu/ernie-5.5-flash-preview:free",
+      "thinking": [
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 1024000,
+      "cost": {
+        "cacheRead": 0.113,
+        "cacheWrite": 0,
+        "input": 1.13,
+        "output": 3.94
+      },
+      "id": "baidu/ernie-light-dt-1.0-intl",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 131072,
+      "name": "ERNIE-Light-DT-1.0",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/baidu/ernie-light-dt-1.0-intl",
+      "thinking": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
       "contextWindow": 262144,
       "cost": {
         "cacheRead": 0,
@@ -8612,12 +9155,13 @@
       ],
       "kind": "chat",
       "maxTokens": 131072,
-      "name": "Seed-2.0-Code",
+      "name": "Seed 2.0 Code",
       "pricingStatus": "fixed",
       "provider": "openrouter",
       "reasoning": true,
       "selector": "openrouter/bytedance-seed/seed-2.0-code",
       "thinking": [
+        "minimal",
         "low",
         "medium",
         "high"
@@ -8676,6 +9220,27 @@
         "medium",
         "high"
       ]
+    },
+    {
+      "contextWindow": 256000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 2.5,
+        "output": 10
+      },
+      "id": "cohere/command-a",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 8192,
+      "name": "Command A",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": false,
+      "selector": "openrouter/cohere/command-a",
+      "thinking": null
     },
     {
       "contextWindow": 192000,
@@ -8744,6 +9309,27 @@
       "provider": "openrouter",
       "reasoning": false,
       "selector": "openrouter/cohere/command-r-plus-08-2024",
+      "thinking": null
+    },
+    {
+      "contextWindow": 128000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0.0375,
+        "output": 0.15
+      },
+      "id": "cohere/command-r7b-12-2024",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 4000,
+      "name": "Command R7B (12-2024)",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": false,
+      "selector": "openrouter/cohere/command-r7b-12-2024",
       "thinking": null
     },
     {
@@ -8978,17 +9564,17 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.0182,
+        "cacheRead": 0.018,
         "cacheWrite": 0,
-        "input": 0.091,
-        "output": 0.182
+        "input": 0.09,
+        "output": 0.18
       },
       "id": "deepseek/deepseek-v4-flash",
       "input": [
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 943717,
+      "maxTokens": 393216,
       "name": "DeepSeek V4 Flash 0423",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -9002,17 +9588,17 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.035,
+        "cacheRead": 0.015,
         "cacheWrite": 0,
-        "input": 0.059,
-        "output": 0.3
+        "input": 0.06,
+        "output": 0.18
       },
       "id": "deepseek/deepseek-v4-flash-0731",
       "input": [
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 943718,
+      "maxTokens": 384000,
       "name": "DeepSeek V4 Flash 0731",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -9027,17 +9613,17 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.0035,
+        "cacheRead": 0.012,
         "cacheWrite": 0,
-        "input": 0.11,
-        "output": 0.33
+        "input": 0.048,
+        "output": 0.144
       },
       "id": "deepseek/deepseek-v4-flash-0731:batch",
       "input": [
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 943718,
+      "maxTokens": 384000,
       "name": "DeepSeek V4 Flash 0731 (batch)",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -9077,10 +9663,10 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.00686,
+        "cacheRead": 0.014,
         "cacheWrite": 0,
-        "input": 0.2156,
-        "output": 0.6468
+        "input": 0.44,
+        "output": 1.32
       },
       "id": "deepseek/deepseek-v4-flash-vision-exp",
       "input": [
@@ -9088,7 +9674,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 262144,
+      "maxTokens": 943717,
       "name": "DeepSeek V4 Flash Vision Exp",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -9154,10 +9740,10 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.135,
+        "cacheRead": 0.25,
         "cacheWrite": 0,
-        "input": 1.6,
-        "output": 3.1999999999999997
+        "input": 0.8999999999999999,
+        "output": 1.5
       },
       "id": "deepseek/deepseek-v4-pro",
       "input": [
@@ -9178,10 +9764,10 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.11,
+        "cacheRead": 0.097,
         "cacheWrite": 0,
-        "input": 0.115,
-        "output": 4.6
+        "input": 0.111,
+        "output": 4.4399999999999995
       },
       "id": "deepseek/deepseek-v4-pro-0813",
       "input": [
@@ -9228,10 +9814,10 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.018,
+        "cacheRead": 0.004200000000000001,
         "cacheWrite": 0,
-        "input": 0.045,
-        "output": 0.5
+        "input": 0.14,
+        "output": 0.42
       },
       "id": "deepseek/deepseek-v4.1-flash",
       "input": [
@@ -9239,7 +9825,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 943718,
+      "maxTokens": 393216,
       "name": "DeepSeek V4.1 Flash",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -9280,10 +9866,36 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.004,
+        "cacheRead": 0.003,
         "cacheWrite": 0,
-        "input": 0.05,
-        "output": 0.15
+        "input": 0.035,
+        "output": 0.311
+      },
+      "id": "deepseek/deepseek-v4.1-flash-1017:batch",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 943718,
+      "name": "DeepSeek V4.1 Flash 1017 (batch)",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/deepseek/deepseek-v4.1-flash-1017:batch",
+      "thinking": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.00336,
+        "cacheWrite": 0,
+        "input": 0.112,
+        "output": 0.33599999999999997
       },
       "id": "deepseek/deepseek-v4.1-flash:batch",
       "input": [
@@ -9291,7 +9903,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 384000,
+      "maxTokens": 131072,
       "name": "DeepSeek V4.1 Flash (batch)",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -10275,6 +10887,112 @@
       ]
     },
     {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.1,
+        "cacheWrite": 0.1875,
+        "input": 2,
+        "output": 10
+      },
+      "id": "google/gemini-4-carbon",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 943718,
+      "name": "Gemini 4 Carbon",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/google/gemini-4-carbon",
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.05,
+        "cacheWrite": 0.1875,
+        "input": 1,
+        "output": 5
+      },
+      "id": "google/gemini-4-carbon:batch",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 943718,
+      "name": "Gemini 4 Carbon (batch)",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/google/gemini-4-carbon:batch",
+      "thinking": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.075,
+        "cacheWrite": 0.0833333333333333,
+        "input": 1.5,
+        "output": 7.5
+      },
+      "id": "google/gemini-4-hydrogen",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 943718,
+      "name": "Gemini 4 Hydrogen",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/google/gemini-4-hydrogen",
+      "thinking": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.0375,
+        "cacheWrite": 0.0833333333333333,
+        "input": 0.75,
+        "output": 3.75
+      },
+      "id": "google/gemini-4-hydrogen:batch",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 943718,
+      "name": "Gemini 4 Hydrogen (batch)",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/google/gemini-4-hydrogen:batch",
+      "thinking": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
       "contextWindow": 131072,
       "cost": {
         "cacheRead": 0,
@@ -10343,10 +11061,10 @@
     {
       "contextWindow": 262144,
       "cost": {
-        "cacheRead": 0.048,
+        "cacheRead": 0.0425,
         "cacheWrite": 0,
-        "input": 0.097,
-        "output": 0.29
+        "input": 0.0765,
+        "output": 0.255
       },
       "id": "google/gemma-4-26b-a4b-it",
       "input": [
@@ -10354,7 +11072,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 32768,
+      "maxTokens": 235929,
       "name": "Gemma 4 26B A4B",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -10502,7 +11220,7 @@
         "cacheRead": 0.015,
         "cacheWrite": 0,
         "input": 0.06,
-        "output": 0.25
+        "output": 0.15
       },
       "id": "ibm-granite/granite-4.2-8b",
       "input": [
@@ -10561,6 +11279,7 @@
       "reasoning": true,
       "selector": "openrouter/inception/mercury-2",
       "thinking": [
+        "minimal",
         "low",
         "medium",
         "high"
@@ -10586,6 +11305,7 @@
       "reasoning": true,
       "selector": "openrouter/inception/mercury-2.5",
       "thinking": [
+        "minimal",
         "low",
         "medium",
         "high"
@@ -10637,6 +11357,7 @@
       "reasoning": true,
       "selector": "openrouter/inception/mercury-3",
       "thinking": [
+        "minimal",
         "low",
         "medium",
         "high"
@@ -10960,6 +11681,32 @@
     {
       "contextWindow": 262144,
       "cost": {
+        "cacheRead": 0.003,
+        "cacheWrite": 0,
+        "input": 0.015,
+        "output": 0.045
+      },
+      "id": "inclusionai/ling-3.0-tiny",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 250000,
+      "name": "Ling 3.0 Tiny",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/inclusionai/ling-3.0-tiny",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 262144,
+      "cost": {
         "cacheRead": 0,
         "cacheWrite": 0,
         "input": 0,
@@ -10986,10 +11733,10 @@
     {
       "contextWindow": 1000000,
       "cost": {
-        "cacheRead": 0.015,
+        "cacheRead": 0.009,
         "cacheWrite": 0,
-        "input": 0.075,
-        "output": 0.225
+        "input": 0.045,
+        "output": 0.135
       },
       "id": "inclusionai/ling-3.1-flash",
       "input": [
@@ -11002,6 +11749,33 @@
       "provider": "openrouter",
       "reasoning": true,
       "selector": "openrouter/inclusionai/ling-3.1-flash",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "inclusionai/ling-3.2-flash:free",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 262144,
+      "name": "Ling 3.2 Flash (free)",
+      "pricingStatus": "unknown",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/inclusionai/ling-3.2-flash:free",
       "thinking": [
         "minimal",
         "low",
@@ -11052,6 +11826,32 @@
       "provider": "openrouter",
       "reasoning": true,
       "selector": "openrouter/inclusionai/ring-2.6-1t:free",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 261795,
+      "cost": {
+        "cacheRead": 0.04,
+        "cacheWrite": 0,
+        "input": 0.2,
+        "output": 0.7999999999999999
+      },
+      "id": "kt/midm-k-3.0-pro",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 235615,
+      "name": "Mi:dm K 3.0 Pro",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/kt/midm-k-3.0-pro",
       "thinking": [
         "minimal",
         "low",
@@ -11170,32 +11970,6 @@
       ]
     },
     {
-      "contextWindow": 128000,
-      "cost": {
-        "cacheRead": 0.04,
-        "cacheWrite": 0,
-        "input": 0.35,
-        "output": 0.5
-      },
-      "id": "liquid/lfm-2.5-2.6b",
-      "input": [
-        "text"
-      ],
-      "kind": "chat",
-      "maxTokens": 8192,
-      "name": "LFM2.5-2.6B",
-      "pricingStatus": "fixed",
-      "provider": "openrouter",
-      "reasoning": true,
-      "selector": "openrouter/liquid/lfm-2.5-2.6b",
-      "thinking": [
-        "minimal",
-        "low",
-        "medium",
-        "high"
-      ]
-    },
-    {
       "contextWindow": 65536,
       "cost": {
         "cacheRead": 0,
@@ -11240,6 +12014,58 @@
       "provider": "openrouter",
       "reasoning": true,
       "selector": "openrouter/liquid/lfm-2.5-24b-a2b",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 262144,
+      "cost": {
+        "cacheRead": 0.02,
+        "cacheWrite": 0,
+        "input": 0.08,
+        "output": 0.2
+      },
+      "id": "liquid/lfm-3-1.7b",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 8192,
+      "name": "LFM3-1.7B",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/liquid/lfm-3-1.7b",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 262144,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "liquid/lfm-3-1.7b:free",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 8192,
+      "name": "LFM3-1.7B (free)",
+      "pricingStatus": "unknown",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/liquid/lfm-3-1.7b:free",
       "thinking": [
         "minimal",
         "low",
@@ -11341,16 +12167,16 @@
       "cost": {
         "cacheRead": 0,
         "cacheWrite": 0,
-        "input": 0.4,
-        "output": 0.4
+        "input": 0.72,
+        "output": 0.72
       },
       "id": "meta-llama/llama-3.1-70b-instruct",
       "input": [
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 16384,
-      "name": "Llama-3.1-70B-Instruct",
+      "maxTokens": 8192,
+      "name": "Llama 3.1 70B Instruct",
       "pricingStatus": "fixed",
       "provider": "openrouter",
       "reasoning": false,
@@ -11362,15 +12188,15 @@
       "cost": {
         "cacheRead": 0.025,
         "cacheWrite": 0,
-        "input": 0.05,
-        "output": 0.08
+        "input": 0.02,
+        "output": 0.04
       },
       "id": "meta-llama/llama-3.1-8b-instruct",
       "input": [
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 117964,
+      "maxTokens": 16384,
       "name": "Llama 3.1 8B Instruct",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -11381,17 +12207,17 @@
     {
       "contextWindow": 131072,
       "cost": {
-        "cacheRead": 0.11,
+        "cacheRead": 0.71,
         "cacheWrite": 0,
-        "input": 0.1,
-        "output": 0.32
+        "input": 0.71,
+        "output": 0.71
       },
       "id": "meta-llama/llama-3.3-70b-instruct",
       "input": [
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 16384,
+      "maxTokens": 115200,
       "name": "Llama 3.3 70B Instruct",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -11423,10 +12249,10 @@
     {
       "contextWindow": 524288,
       "cost": {
-        "cacheRead": 0.05,
+        "cacheRead": 0.16999999999999998,
         "cacheWrite": 0,
-        "input": 0.1875,
-        "output": 0.6525
+        "input": 0.35,
+        "output": 1
       },
       "id": "meta-llama/llama-4-maverick",
       "input": [
@@ -11434,7 +12260,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 16384,
+      "maxTokens": 32768,
       "name": "Llama 4 Maverick",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -11463,6 +12289,35 @@
       "reasoning": false,
       "selector": "openrouter/meta-llama/llama-4-scout",
       "thinking": null
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.004,
+        "cacheWrite": 0.125,
+        "input": 0.1,
+        "output": 0.5
+      },
+      "id": "meta/muse-ember",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 943718,
+      "name": "Muse Ember",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/meta/muse-ember",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
     },
     {
       "contextWindow": 131072,
@@ -11494,10 +12349,10 @@
     {
       "contextWindow": 131072,
       "cost": {
-        "cacheRead": 0.02,
+        "cacheRead": 0.032,
         "cacheWrite": 0,
-        "input": 0.175,
-        "output": 0.75
+        "input": 0.24,
+        "output": 0.96
       },
       "id": "meta/muse-glimmer-30b:batch",
       "input": [
@@ -11505,7 +12360,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 117964,
+      "maxTokens": 16384,
       "name": "Muse Glimmer 30B (batch)",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -11756,7 +12611,7 @@
       ],
       "kind": "chat",
       "maxTokens": 131072,
-      "name": "MiniMax M2",
+      "name": "MiniMax-M2",
       "pricingStatus": "fixed",
       "provider": "openrouter",
       "reasoning": true,
@@ -11781,7 +12636,7 @@
       ],
       "kind": "chat",
       "maxTokens": 131072,
-      "name": "MiniMax M2.1",
+      "name": "MiniMax-M2.1",
       "pricingStatus": "fixed",
       "provider": "openrouter",
       "reasoning": true,
@@ -11793,19 +12648,19 @@
       ]
     },
     {
-      "contextWindow": 204800,
+      "contextWindow": 198000,
       "cost": {
-        "cacheRead": 0.03,
+        "cacheRead": 0.06,
         "cacheWrite": 0,
-        "input": 0.27,
-        "output": 0.95
+        "input": 0.295,
+        "output": 1.2
       },
       "id": "minimax/minimax-m2.5",
       "input": [
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 32768,
+      "maxTokens": 176947,
       "name": "MiniMax M2.5",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -11843,19 +12698,19 @@
       ]
     },
     {
-      "contextWindow": 204800,
+      "contextWindow": 196608,
       "cost": {
-        "cacheRead": 0.06,
+        "cacheRead": 0.042,
         "cacheWrite": 0,
-        "input": 0.3,
-        "output": 1.2
+        "input": 0.21,
+        "output": 0.84
       },
       "id": "minimax/minimax-m2.7",
       "input": [
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 131072,
+      "maxTokens": 176947,
       "name": "MiniMax M2.7",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -11978,10 +12833,10 @@
     {
       "contextWindow": 524288,
       "cost": {
-        "cacheRead": 0.06,
+        "cacheRead": 0.0448,
         "cacheWrite": 0,
-        "input": 0.3,
-        "output": 1.2
+        "input": 0.224,
+        "output": 0.88
       },
       "id": "minimax/minimax-m3:batch",
       "input": [
@@ -11989,7 +12844,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 471859,
+      "maxTokens": 512000,
       "name": "MiniMax M3 (batch)",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -12640,8 +13495,8 @@
       "cost": {
         "cacheRead": 0.01,
         "cacheWrite": 0,
-        "input": 0.075,
-        "output": 0.2
+        "input": 0.1,
+        "output": 0.3
       },
       "id": "mistralai/mistral-small-3.2-24b-instruct",
       "input": [
@@ -12649,7 +13504,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 16384,
+      "maxTokens": 26214,
       "name": "Mistral Small 3.2 24B",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -12936,7 +13791,7 @@
     {
       "contextWindow": 262144,
       "cost": {
-        "cacheRead": 0.15,
+        "cacheRead": 0.16,
         "cacheWrite": 0,
         "input": 0.6,
         "output": 3.5
@@ -13018,8 +13873,8 @@
       "cost": {
         "cacheRead": 0.2,
         "cacheWrite": 0,
-        "input": 2,
-        "output": 10
+        "input": 0.2403,
+        "output": 8.402299999999999
       },
       "id": "moonshotai/kimi-k3.1-pro",
       "input": [
@@ -13063,6 +13918,32 @@
         "low",
         "high",
         "max"
+      ]
+    },
+    {
+      "contextWindow": 262144,
+      "cost": {
+        "cacheRead": 0.06,
+        "cacheWrite": 0,
+        "input": 0.3,
+        "output": 1.2
+      },
+      "id": "motif-technologies/motif-3",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 235929,
+      "name": "Motif 3",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/motif-technologies/motif-3",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
       ]
     },
     {
@@ -13247,6 +14128,31 @@
       ]
     },
     {
+      "contextWindow": 262144,
+      "cost": {
+        "cacheRead": 0.024,
+        "cacheWrite": 0,
+        "input": 0.12,
+        "output": 0.4
+      },
+      "id": "nex-agi/nex-n2.6",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 235929,
+      "name": "Nex-N2.6",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/nex-agi/nex-n2.6",
+      "thinking": [
+        "medium",
+        "high"
+      ]
+    },
+    {
       "contextWindow": 32768,
       "cost": {
         "cacheRead": 0.01,
@@ -13425,19 +14331,19 @@
       ]
     },
     {
-      "contextWindow": 1048576,
+      "contextWindow": 262144,
       "cost": {
         "cacheRead": 0.15,
         "cacheWrite": 0,
-        "input": 0.3,
-        "output": 2.4
+        "input": 0.075,
+        "output": 0.4
       },
       "id": "nvidia/nemotron-3-super-120b-a12b",
       "input": [
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 262144,
+      "maxTokens": 16384,
       "name": "Nemotron 3 Super",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -13614,7 +14520,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 943718,
+      "maxTokens": 235929,
       "name": "Nemotron 3.5 Super VL",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -16204,10 +17110,10 @@
     {
       "contextWindow": 131072,
       "cost": {
-        "cacheRead": 0.021,
+        "cacheRead": 0.075,
         "cacheWrite": 0,
-        "input": 0.023,
-        "output": 0.08399999999999999
+        "input": 0.15,
+        "output": 0.6
       },
       "id": "openai/gpt-oss-120b",
       "input": [
@@ -16304,17 +17210,17 @@
     {
       "contextWindow": 131072,
       "cost": {
-        "cacheRead": 0.03,
+        "cacheRead": 0.0375,
         "cacheWrite": 0,
-        "input": 0.03,
-        "output": 0.13
+        "input": 0.075,
+        "output": 0.3
       },
       "id": "openai/gpt-oss-20b",
       "input": [
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 117964,
+      "maxTokens": 65536,
       "name": "gpt-oss-20b",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -16884,12 +17790,39 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 65536,
+      "maxTokens": 64000,
       "name": "Auto Router (Beta)",
       "pricingStatus": "fixed",
       "provider": "openrouter",
       "reasoning": true,
       "selector": "openrouter/openrouter/auto-beta",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 2000000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": -1000000,
+        "output": -1000000
+      },
+      "id": "openrouter/auto-code",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 64000,
+      "name": "Auto Code",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/openrouter/auto-code",
       "thinking": [
         "minimal",
         "low",
@@ -17055,7 +17988,7 @@
       "cost": {
         "cacheRead": 0.003,
         "cacheWrite": 0,
-        "input": 0.05,
+        "input": 0.06,
         "output": 0.5
       },
       "id": "particle-ai/particle-1",
@@ -17070,6 +18003,35 @@
       "provider": "openrouter",
       "reasoning": true,
       "selector": "openrouter/particle-ai/particle-1",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "particle-ai/particle-1:free",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 131072,
+      "name": "Particle-1 (free)",
+      "pricingStatus": "unknown",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/particle-ai/particle-1:free",
       "thinking": [
         "minimal",
         "low",
@@ -18036,7 +18998,7 @@
       "cost": {
         "cacheRead": 0.07,
         "cacheWrite": 0,
-        "input": 0.1,
+        "input": 0.09,
         "output": 1.1
       },
       "id": "qwen/qwen3-next-80b-a3b-instruct",
@@ -18044,7 +19006,7 @@
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 235929,
+      "maxTokens": 16384,
       "name": "Qwen3 Next 80B A3B Instruct",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -18352,10 +19314,10 @@
     {
       "contextWindow": 262144,
       "cost": {
-        "cacheRead": 0.3,
+        "cacheRead": 0.22,
         "cacheWrite": 0,
-        "input": 0.5,
-        "output": 3.5999999999999996
+        "input": 0.45,
+        "output": 3
       },
       "id": "qwen/qwen3.5-397b-a17b",
       "input": [
@@ -18363,7 +19325,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 235929,
+      "maxTokens": 81920,
       "name": "Qwen3.5 397B A17B",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -18379,10 +19341,10 @@
     {
       "contextWindow": 262144,
       "cost": {
-        "cacheRead": 0.04,
+        "cacheRead": 0.09,
         "cacheWrite": 0,
-        "input": 0.16999999999999998,
-        "output": 0.25
+        "input": 0.1,
+        "output": 0.14700000000000002
       },
       "id": "qwen/qwen3.5-9b",
       "input": [
@@ -18390,7 +19352,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 235929,
+      "maxTokens": 40960,
       "name": "Qwen3.5-9B",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -18516,8 +19478,8 @@
       "cost": {
         "cacheRead": 0.025,
         "cacheWrite": 0,
-        "input": 0.45,
-        "output": 2.7
+        "input": 0.32,
+        "output": 3.1999999999999997
       },
       "id": "qwen/qwen3.6-27b",
       "input": [
@@ -18525,7 +19487,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 65536,
+      "maxTokens": 81920,
       "name": "Qwen3.6 27B",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -18884,6 +19846,32 @@
     {
       "contextWindow": 262144,
       "cost": {
+        "cacheRead": 0.04,
+        "cacheWrite": 0,
+        "input": 0.16,
+        "output": 2
+      },
+      "id": "qwen/qwen3.8-27b:batch",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 235929,
+      "name": "Qwen3.8 27B (batch)",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/qwen/qwen3.8-27b:batch",
+      "thinking": [
+        "low",
+        "medium",
+        "xhigh"
+      ]
+    },
+    {
+      "contextWindow": 262144,
+      "cost": {
         "cacheRead": 0,
         "cacheWrite": 0,
         "input": 0,
@@ -18986,6 +19974,34 @@
       ]
     },
     {
+      "contextWindow": 262144,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 1.15,
+        "output": 3.45
+      },
+      "id": "qwen/qwen3.8-max-0902:batch",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 131072,
+      "name": "Qwen3.8 Max (0902) (batch)",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/qwen/qwen3.8-max-0902:batch",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
       "contextWindow": 1000000,
       "cost": {
         "cacheRead": 0.5,
@@ -19038,6 +20054,32 @@
         "low",
         "medium",
         "high"
+      ]
+    },
+    {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.07125000000000001,
+        "cacheWrite": 1.78125,
+        "input": 1.4249999999999998,
+        "output": 4.2749999999999995
+      },
+      "id": "qwen/qwen4-max",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 131072,
+      "name": "Qwen4 Max",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/qwen/qwen4-max",
+      "thinking": [
+        "low",
+        "high",
+        "xhigh"
       ]
     },
     {
@@ -19095,9 +20137,9 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.05,
+        "cacheRead": 0.04,
         "cacheWrite": 0,
-        "input": 0.25,
+        "input": 0.3,
         "output": 1
       },
       "id": "reflection/beam-1.0-501b-a23b",
@@ -19105,7 +20147,7 @@
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 131072,
+      "maxTokens": 943718,
       "name": "Beam 1.0 501B A23B",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -19183,6 +20225,32 @@
       "reasoning": false,
       "selector": "openrouter/relace/relace-search",
       "thinking": null
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.025,
+        "cacheWrite": 0,
+        "input": 0.1,
+        "output": 0.3
+      },
+      "id": "ricursiveai/ripple-65b-preview",
+      "input": [
+        "text"
+      ],
+      "kind": "chat",
+      "maxTokens": 131072,
+      "name": "Ripple 65B Preview",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/ricursiveai/ripple-65b-preview",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
     },
     {
       "contextWindow": 1000000,
@@ -19336,35 +20404,6 @@
         "input": 0,
         "output": 0
       },
-      "id": "stealth/crouton-alpha",
-      "input": [
-        "text",
-        "image"
-      ],
-      "kind": "chat",
-      "maxTokens": 943718,
-      "name": "Crouton Alpha",
-      "pricingStatus": "unknown",
-      "provider": "openrouter",
-      "reasoning": true,
-      "selector": "openrouter/stealth/crouton-alpha",
-      "thinking": [
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max"
-      ]
-    },
-    {
-      "contextWindow": 1048576,
-      "cost": {
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "input": 0,
-        "output": 0
-      },
       "id": "stealth/ox-alpha",
       "input": [
         "text",
@@ -19490,7 +20529,7 @@
       ]
     },
     {
-      "contextWindow": 1048576,
+      "contextWindow": 1000000,
       "cost": {
         "cacheRead": 0.1,
         "cacheWrite": 0,
@@ -19518,10 +20557,10 @@
     {
       "contextWindow": 262144,
       "cost": {
-        "cacheRead": 0.032999999999999995,
+        "cacheRead": 0.020625,
         "cacheWrite": 0,
-        "input": 0.13199999999999998,
-        "output": 0.5279999999999999
+        "input": 0.0825,
+        "output": 0.33
       },
       "id": "tencent/hy3",
       "input": [
@@ -19643,10 +20682,37 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.042,
+        "cacheRead": 0.0015,
         "cacheWrite": 0,
-        "input": 0.834,
-        "output": 2.501
+        "input": 0.035,
+        "output": 0.1405
+      },
+      "id": "tencent/hy4-flash",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 65536,
+      "name": "Hy4 flash",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/tencent/hy4-flash",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.0378,
+        "cacheWrite": 0,
+        "input": 0.7505999999999999,
+        "output": 2.2509
       },
       "id": "tencent/hy4-preview",
       "input": [
@@ -19735,6 +20801,62 @@
       ]
     },
     {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.03,
+        "cacheWrite": 0,
+        "input": 0.3,
+        "output": 1
+      },
+      "id": "thinkingmachines/inkling-2-small",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 943718,
+      "name": "Inkling 2 Small",
+      "pricingStatus": "fixed",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/thinkingmachines/inkling-2-small",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "id": "thinkingmachines/inkling-2-small:free",
+      "input": [
+        "text",
+        "image"
+      ],
+      "kind": "chat",
+      "maxTokens": 131072,
+      "name": "Inkling 2 Small (free)",
+      "pricingStatus": "unknown",
+      "provider": "openrouter",
+      "reasoning": true,
+      "selector": "openrouter/thinkingmachines/inkling-2-small:free",
+      "thinking": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "max"
+      ]
+    },
+    {
       "contextWindow": 524288,
       "cost": {
         "cacheRead": 0.1,
@@ -19765,10 +20887,10 @@
     {
       "contextWindow": 524288,
       "cost": {
-        "cacheRead": 0.1,
+        "cacheRead": 0.08,
         "cacheWrite": 0,
-        "input": 0.5,
-        "output": 1.2
+        "input": 0.36,
+        "output": 0.96
       },
       "id": "thinkingmachines/inkling-small:batch",
       "input": [
@@ -19776,7 +20898,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 471859,
+      "maxTokens": 262144,
       "name": "Inkling Small (batch)",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -19786,7 +20908,8 @@
         "minimal",
         "low",
         "medium",
-        "high"
+        "high",
+        "max"
       ]
     },
     {
@@ -20686,19 +21809,19 @@
       ]
     },
     {
-      "contextWindow": 1050000,
+      "contextWindow": 1024000,
       "cost": {
-        "cacheRead": 0.096,
+        "cacheRead": 0.0036,
         "cacheWrite": 0,
-        "input": 0.48,
-        "output": 1.7999999999999998
+        "input": 0.435,
+        "output": 0.87
       },
       "id": "xiaomi/mimo-v2.5-pro",
       "input": [
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 235929,
+      "maxTokens": 131072,
       "name": "MiMo-V2.5-Pro",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -21022,10 +22145,10 @@
     {
       "contextWindow": 204800,
       "cost": {
-        "cacheRead": 0.11,
+        "cacheRead": 0.08,
         "cacheWrite": 0,
-        "input": 0.6,
-        "output": 2.2
+        "input": 0.4,
+        "output": 1.75
       },
       "id": "z-ai/glm-4.7",
       "input": [
@@ -21136,7 +22259,7 @@
         "text"
       ],
       "kind": "chat",
-      "maxTokens": 131072,
+      "maxTokens": 182476,
       "name": "GLM 5.1",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -21152,9 +22275,9 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.005,
+        "cacheRead": 0.006,
         "cacheWrite": 0,
-        "input": 0.006,
+        "input": 0.007,
         "output": 6.8
       },
       "id": "z-ai/glm-5.2",
@@ -21230,10 +22353,10 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.07600000000000001,
+        "cacheRead": 0.0689,
         "cacheWrite": 0,
-        "input": 0.08,
-        "output": 3.5999999999999996
+        "input": 0.0699,
+        "output": 1.4
       },
       "id": "z-ai/glm-5.3",
       "input": [
@@ -21255,10 +22378,10 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.0269,
+        "cacheRead": 0.03,
         "cacheWrite": 0,
-        "input": 0.0269,
-        "output": 0.0996
+        "input": 0.0399,
+        "output": 0.0784
       },
       "id": "z-ai/glm-5.3-flash",
       "input": [
@@ -21436,10 +22559,10 @@
     {
       "contextWindow": 1000000,
       "cost": {
-        "cacheRead": 0.25,
-        "cacheWrite": 12.5,
-        "input": 10,
-        "output": 50
+        "cacheRead": 0.2,
+        "cacheWrite": 10,
+        "input": 8,
+        "output": 40
       },
       "id": "~anthropic/claude-fable-latest",
       "input": [
@@ -21548,9 +22671,9 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.005,
+        "cacheRead": 0.01,
         "cacheWrite": 0,
-        "input": 0.032,
+        "input": 0.036,
         "output": 0.5
       },
       "id": "~deepseek/deepseek-flash-latest",
@@ -21574,9 +22697,9 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.1,
+        "cacheRead": 0.0999,
         "cacheWrite": 0,
-        "input": 0.1035,
+        "input": 0.0999,
         "output": 8
       },
       "id": "~deepseek/deepseek-pro-latest",
@@ -21601,7 +22724,7 @@
       "cost": {
         "cacheRead": 0.035,
         "cacheWrite": 0,
-        "input": 0.059,
+        "input": 0.0434,
         "output": 0.3
       },
       "id": "~deepseek/deepseek-v4-flash-latest",
@@ -21625,9 +22748,9 @@
       "contextWindow": 1048576,
       "cost": {
         "cacheRead": 0.075,
-        "cacheWrite": 0.0416666666666667,
-        "input": 0.75,
-        "output": 3.75
+        "cacheWrite": 0.0833333333333333,
+        "input": 1.5,
+        "output": 7.5
       },
       "id": "~google/gemini-flash-latest",
       "input": [
@@ -21635,7 +22758,7 @@
         "image"
       ],
       "kind": "chat",
-      "maxTokens": 65536,
+      "maxTokens": 943718,
       "name": "Gemini Flash Latest",
       "pricingStatus": "fixed",
       "provider": "openrouter",
@@ -21644,7 +22767,8 @@
       "thinking": [
         "low",
         "medium",
-        "high"
+        "high",
+        "xhigh"
       ]
     },
     {
@@ -21679,7 +22803,7 @@
         "cacheRead": 0.18,
         "cacheWrite": 0,
         "input": 0.1824,
-        "output": 9.3388
+        "output": 11.0055
       },
       "id": "~moonshotai/kimi-latest",
       "input": [
@@ -21917,10 +23041,10 @@
     {
       "contextWindow": 1048576,
       "cost": {
-        "cacheRead": 0.0269,
+        "cacheRead": 0.03,
         "cacheWrite": 0,
-        "input": 0.0269,
-        "output": 0.0996
+        "input": 0.0399,
+        "output": 0.0784
       },
       "id": "~z-ai/glm-flash-latest",
       "input": [

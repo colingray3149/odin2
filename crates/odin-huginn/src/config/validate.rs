@@ -143,18 +143,8 @@ impl OdindConfig {
         }
         if let Some(kube) = &self.kube {
             kube.validate()?;
-            // Reject lanes that no configured seat can launch.
             if let Some(lane) = &kube.agent_lane {
-                let launched = self.seats.iter().any(|seat| {
-                    seat.launch_options.iter().any(|option| {
-                        option.provider.as_str() == "gateway" && option.model.as_str() == lane
-                    })
-                });
-                if !launched {
-                    return Err(ConfigError::Invalid(format!(
-                        "kube.agent_lane {lane:?} is not a gateway launch option of any seat"
-                    )));
-                }
+                self.check_agent_lane(lane)?;
             }
         }
         for (id, backend) in &self.adapter_backends {
@@ -764,6 +754,29 @@ fn confined_namespace_segment(value: &str) -> Result<(), String> {
         return Err("namespace segment must not be a relative traversal".to_owned());
     }
     Ok(())
+}
+
+impl OdindConfig {
+    /// The agent-pod lane must be a declared model lane (when the catalog is
+    /// present) and a gateway launch option of some configured seat.
+    pub(super) fn check_agent_lane(&self, lane: &str) -> Result<(), ConfigError> {
+        if !self.models.lanes.is_empty() && !self.models.lanes.contains_key(lane) {
+            return Err(ConfigError::Invalid(format!(
+                "kube.agent_lane {lane:?} is not a declared model lane"
+            )));
+        }
+        let launched = self.seats.iter().any(|seat| {
+            seat.launch_options.iter().any(|option| {
+                option.provider.as_str() == "gateway" && option.model.as_str() == lane
+            })
+        });
+        if !launched {
+            return Err(ConfigError::Invalid(format!(
+                "kube.agent_lane {lane:?} is not a gateway launch option of any seat"
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl OdindKubeConfig {

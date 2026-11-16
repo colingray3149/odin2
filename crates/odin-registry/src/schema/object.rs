@@ -6,8 +6,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::brain_role::BrainRoleToml;
 use super::capability::{CapabilityToml, SliceToml};
 use super::claude_code::{ClaudeCodeToml, CLAUDE_CODE_HARNESS};
+use super::compute_provider::ComputeProviderToml;
+use super::compute_target::ComputeTargetToml;
 use super::container::ContainerToml;
 use super::context_profile::ContextProfileToml;
 use super::environment::EnvironmentToml;
@@ -54,10 +57,16 @@ pub enum RegistryKind {
     ContextProfile,
     Toolset,
     Feature,
+    #[serde(rename = "brain-role")]
+    BrainRole,
+    #[serde(rename = "compute-target")]
+    ComputeTarget,
+    #[serde(rename = "compute-provider")]
+    ComputeProvider,
 }
 
 impl RegistryKind {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 20] = [
         Self::Seat,
         Self::Project,
         Self::Lane,
@@ -75,12 +84,28 @@ impl RegistryKind {
         Self::ContextProfile,
         Self::Toolset,
         Self::Feature,
+        Self::BrainRole,
+        Self::ComputeTarget,
+        Self::ComputeProvider,
     ];
+
+    /// These registry kinds need not be present until compute cards are configured.
+    pub const fn is_optional(self) -> bool {
+        matches!(self, Self::ComputeTarget | Self::ComputeProvider)
+    }
 
     /// Dynamically read objects do not affect composition, so routine-only and
     /// card-only changes need no restart; card publishes re-render the gateway.
     pub const fn is_read_live(self) -> bool {
-        matches!(self, Self::Routine | Self::Model | Self::Feature)
+        matches!(
+            self,
+            Self::Routine
+                | Self::Model
+                | Self::Feature
+                | Self::BrainRole
+                | Self::ComputeTarget
+                | Self::ComputeProvider
+        )
     }
 
     pub const fn as_str(self) -> &'static str {
@@ -102,6 +127,9 @@ impl RegistryKind {
             Self::ContextProfile => "context-profile",
             Self::Toolset => "toolset",
             Self::Feature => "feature",
+            Self::BrainRole => "brain-role",
+            Self::ComputeTarget => "compute-target",
+            Self::ComputeProvider => "compute-provider",
         }
     }
 
@@ -124,6 +152,9 @@ impl RegistryKind {
             Self::ContextProfile => "context-profiles",
             Self::Toolset => "toolsets",
             Self::Feature => "features",
+            Self::BrainRole => "brain-roles",
+            Self::ComputeTarget => "compute-targets",
+            Self::ComputeProvider => "compute-providers",
         }
     }
 
@@ -169,6 +200,12 @@ pub enum ObjectConfig {
     ContextProfile(Box<ContextProfileToml>),
     Toolset(Box<ToolsetToml>),
     Feature(Box<FeatureToml>),
+    #[serde(rename = "brain-role")]
+    BrainRole(Box<BrainRoleToml>),
+    #[serde(rename = "compute-target")]
+    ComputeTarget(Box<ComputeTargetToml>),
+    #[serde(rename = "compute-provider")]
+    ComputeProvider(Box<ComputeProviderToml>),
 }
 
 impl ObjectConfig {
@@ -192,6 +229,9 @@ impl ObjectConfig {
             Self::ContextProfile(_) => RegistryKind::ContextProfile,
             Self::Toolset(_) => RegistryKind::Toolset,
             Self::Feature(_) => RegistryKind::Feature,
+            Self::BrainRole(_) => RegistryKind::BrainRole,
+            Self::ComputeTarget(_) => RegistryKind::ComputeTarget,
+            Self::ComputeProvider(_) => RegistryKind::ComputeProvider,
         }
     }
 
@@ -215,6 +255,9 @@ impl ObjectConfig {
             Self::ContextProfile(value) => value.enabled,
             Self::Toolset(value) => value.enabled,
             Self::Feature(value) => value.enabled,
+            Self::BrainRole(value) => value.enabled,
+            Self::ComputeTarget(value) => value.enabled,
+            Self::ComputeProvider(value) => value.enabled,
         }
     }
 
@@ -382,6 +425,15 @@ pub fn parse_object_toml(
         }
         RegistryKind::Feature => {
             ObjectConfig::Feature(Box::new(toml::from_str(source).map_err(parse_error)?))
+        }
+        RegistryKind::BrainRole => {
+            ObjectConfig::BrainRole(Box::new(toml::from_str(source).map_err(parse_error)?))
+        }
+        RegistryKind::ComputeTarget => {
+            ObjectConfig::ComputeTarget(Box::new(toml::from_str(source).map_err(parse_error)?))
+        }
+        RegistryKind::ComputeProvider => {
+            ObjectConfig::ComputeProvider(Box::new(toml::from_str(source).map_err(parse_error)?))
         }
     };
     Ok(RegistryObject {
